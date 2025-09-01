@@ -172,21 +172,23 @@ class YAMLToPolarsLazyTranslator:
     def _build_expressions(self, metric: MetricDefinition) -> tuple[list[pl.Expr], pl.Expr | None]:
         """Build Polars expressions for a metric"""
         # Handle custom expressions
-        if metric.agg_expr or metric.select_expr:
-            # Parse aggregation expressions
-            agg_exprs = [self._evaluate_expression(expr) for expr in metric.agg_expr] if metric.agg_expr else []
-            
+        if metric.select_expr or metric.agg_expr:
             # Parse selection expression
             select_expr = self._evaluate_expression(metric.select_expr) if metric.select_expr else None
             
-            # Handle case where only select_expr is provided
-            if not agg_exprs and select_expr is not None:
+            # Parse aggregation expressions
+            if metric.agg_expr:
+                agg_exprs = [self._evaluate_expression(expr) for expr in metric.agg_expr]
+            elif select_expr is not None:
+                # If only select_expr provided, use it as the aggregation
                 return [select_expr.alias("value")], None
+            else:
+                agg_exprs = []
             
             # Add value alias for single expression without select
             if len(agg_exprs) == 1 and select_expr is None:
                 agg_exprs = [agg_exprs[0].alias("value")]
-            
+                        
             return agg_exprs, select_expr
         
         # Handle built-in metric names
