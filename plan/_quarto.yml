@@ -1,0 +1,29 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "Model Evaluation Framework"
+  description: "A framework for model evaluation using Polars lazy evaluation"
+  navbar:
+    left:
+      - text: "Examples"
+        file: examples.qmd
+      - text: "Class Design"
+        file: class_diagram.md
+    right:
+      - icon: github
+        href: https://github.com/elong0527/demo_eval_metric
+
+format:
+  html:
+    theme: cosmo
+    code-fold: false
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    highlight-style: github
+
+execute:
+  cache: false
+  freeze: false
