@@ -6,19 +6,21 @@ using Polars LazyFrames, following the architecture design.
 """
 
 import polars as pl
-from metric import Metric, MetricType
+from metric_data import MetricData, MetricType, SharedType
+from metric_compiler import MetricCompiler
 
 
-class LazyEvaluator:
-    """Lazy evaluation pipeline with complete context at initialization"""
+class MetricEvaluator:
+    """Metric evaluation pipeline with complete context at initialization"""
     
     def __init__(self, 
                  df: pl.DataFrame | pl.LazyFrame,
-                 metrics: list[Metric],
+                 metrics: list[MetricData],
                  ground_truth: str = "actual",
                  estimates: list[str] = None,
                  group_by: list[str] = None,
-                 filter_expr: pl.Expr = None):
+                 filter_expr: pl.Expr = None,
+                 compiler: MetricCompiler = None):
         """
         Initialize evaluator with complete evaluation context
         
@@ -29,6 +31,7 @@ class LazyEvaluator:
             estimates: List of estimate/model columns to evaluate
             group_by: Grouping columns for analysis
             filter_expr: Optional filter expression
+            compiler: Metric compiler (creates default if not provided)
         """
         # Store data as LazyFrame
         self.df_raw = df.lazy() if isinstance(df, pl.DataFrame) else df
@@ -39,6 +42,9 @@ class LazyEvaluator:
         self.estimates = estimates or []
         self.group_by = group_by or []
         self.filter_expr = filter_expr
+        
+        # Initialize expression compiler
+        self.compiler = compiler or MetricCompiler()
         
         # Prepare data once with filter
         self.df = self._prepare_base_data()
@@ -67,31 +73,32 @@ class LazyEvaluator:
                 .alias("absolute_percent_error"),
         ])
     
-    def evaluate_single(self, metric: Metric, estimate: str) -> pl.LazyFrame:
+    def evaluate_single(self, metric: MetricData, estimate: str) -> pl.LazyFrame:
         """
         Evaluate a single metric for one estimate
         
         Args:
-            metric: Metric to evaluate (uses first from self.metrics if None)
-            estimate: Estimate column (uses first from self.estimates if None)
-            group_by: Override grouping columns (uses self.group_by if None)
-        
+            metric: Metric to evaluate
+            estimate: Estimate column
+            
         Returns:
             LazyFrame with evaluation result
         """
-        group_by = self.group_by
-        
         if not metric or not estimate:
-            raise ValueError("Metric and estimate must be provided or set in initialization")
+            raise ValueError("Metric and estimate must be provided")
         
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
         
-        # Get metric expressions
-        agg_exprs, select_expr = metric.get_polars_expressions()
+        # Get metric expressions using the compiler
+        agg_exprs, select_expr = self.compiler.compile_expressions(
+            metric.name, metric.agg_expr, metric.select_expr
+        )
         
-        # Determine grouping based on metric type
-        agg_groups, select_groups = self._get_grouping_columns(metric.type, group_by)
+        # Determine grouping based on metric type and shared_by
+        agg_groups, select_groups = self._get_grouping_columns(
+            metric.type, metric.shared_by, estimate
+        )
         
         # Build pipeline
         pipeline = self._build_pipeline(df_prep, agg_exprs, select_expr, 
@@ -154,19 +161,61 @@ class LazyEvaluator:
         
         return pipeline
     
-    def _get_grouping_columns(self, metric_type: MetricType, 
-                             group_by: list[str]) -> tuple[list[str] | None, list[str] | None]:
-        """Determine grouping columns based on metric type"""
-        if metric_type == MetricType.ACROSS_SAMPLES:
-            return None, group_by
-        elif metric_type == MetricType.WITHIN_SUBJECT:
-            return ["subject_id"] + group_by, None
-        elif metric_type == MetricType.ACROSS_SUBJECT:
-            return ["subject_id"] + group_by, group_by
-        elif metric_type == MetricType.WITHIN_VISIT:
-            return ["subject_id", "visit_id"] + group_by, None
-        elif metric_type == MetricType.ACROSS_VISIT:
-            return ["subject_id", "visit_id"] + group_by, group_by
-        else:
+    def _get_grouping_columns(self, 
+                             metric_type: MetricType,
+                             shared_by: SharedType | None,
+                             estimate: str) -> tuple[list[str] | None, list[str] | None]:
+        """
+        Determine grouping columns based on metric type and shared_by
+        
+        Args:
+            metric_type: Type of metric aggregation
+            shared_by: How the metric is shared (ALL, GROUP, or None)
+            estimate: Current estimate/model column name
+            
+        Returns:
+            Tuple of (first_level_groups, second_level_groups)
+        """
+        # Apply SharedType to modify group_by
+        effective_group_by = self._apply_shared_type(shared_by)
+        
+        # Define grouping rules as a mapping
+        grouping_rules = {
+            MetricType.ACROSS_SAMPLES: (None, effective_group_by),
+            MetricType.WITHIN_SUBJECT: (["subject_id"] + effective_group_by, None),
+            MetricType.ACROSS_SUBJECT: (["subject_id"] + effective_group_by, effective_group_by),
+            MetricType.WITHIN_VISIT: (["subject_id", "visit_id"] + effective_group_by, None),
+            MetricType.ACROSS_VISIT: (["subject_id", "visit_id"] + effective_group_by, effective_group_by),
+        }
+        
+        # Get the rule for the metric type
+        rule = grouping_rules.get(metric_type)
+        
+        if rule is None:
             raise ValueError(f"Unknown metric type: {metric_type}")
+        
+        return rule
     
+    def _apply_shared_type(self, shared_by: SharedType | None) -> list[str]:
+        """
+        Apply SharedType to determine effective grouping columns
+        
+        Args:
+            shared_by: How the metric is shared
+            
+        Returns:
+            Effective group_by columns
+        """
+        if shared_by == SharedType.ALL:
+            # No grouping - aggregate across everything
+            return []
+        elif shared_by == SharedType.GROUP:
+            # Group by group columns only (same value for all models)
+            return self.group_by
+        elif shared_by == SharedType.MODEL:
+            # This doesn't make sense since we calculate per model already
+            # Could either raise error or treat as default
+            return self.group_by
+        else:
+            # Default: use configured group_by
+            return self.group_by
