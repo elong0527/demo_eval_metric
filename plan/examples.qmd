@@ -1,0 +1,283 @@
+---
+title: "Model Evaluation Framework Examples"
+format: html
+execute:
+  echo: true
+  warning: false
+---
+
+# Model Evaluation Framework
+
+This document demonstrates the refactored model evaluation framework using Polars lazy evaluation where all evaluation context is stored at initialization.
+
+## Setup
+
+```{python}
+import polars as pl
+from config_parser import ConfigParser
+from lazy_evaluator import LazyEvaluator
+from data import get_sample_data
+
+# Get sample data
+df = get_sample_data()
+print(f"Data shape: {df.shape}")
+print(f"Columns: {df.columns}")
+df.head()
+```
+
+## Core Concepts
+
+### Metric Types
+
+The framework supports 5 types of metric aggregations:
+
+```{python}
+from metric import MetricType
+
+for metric_type in MetricType:
+    print(f"{metric_type.value:20} - {metric_type.name}")
+```
+
+## New API: All Context at Initialization
+
+### Example 1: Complete Initialization and Batch Evaluation
+
+The new API stores all evaluation context at initialization:
+
+```{python}
+# Configure metrics
+config = {
+    'columns': {},
+    'metrics': [
+        {'name': 'mae', 'type': 'across_samples', 'label': 'Mean Absolute Error'},
+        {'name': 'mse', 'type': 'across_samples', 'label': 'Mean Squared Error'},
+        {'name': 'bias', 'type': 'across_samples', 'label': 'Bias'}
+    ]
+}
+
+parser = ConfigParser(config)
+
+# Initialize evaluator with complete context
+evaluator = LazyEvaluator(
+    df=df,
+    metrics=parser.metrics,
+    ground_truth="aval",
+    estimates=["model1", "model2"],
+    group_by=["treatment"]
+)
+
+# Evaluate all metrics for all models - no arguments needed!
+results = evaluator.evaluate_all()
+
+# Display as pivot table
+summary = results.pivot(
+    values="value",
+    index=["treatment", "metric"],
+    on="estimate"
+)
+print("All metrics for all models:")
+summary
+```
+
+### Example 2: Evaluate Specific Metric
+
+Evaluate a single metric for all configured models:
+
+```{python}
+# Evaluate just MAE for all models
+mae_results = evaluator.evaluate_metric(parser.metrics[0])
+
+print("MAE for all models:")
+mae_results.select(["estimate", "treatment", "value"])
+```
+
+### Example 3: Evaluate Specific Model
+
+Evaluate all metrics for a single model:
+
+```{python}
+# Evaluate all metrics for model1
+model1_results = evaluator.evaluate_estimate("model1")
+
+print("All metrics for model1:")
+model1_results.select(["metric", "treatment", "value"])
+```
+
+## Different Grouping Strategies
+
+### Example 4: No Grouping
+
+Evaluate at population level without grouping:
+
+```{python}
+# Initialize without grouping
+evaluator_pop = LazyEvaluator(
+    df=df,
+    metrics=[parser.metrics[0]],  # Just MAE
+    ground_truth="aval",
+    estimates=["model1", "model2"],
+    group_by=None  # No grouping
+)
+
+results = evaluator_pop.evaluate_all()
+print("Population-level MAE:")
+results.select(["estimate", "value"])
+```
+
+### Example 5: Multiple Grouping Columns
+
+Group by multiple columns:
+
+```{python}
+# Initialize with multiple grouping columns
+evaluator_multi = LazyEvaluator(
+    df=df,
+    metrics=[parser.metrics[0]],  # Just MAE
+    ground_truth="aval",
+    estimates=["model1", "model2"],
+    group_by=["treatment", "gender"]  # Multiple columns
+)
+
+results = evaluator_multi.evaluate_all()
+print("MAE by treatment and gender:")
+results.select(["estimate", "treatment", "gender", "value"])
+```
+
+## Different Metric Types
+
+### Example 6: Subject-Level Metrics
+
+Compute metrics at different aggregation levels:
+
+```{python}
+# Configure metrics at different levels
+config_levels = {
+    'columns': {},
+    'metrics': [
+        {'name': 'mae', 'type': 'within_subject', 'label': 'MAE per Subject'},
+        {'name': 'mae:mean', 'type': 'across_subject', 'label': 'Mean of Subject MAEs'}
+    ]
+}
+
+parser_levels = ConfigParser(config_levels)
+
+# Initialize with subject-level metrics
+evaluator_subject = LazyEvaluator(
+    df=df,
+    metrics=parser_levels.metrics,
+    ground_truth="aval",
+    estimates=["model1"],
+    group_by=["treatment"]
+)
+
+# Evaluate within-subject metric
+within_result = evaluator_subject.evaluate_single(
+    metric=parser_levels.metrics[0],
+    estimate="model1"
+).collect()
+
+print("Within-subject MAE (one value per subject-treatment):")
+within_result.select(["subject_id", "treatment", "value"]).head()
+```
+
+```{python}
+# Evaluate across-subject metric
+across_result = evaluator_subject.evaluate_single(
+    metric=parser_levels.metrics[1],
+    estimate="model1"
+).collect()
+
+print("Across-subject MAE (averaged across subjects):")
+across_result.select(["treatment", "value"])
+```
+
+## Filtering Data
+
+### Example 7: Apply Filter Expression
+
+Filter data during initialization:
+
+```{python}
+# Initialize with filter - only first 2 visits
+evaluator_filtered = LazyEvaluator(
+    df=df,
+    metrics=[parser.metrics[0]],  # Just MAE
+    ground_truth="aval",
+    estimates=["model1", "model2"],
+    group_by=["treatment"],
+    filter_expr=(pl.col("visit_id") <= 2)
+)
+
+filtered_results = evaluator_filtered.evaluate_all()
+print("MAE for first 2 visits only:")
+filtered_results.select(["estimate", "treatment", "value"])
+```
+
+## Single Evaluation
+
+### Example 8: Direct Single Evaluation
+
+You can still evaluate single metric-model pairs directly:
+
+```{python}
+# For one-off evaluations, you can call evaluate_single
+single_result = evaluator.evaluate_single(
+    metric=parser.metrics[0],  # MAE
+    estimate="model1"
+).collect()
+
+print("Single evaluation result:")
+single_result.select(["treatment", "value"])
+```
+
+## Pipeline Architecture
+
+The evaluation follows a 4-stage pipeline:
+
+1. **Data Preparation**: Add error columns (error, absolute_error, squared_error)
+2. **First-level Aggregation**: Optional grouping (e.g., by subject)
+3. **Second-level Selection**: Final aggregation (e.g., across subjects)
+4. **Metadata Addition**: Add metric name and model identifier
+
+```{python}
+# Show the lazy query plan
+lazy_result = evaluator.evaluate_single(
+    metric=parser.metrics[0],
+    estimate="model1"
+)
+
+print("Lazy query plan (first 500 chars):")
+plan = lazy_result.explain()
+print(plan[:500] + "...")
+```
+
+## Key Benefits of the New API
+
+The refactored API with all context at initialization provides:
+
+1. **Cohesive Design**: Evaluator instances contain everything needed
+2. **Simple Methods**: `evaluate_all()` requires no arguments
+3. **Flexible Evaluation**: Specific methods for metrics or models
+4. **Clean Interface**: Initialize once, evaluate many times
+5. **Performance**: Data prepared once with filter at initialization
+
+```{python}
+# The API is now very clean and simple
+print("Available evaluation methods:")
+print("- evaluate_all(): Evaluate all metrics for all models")
+print("- evaluate_metric(metric): Evaluate one metric for all models")
+print("- evaluate_estimate(estimate): Evaluate all metrics for one model")
+print("- evaluate_single(metric, estimate): Evaluate one metric-model pair")
+```
+
+## Summary
+
+The refactored framework with all context at initialization provides:
+
+- **Initialize once** with `LazyEvaluator(df, metrics, estimates, ...)`
+- **Simple evaluation** with `evaluate_all()`, `evaluate_metric()`, etc.
+- **Flexible grouping** via `group_by` parameter at initialization
+- **Efficient filtering** applied once during initialization
+- **Polars lazy evaluation** for optimal performance
+
+The new design makes evaluation code cleaner and more intuitive by storing all context upfront.

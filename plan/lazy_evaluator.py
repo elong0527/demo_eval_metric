@@ -10,244 +10,163 @@ from metric import Metric, MetricType
 
 
 class LazyEvaluator:
-    """Lazy evaluation pipeline for metrics using Polars"""
+    """Lazy evaluation pipeline with complete context at initialization"""
     
-    def __init__(self, group_cols: list[str] = None, subgroup_cols: list[str] = None):
+    def __init__(self, 
+                 df: pl.DataFrame | pl.LazyFrame,
+                 metrics: list[Metric],
+                 ground_truth: str = "actual",
+                 estimates: list[str] = None,
+                 group_by: list[str] = None,
+                 filter_expr: pl.Expr = None):
         """
-        Initialize evaluator with column configurations
+        Initialize evaluator with complete evaluation context
         
         Args:
-            group_cols: Group columns for analysis
-            subgroup_cols: Subgroup columns for analysis
-        """
-        self.group_cols = group_cols or []
-        self.subgroup_cols = subgroup_cols or []
-        self.analysis_cols = self.group_cols + self.subgroup_cols
-    
-    def prepare_data(self, df: pl.DataFrame | pl.LazyFrame, 
-                    ground_truth: str, estimate: str,
-                    filter_expr: pl.Expr = None) -> pl.LazyFrame:
-        """
-        Stage 1: Data preparation with error columns and optional filtering
-        
-        Args:
-            df: Input data
+            df: Input data (stored as LazyFrame)
+            metrics: List of metrics to evaluate
             ground_truth: Name of ground truth column
-            estimate: Name of estimate/prediction column
+            estimates: List of estimate/model columns to evaluate
+            group_by: Grouping columns for analysis
             filter_expr: Optional filter expression
-        
-        Returns:
-            LazyFrame with computed error columns
         """
-        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        # Store data as LazyFrame
+        self.df_raw = df.lazy() if isinstance(df, pl.DataFrame) else df
         
-        # Add error columns for metric computation
-        error = pl.col(estimate) - pl.col(ground_truth)
-        lf = lf.with_columns([
+        # Store configuration
+        self.metrics = metrics
+        self.ground_truth = ground_truth
+        self.estimates = estimates or []
+        self.group_by = group_by or []
+        self.filter_expr = filter_expr
+        
+        # Prepare data once with filter
+        self.df = self._prepare_base_data()
+    
+    def _prepare_base_data(self) -> pl.LazyFrame:
+        """Apply filter if provided"""
+        if self.filter_expr is not None:
+            return self.df_raw.filter(self.filter_expr)
+        return self.df_raw
+    
+    def _prepare_error_columns(self, df: pl.LazyFrame, estimate: str) -> pl.LazyFrame:
+        """Add error columns for a specific estimate"""
+        error = pl.col(estimate) - pl.col(self.ground_truth)
+        
+        return df.with_columns([
             error.alias("error"),
             error.abs().alias("absolute_error"),
             (error ** 2).alias("squared_error"),
-            pl.when(pl.col(ground_truth) != 0)
-                .then(error / pl.col(ground_truth) * 100)
+            pl.when(pl.col(self.ground_truth) != 0)
+                .then(error / pl.col(self.ground_truth) * 100)
                 .otherwise(None)
                 .alias("percent_error"),
-            pl.when(pl.col(ground_truth) != 0)
-                .then((error / pl.col(ground_truth) * 100).abs())
+            pl.when(pl.col(self.ground_truth) != 0)
+                .then((error / pl.col(self.ground_truth) * 100).abs())
                 .otherwise(None)
                 .alias("absolute_percent_error"),
         ])
-        
-        # Apply filter if provided
-        if filter_expr is not None:
-            lf = lf.filter(filter_expr)
-        
-        return lf
     
-    def aggregate_first_level(self, lf: pl.LazyFrame, 
-                             agg_exprs: list[pl.Expr],
-                             agg_groups: list[str]) -> pl.LazyFrame:
+    def evaluate_single(self, metric: Metric, estimate: str) -> pl.LazyFrame:
         """
-        Stage 2: First-level aggregation
+        Evaluate a single metric for one estimate
         
         Args:
-            lf: Input LazyFrame
-            agg_exprs: Aggregation expressions
-            agg_groups: Grouping columns for aggregation
+            metric: Metric to evaluate (uses first from self.metrics if None)
+            estimate: Estimate column (uses first from self.estimates if None)
+            group_by: Override grouping columns (uses self.group_by if None)
         
         Returns:
-            Aggregated LazyFrame
+            LazyFrame with evaluation result
         """
-        if agg_groups:
-            return lf.group_by(agg_groups).agg(agg_exprs)
-        return lf.select(agg_exprs)
-    
-    def select_final(self, lf: pl.LazyFrame,
-                    select_expr: pl.Expr,
-                    select_groups: list[str]) -> pl.LazyFrame:
-        """
-        Stage 3: Final selection/aggregation
+        group_by = self.group_by
         
-        Args:
-            lf: Input LazyFrame
-            select_expr: Selection expression
-            select_groups: Grouping columns for final result
+        if not metric or not estimate:
+            raise ValueError("Metric and estimate must be provided or set in initialization")
         
-        Returns:
-            LazyFrame with final metric value
-        """
-        # Ensure value is always Float64 for consistency
-        value_expr = select_expr.alias("value").cast(pl.Float64)
+        # Prepare data with error columns
+        df_prep = self._prepare_error_columns(self.df, estimate)
         
-        if select_groups:
-            return lf.group_by(select_groups).agg(value_expr)
-        else:
-            return lf.select(value_expr)
-    
-    def add_metadata(self, lf: pl.LazyFrame,
-                    metric_name: str,
-                    estimate_name: str) -> pl.LazyFrame:
-        """
-        Stage 4: Add metadata columns
-        
-        Args:
-            lf: Input LazyFrame
-            metric_name: Name of the metric
-            estimate_name: Name of the estimate/model
-        
-        Returns:
-            LazyFrame with metadata columns
-        """
-        return lf.with_columns([
-            pl.lit(metric_name).alias("metric"),
-            pl.lit(estimate_name).alias("estimate"),
-            pl.lit(metric_name).alias("label"),  # Can be customized later
-        ])
-    
-    def evaluate_pipeline(self, df: pl.DataFrame | pl.LazyFrame,
-                         metric: Metric,
-                         ground_truth: str,
-                         estimate: str,
-                         use_group: bool = True,
-                         use_subgroup: bool = True,
-                         filter_expr: pl.Expr = None) -> pl.LazyFrame:
-        """
-        Complete evaluation pipeline for a single metric-model combination
-        
-        Args:
-            df: Input data
-            metric: Metric definition
-            ground_truth: Ground truth column name
-            estimate: Estimate/model column name
-            use_group: Whether to use group columns
-            use_subgroup: Whether to use subgroup columns
-            filter_expr: Optional filter expression
-        
-        Returns:
-            LazyFrame with evaluation results
-        """
-        # Determine analysis columns
-        analysis_cols = []
-        if use_subgroup:
-            analysis_cols.extend(self.subgroup_cols)
-        if use_group:
-            analysis_cols.extend(self.group_cols)
-        
-        # Get expressions from metric
+        # Get metric expressions
         agg_exprs, select_expr = metric.get_polars_expressions()
         
         # Determine grouping based on metric type
-        agg_groups, select_groups = self._get_grouping_columns(metric.type, analysis_cols)
+        agg_groups, select_groups = self._get_grouping_columns(metric.type, group_by)
         
         # Build pipeline
-        pipeline = self.prepare_data(df, ground_truth, estimate, filter_expr)
-        
-        # Apply first-level aggregation if needed
-        if agg_groups is not None and agg_exprs:
-            pipeline = self.aggregate_first_level(pipeline, agg_exprs, agg_groups)
-        
-        # Apply final selection
-        if select_groups is not None:
-            # Apply second-level aggregation
-            if select_expr is not None:
-                pipeline = self.select_final(pipeline, select_expr, select_groups)
-            elif agg_exprs:
-                # If no select_expr but have agg_exprs, use them directly
-                pipeline = self.select_final(pipeline, agg_exprs[0], select_groups)
-        # else: No second-level aggregation for within_subject/within_visit
+        pipeline = self._build_pipeline(df_prep, agg_exprs, select_expr, 
+                                       agg_groups, select_groups)
         
         # Add metadata
-        pipeline = self.add_metadata(pipeline, metric.name, estimate)
-        
-        # Add metric type for reference
-        pipeline = pipeline.with_columns(
+        return pipeline.with_columns([
+            pl.lit(metric.name).alias("metric"),
+            pl.lit(estimate).alias("estimate"),
+            pl.lit(metric.label).alias("label"),
             pl.lit(metric.type.value).alias("metric_type")
-        )
-        
-        return pipeline
+        ])
     
-    def _get_grouping_columns(self, metric_type: MetricType, 
-                             analysis_cols: list[str]) -> tuple[list[str] | None, list[str]]:
+    def evaluate_all(self) -> pl.DataFrame:
         """
-        Determine grouping columns based on metric type
-        
-        Args:
-            metric_type: Type of metric
-            analysis_cols: Analysis columns (group + subgroup)
-        
-        Returns:
-            Tuple of (agg_groups, select_groups)
-        """
-        if metric_type == MetricType.ACROSS_SAMPLES:
-            # No first-level aggregation, only final grouping
-            return None, analysis_cols
-        
-        elif metric_type == MetricType.WITHIN_SUBJECT:
-            # Group by subject in first level, output keeps subject_id
-            # No second-level aggregation
-            return ["subject_id"] + analysis_cols, None
-        
-        elif metric_type == MetricType.ACROSS_SUBJECT:
-            # Two-level: aggregate by subject, then across subjects
-            return ["subject_id"] + analysis_cols, analysis_cols
-        
-        elif metric_type == MetricType.WITHIN_VISIT:
-            # Group by subject and visit in first level, output keeps both
-            # No second-level aggregation
-            return ["subject_id", "visit_id"] + analysis_cols, None
-        
-        elif metric_type == MetricType.ACROSS_VISIT:
-            # Two-level: aggregate by visit, then across visits
-            return ["subject_id", "visit_id"] + analysis_cols, analysis_cols
-        
-        else:
-            raise ValueError(f"Unknown metric type: {metric_type}")
-    
-    def evaluate_multiple(self, df: pl.DataFrame | pl.LazyFrame,
-                         metrics: list[Metric],
-                         ground_truth: str,
-                         estimates: list[str],
-                         **kwargs) -> pl.DataFrame:
-        """
-        Evaluate multiple metrics for multiple models
-        
-        Args:
-            df: Input data
-            metrics: List of metric definitions
-            ground_truth: Ground truth column name
-            estimates: List of estimate/model column names
-            **kwargs: Additional arguments for evaluate_pipeline
+        Evaluate all configured metrics for all estimates
         
         Returns:
             Combined DataFrame with all results
         """
-        results = []
+        if not self.metrics or not self.estimates:
+            raise ValueError("Metrics and estimates must be set in initialization")
         
-        for estimate in estimates:
-            for metric in metrics:
-                result = self.evaluate_pipeline(
-                    df, metric, ground_truth, estimate, **kwargs
-                )
+        results = []
+        for estimate in self.estimates:
+            for metric in self.metrics:
+                result = self.evaluate_single(metric, estimate)
                 results.append(result)
         
-        # Combine and collect all results
         return pl.concat(results).collect()
+    
+    def _build_pipeline(self, df: pl.LazyFrame, 
+                       agg_exprs: list[pl.Expr], 
+                       select_expr: pl.Expr,
+                       agg_groups: list[str] | None,
+                       select_groups: list[str] | None) -> pl.LazyFrame:
+        """Build the evaluation pipeline"""
+        pipeline = df
+        
+        # First-level aggregation if needed
+        if agg_groups is not None and agg_exprs:
+            if agg_groups:
+                pipeline = pipeline.group_by(agg_groups).agg(agg_exprs)
+            else:
+                pipeline = pipeline.select(agg_exprs)
+        
+        # Second-level selection if needed
+        if select_groups is not None:
+            if select_expr is not None:
+                value_expr = select_expr.alias("value").cast(pl.Float64)
+            elif agg_exprs:
+                value_expr = agg_exprs[0].alias("value").cast(pl.Float64)
+            else:
+                raise ValueError("No expression available for selection")
+            
+            if select_groups:
+                pipeline = pipeline.group_by(select_groups).agg(value_expr)
+            else:
+                pipeline = pipeline.select(value_expr)
+        
+        return pipeline
+    
+    def _get_grouping_columns(self, metric_type: MetricType, 
+                             group_by: list[str]) -> tuple[list[str] | None, list[str] | None]:
+        """Determine grouping columns based on metric type"""
+        if metric_type == MetricType.ACROSS_SAMPLES:
+            return None, group_by
+        elif metric_type == MetricType.WITHIN_SUBJECT:
+            return ["subject_id"] + group_by, None
+        elif metric_type == MetricType.ACROSS_SUBJECT:
+            return ["subject_id"] + group_by, group_by
+        elif metric_type == MetricType.WITHIN_VISIT:
+            return ["subject_id", "visit_id"] + group_by, None
+        elif metric_type == MetricType.ACROSS_VISIT:
+            return ["subject_id", "visit_id"] + group_by, group_by
+        else:
+            raise ValueError(f"Unknown metric type: {metric_type}")
+    
