@@ -14,8 +14,8 @@ This document demonstrates the refactored model evaluation framework using Polar
 
 ```{python}
 import polars as pl
-from config_parser import ConfigParser
-from lazy_evaluator import LazyEvaluator
+from metric_factory import MetricFactory
+from metric_evaluator import MetricEvaluator
 from data import get_sample_data
 
 # Get sample data
@@ -32,7 +32,7 @@ df.head()
 The framework supports 5 types of metric aggregations:
 
 ```{python}
-from metric import MetricType
+from metric_data import MetricType
 
 for metric_type in MetricType:
     print(f"{metric_type.value:20} - {metric_type.name}")
@@ -55,12 +55,13 @@ config = {
     ]
 }
 
-parser = ConfigParser(config)
+# Parse metrics from config
+metrics = [MetricFactory.from_yaml(m) for m in config['metrics']]
 
 # Initialize evaluator with complete context
-evaluator = LazyEvaluator(
+evaluator = MetricEvaluator(
     df=df,
-    metrics=parser.metrics,
+    metrics=metrics,
     ground_truth="aval",
     estimates=["model1", "model2"],
     group_by=["treatment"]
@@ -85,7 +86,7 @@ Evaluate a single metric for all configured models:
 
 ```{python}
 # Evaluate just MAE for all models
-mae_results = evaluator.evaluate_metric(parser.metrics[0])
+mae_results = evaluator.evaluate_metric(metrics[0])
 
 print("MAE for all models:")
 mae_results.select(["estimate", "treatment", "value"])
@@ -111,9 +112,9 @@ Evaluate at population level without grouping:
 
 ```{python}
 # Initialize without grouping
-evaluator_pop = LazyEvaluator(
+evaluator_pop = MetricEvaluator(
     df=df,
-    metrics=[parser.metrics[0]],  # Just MAE
+    metrics=[metrics[0]],  # Just MAE
     ground_truth="aval",
     estimates=["model1", "model2"],
     group_by=None  # No grouping
@@ -130,9 +131,9 @@ Group by multiple columns:
 
 ```{python}
 # Initialize with multiple grouping columns
-evaluator_multi = LazyEvaluator(
+evaluator_multi = MetricEvaluator(
     df=df,
-    metrics=[parser.metrics[0]],  # Just MAE
+    metrics=[metrics[0]],  # Just MAE
     ground_truth="aval",
     estimates=["model1", "model2"],
     group_by=["treatment", "gender"]  # Multiple columns
@@ -159,12 +160,13 @@ config_levels = {
     ]
 }
 
-parser_levels = ConfigParser(config_levels)
+# Parse metrics from config
+metrics_levels = [MetricFactory.from_yaml(m) for m in config_levels['metrics']]
 
 # Initialize with subject-level metrics
-evaluator_subject = LazyEvaluator(
+evaluator_subject = MetricEvaluator(
     df=df,
-    metrics=parser_levels.metrics,
+    metrics=metrics_levels,
     ground_truth="aval",
     estimates=["model1"],
     group_by=["treatment"]
@@ -172,7 +174,7 @@ evaluator_subject = LazyEvaluator(
 
 # Evaluate within-subject metric
 within_result = evaluator_subject.evaluate_single(
-    metric=parser_levels.metrics[0],
+    metric=metrics_levels[0],
     estimate="model1"
 ).collect()
 
@@ -183,7 +185,7 @@ within_result.select(["subject_id", "treatment", "value"]).head()
 ```{python}
 # Evaluate across-subject metric
 across_result = evaluator_subject.evaluate_single(
-    metric=parser_levels.metrics[1],
+    metric=metrics_levels[1],
     estimate="model1"
 ).collect()
 
@@ -199,9 +201,9 @@ Filter data during initialization:
 
 ```{python}
 # Initialize with filter - only first 2 visits
-evaluator_filtered = LazyEvaluator(
+evaluator_filtered = MetricEvaluator(
     df=df,
-    metrics=[parser.metrics[0]],  # Just MAE
+    metrics=[metrics[0]],  # Just MAE
     ground_truth="aval",
     estimates=["model1", "model2"],
     group_by=["treatment"],
@@ -222,7 +224,7 @@ You can still evaluate single metric-model pairs directly:
 ```{python}
 # For one-off evaluations, you can call evaluate_single
 single_result = evaluator.evaluate_single(
-    metric=parser.metrics[0],  # MAE
+    metric=metrics[0],  # MAE
     estimate="model1"
 ).collect()
 
@@ -242,7 +244,7 @@ The evaluation follows a 4-stage pipeline:
 ```{python}
 # Show the lazy query plan
 lazy_result = evaluator.evaluate_single(
-    metric=parser.metrics[0],
+    metric=metrics[0],
     estimate="model1"
 )
 
@@ -274,7 +276,7 @@ print("- evaluate_single(metric, estimate): Evaluate one metric-model pair")
 
 The refactored framework with all context at initialization provides:
 
-- **Initialize once** with `LazyEvaluator(df, metrics, estimates, ...)`
+- **Initialize once** with `MetricEvaluator(df, metrics, estimates, ...)`
 - **Simple evaluation** with `evaluate_all()`, `evaluate_metric()`, etc.
 - **Flexible grouping** via `group_by` parameter at initialization
 - **Efficient filtering** applied once during initialization

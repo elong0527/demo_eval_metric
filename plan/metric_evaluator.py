@@ -130,6 +130,46 @@ class MetricEvaluator:
         
         return pl.concat(results).collect()
     
+    def evaluate_metric(self, metric: MetricData) -> pl.DataFrame:
+        """
+        Evaluate a single metric for all configured estimates
+        
+        Args:
+            metric: The metric to evaluate
+            
+        Returns:
+            DataFrame with results for all estimates
+        """
+        if not self.estimates:
+            raise ValueError("Estimates must be set in initialization")
+        
+        results = []
+        for estimate in self.estimates:
+            result = self.evaluate_single(metric, estimate)
+            results.append(result)
+        
+        return pl.concat(results).collect()
+    
+    def evaluate_estimate(self, estimate: str) -> pl.DataFrame:
+        """
+        Evaluate all configured metrics for a single estimate
+        
+        Args:
+            estimate: The estimate/model column to evaluate
+            
+        Returns:
+            DataFrame with results for all metrics
+        """
+        if not self.metrics:
+            raise ValueError("Metrics must be set in initialization")
+        
+        results = []
+        for metric in self.metrics:
+            result = self.evaluate_single(metric, estimate)
+            results.append(result)
+        
+        return pl.concat(results).collect()
+    
     def _build_pipeline(self, df: pl.LazyFrame, 
                        agg_exprs: list[pl.Expr], 
                        select_expr: pl.Expr,
