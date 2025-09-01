@@ -1,0 +1,62 @@
+---
+title: "Polars Eval Metrics"
+---
+
+# Welcome to Polars Eval Metrics
+
+A high-performance model evaluation framework built on Polars lazy evaluation.
+
+## Features
+
+- **Fast**: Leverages Polars lazy evaluation for optimal performance
+- **Flexible**: Support for custom metrics and expressions
+- **Type-safe**: Pydantic models with validation
+- **Simple**: Clean API with sensible defaults
+- **Extensible**: Easy to add new metrics and aggregation types
+
+## Quick Start
+
+```python
+from polars_eval_metrics import MetricEvaluator, MetricFactory
+
+# Define metrics from configuration
+config = {
+    'metrics': [
+        {'name': 'mae', 'label': 'Mean Absolute Error'},
+        {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+    ]
+}
+
+# Create metrics
+metrics = [MetricFactory.from_yaml(m) for m in config['metrics']]
+
+# Evaluate
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model1", "model2"],
+    group_by=["treatment"]
+)
+
+results = evaluator.evaluate_all()
+```
+
+## Installation
+
+To use this package, make sure it's in your Python path:
+
+```bash
+# If running from the repository
+export PYTHONPATH=/path/to/repo/src:$PYTHONPATH
+
+# Or install in development mode
+pip install -e .
+```
+
+## Documentation
+
+- [Getting Started](getting_started.qmd) - Installation and basic concepts
+- [Basic Usage](examples/basic_usage.qmd) - Common use cases
+- [Metric Factory](examples/metric_factory.qmd) - Creating metrics from configuration
+- [Advanced Usage](examples/advanced_usage.qmd) - Custom metrics and advanced features

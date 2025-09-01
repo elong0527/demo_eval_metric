@@ -1,0 +1,27 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "Polars Eval Metrics"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: getting_started.qmd
+        text: Getting Started
+      - href: examples/basic_usage.qmd
+        text: Basic Usage
+      - href: examples/metric_factory.qmd
+        text: Metric Factory
+      - href: examples/advanced_usage.qmd
+        text: Advanced Usage
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+
+execute:
+  freeze: auto

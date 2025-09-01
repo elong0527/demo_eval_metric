@@ -1,0 +1,165 @@
+---
+title: "Getting Started"
+---
+
+# Getting Started with Polars Eval Metrics
+
+This guide will help you get up and running with the polars-eval-metrics package.
+
+## Setup
+
+First, ensure the package is available in your Python environment:
+
+```{python}
+#| echo: false
+import sys
+import os
+sys.path.insert(0, os.path.abspath("../src"))
+```
+
+```{python}
+# Import the package
+import polars as pl
+from polars_eval_metrics import (
+    MetricData,
+    MetricFactory,
+    MetricEvaluator,
+    MetricType,
+    EvaluationConfig
+)
+
+print("Package loaded successfully!")
+```
+
+## Core Concepts
+
+### 1. Metric Types
+
+The framework supports five types of metric aggregations:
+
+```{python}
+# Display available metric types
+for metric_type in MetricType:
+    print(f"- {metric_type.value}: {metric_type.name}")
+```
+
+### 2. Metric Definition
+
+Metrics can be defined in two ways:
+
+#### Programmatically with MetricData
+
+```{python}
+# Define a metric directly
+metric = MetricData(
+    name="mae",
+    label="Mean Absolute Error",
+    type=MetricType.ACROSS_SAMPLES
+)
+
+print(f"Created metric: {metric.name} ({metric.label})")
+```
+
+#### From YAML Configuration with MetricFactory
+
+```{python}
+# Define from configuration
+config = {
+    'name': 'rmse',
+    'label': 'Root Mean Squared Error',
+    'type': 'across_samples'
+}
+
+metric = MetricFactory.from_yaml(config)
+print(f"Created metric: {metric.name} ({metric.label})")
+```
+
+### 3. Sample Data
+
+Let's generate some sample data to work with:
+
+```{python}
+from data_generator import generate_sample_data
+
+# Generate sample data
+df = generate_sample_data(n_subjects=3, n_visits=2, n_groups=2)
+print(f"Data shape: {df.shape}")
+print(f"Columns: {df.columns}")
+
+# Show first few rows
+df.head()
+```
+
+### 4. Basic Evaluation
+
+Now let's evaluate some metrics:
+
+```{python}
+# Define multiple metrics
+metric_configs = [
+    {'name': 'mae', 'label': 'MAE'},
+    {'name': 'rmse', 'label': 'RMSE'},
+    {'name': 'bias', 'label': 'Bias'}
+]
+
+metrics = [MetricFactory.from_yaml(m) for m in metric_configs]
+
+# Create evaluator
+evaluator = MetricEvaluator(
+    df=df,
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model1", "model2"],
+    group_by=["treatment"]
+)
+
+# Evaluate all metrics
+results = evaluator.evaluate_all()
+print(f"Results shape: {results.shape}")
+
+# Display results
+results.select(["metric", "estimate", "treatment", "value"])
+```
+
+### 5. Configuration-Based Workflow
+
+You can also use a complete configuration:
+
+```{python}
+# Complete configuration
+full_config = {
+    'ground_truth': 'actual',
+    'estimates': ['model1', 'model2'],
+    'group_by': ['treatment'],
+    'metrics': [
+        {'name': 'mae', 'label': 'Mean Absolute Error'},
+        {'name': 'mse', 'label': 'Mean Squared Error'}
+    ]
+}
+
+# Load configuration
+eval_config = EvaluationConfig.from_yaml(full_config)
+
+# Create evaluator from config
+evaluator = MetricEvaluator(
+    df=df,
+    **eval_config.to_evaluator_kwargs()
+)
+
+# Evaluate
+results = evaluator.evaluate_all()
+
+# Pivot for better readability
+pivot_results = results.pivot(
+    values="value",
+    index=["treatment", "metric"],
+    on="estimate"
+)
+pivot_results
+```
+
+## Next Steps
+
+- [Basic Usage Examples](examples/basic_usage.qmd) - See more examples
+- [Metric Factory Guide](examples/metric_factory.qmd) - Learn about creating metrics
+- [Advanced Usage](examples/advanced_usage.qmd) - Custom metrics and advanced features
