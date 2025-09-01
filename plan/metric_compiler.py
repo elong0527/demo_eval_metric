@@ -92,8 +92,11 @@ class MetricCompiler:
             select_expr = self.BUILTIN_SELECTORS.get(select_name)
             if select_expr is None:
                 raise ValueError(f"Unknown built-in selector: {select_name}")
+            # If there's a selector, return as aggregation + selection
+            return [agg_expr], select_expr
         
-        return [agg_expr], select_expr
+        # No selector: this is likely ACROSS_SAMPLES, return as selection only
+        return [], agg_expr
     
     def _evaluate_expression(self, expr_str: str) -> pl.Expr:
         """Convert string expression to Polars expression"""

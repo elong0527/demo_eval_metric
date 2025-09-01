@@ -1,0 +1,71 @@
+---
+title: "MetricData Examples"
+format: html
+execute:
+  echo: true
+  warning: false
+---
+
+# MetricData Guide
+
+This document demonstrates how to use `MetricData` for defining and examining metrics.
+
+## Setup
+
+```{python}
+from metric_data import MetricData, MetricType, SharedType
+```
+
+## Creating MetricData
+
+### Basic Built-in Metrics
+
+There are built-in metrics to set up metrics. 
+
+```{python}
+# List all available built-in metrics
+from metric_compiler import MetricCompiler
+
+compiler = MetricCompiler()
+for name, expr in sorted(compiler.BUILTIN_METRICS.items()):
+    print(f"{name}: {expr}")
+```
+
+```{python}
+# Simple MAE metric with automatic label
+mae = MetricData(name="mae", type=MetricType.ACROSS_SAMPLES)
+mae
+```
+
+### Built-in Metrics with Selectors
+
+There are also built-in selectors that allow hirachical 
+structure. 
+
+```{python}
+# List all available built-in metrics
+from metric_compiler import MetricCompiler
+
+compiler = MetricCompiler()
+for name, expr in sorted(compiler.BUILTIN_SELECTORS.items()):
+    print(f"{name}: {expr}")
+```
+
+Using `:` to set <agg_expr:selector_expr> if it is built-in.
+
+```{python}
+# MAE with mean selector for two-level aggregation
+mae_mean = MetricData(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
+mae_mean
+```
+
+## Summary
+
+MetricData provides:
+
+- **Automatic label generation** from metric names
+- **Built-in expression examination** with `examine_builtin()`
+- **Expression compilation viewing** with `show_expressions()`
+- **Multiple display options** with `summary()` and `details()`
+- **Support for all metric types** and sharing strategies
+- **Custom expression support** with validation

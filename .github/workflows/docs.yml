@@ -40,7 +40,7 @@ jobs:
       - name: Build documentation
         run: |
           cd plan
-          quarto render examples.qmd --to html --execute
+          quarto render --to html --execute
           
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

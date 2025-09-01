@@ -9,6 +9,8 @@ website:
     left:
       - text: "Examples"
         file: examples.qmd
+      - text: "Metric & Compiler"
+        file: metric_examples.qmd
       - text: "Class Design"
         file: class_diagram.md
     right:
