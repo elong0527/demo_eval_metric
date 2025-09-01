@@ -32,9 +32,11 @@ plan/
 ├── DESIGN_SUMMARY.md         # Architecture and design documentation
 ├── YAML_PATTERNS.md          # YAML configuration patterns
 ├── evaluation_schema.yaml    # YAML configuration for metrics
+├── metric.py                 # Pydantic Metric model with validation
 ├── yaml_to_pl_lazy.py       # Core translator (minimal, focused)
 ├── data.py                   # Sample data generation
-└── example.py                # Usage examples (no print statements)
+├── example.py                # Usage examples (no print statements)
+└── test_validation.py        # Validation tests for Metric model
 ```
 
 ## Key Implementation Details

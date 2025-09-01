@@ -59,10 +59,10 @@ metrics:
     type: across_subject
     agg:
       expr: 
-        - mae.alias("_value")
-        - pl.col("weight").mean().alias("_weight")
+        - mae  # Built-in metric shorthand (already has .alias("value"))
+        - pl.col("weight").mean().alias("weight")
     select:
-      expr: "(pl.col('_value') * pl.col('_weight')).sum() / pl.col('_weight').sum()"
+      expr: "(pl.col('value') * pl.col('weight')).sum() / pl.col('weight').sum()"
 
   - name: "mae"
     label: "MAE of each subject"
@@ -76,6 +76,6 @@ metrics:
     label: "Percent of samples with absolute error < 1"
     type: across_samples
     select:
-      expr: (pl.col("absolute_error") < 1).mean() * 100
+      expr: ((pl.col("absolute_error") < 1).mean() * 100).alias('value')
   
 
