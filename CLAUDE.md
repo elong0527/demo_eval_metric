@@ -2,7 +2,7 @@
 
 This document provides comprehensive guidance for developing and maintaining the `polars-eval-metrics` package, a high-performance model evaluation framework using Polars lazy evaluation.
 
-## Package Overview
+## Project Overview
 
 **Package Name**: `polars-eval-metrics`  
 **Purpose**: A flexible, high-performance framework for evaluating model predictions with support for hierarchical aggregations, custom metrics, and YAML-based configuration.
@@ -13,17 +13,26 @@ This document provides comprehensive guidance for developing and maintaining the
 - 🔧 **YAML Configuration**: Complete evaluation setup via YAML
 - 🎯 **Type Safety**: Pydantic validation throughout
 - 🔄 **Hierarchical Aggregation**: Support for subject/visit level metrics
+- 📈 **LazyFrame Chain Visualization**: See exact Polars operations via `pl_expr()`
 
 ## Project Structure
 
 ```
 demo_eval_metric/
-├── src/
+├── plan/                        # [FINALIZED - DO NOT MODIFY]
+│   ├── metric_data.py          # Reference implementation
+│   ├── metric_compiler.py      # Expression compilation logic
+│   ├── metric_factory.py       # Factory pattern implementation
+│   ├── metric_evaluator.py     # Evaluation engine
+│   ├── evaluation_config.py    # Configuration management
+│   └── *.qmd                   # Development documentation
+│
+├── src/                         # [PRODUCTION CODE]
 │   └── polars_eval_metrics/
 │       ├── __init__.py
 │       ├── core/
 │       │   ├── __init__.py
-│       │   ├── metric_data.py      # Pure data models (no Polars)
+│       │   ├── metric_data.py      # MetricData with pl_expr() visualization
 │       │   ├── metric_factory.py    # Factory for creating metrics
 │       │   └── metric_compiler.py   # Polars expression compilation
 │       ├── evaluation/
@@ -34,6 +43,14 @@ demo_eval_metric/
 │       │   ├── __init__.py
 │       │   └── data_generator.py    # Sample data generation
 │       └── py.typed                 # PEP 561 type hint marker
+│
+├── docs/                        # [DOCUMENTATION WEBSITE SOURCE]
+│   ├── _quarto.yml             # Quarto configuration for website
+│   ├── index.qmd               # Homepage
+│   ├── getting_started.qmd    # Getting started guide
+│   ├── metric_examples.qmd    # Interactive metric examples
+│   └── _site/                 # [GENERATED - git ignored]
+│
 ├── tests/
 │   ├── __init__.py
 │   ├── unit/
@@ -41,28 +58,86 @@ demo_eval_metric/
 │   │   ├── test_metric_factory.py
 │   │   ├── test_metric_compiler.py
 │   │   └── test_metric_evaluator.py
-│   ├── integration/
-│   │   ├── test_yaml_workflow.py
-│   │   └── test_end_to_end.py
-│   └── fixtures/
-│       ├── sample_configs.yaml
-│       └── sample_data.py
-├── examples/
-│   ├── basic_usage.py
-│   ├── custom_metrics.py
-│   ├── yaml_configuration.py
-│   └── configs/
-│       └── example_evaluation.yaml
-├── docs/
-│   ├── getting_started.md
-│   ├── api_reference.md
-│   ├── configuration_guide.md
-│   └── architecture.md
+│   └── integration/
+│       ├── test_yaml_workflow.py
+│       └── test_end_to_end.py
+│
+├── .github/
+│   └── workflows/
+│       └── docs.yml            # GitHub Actions for documentation website
+│
 ├── pyproject.toml
 ├── README.md
 ├── LICENSE
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── CLAUDE.md                   # This file
 ```
+
+## Directory Purposes
+
+### 📁 `plan/` - Finalized Reference Implementation
+**STATUS: COMPLETE - DO NOT MODIFY**
+
+This directory contains the finalized reference implementation developed during the planning phase. It serves as:
+- Reference architecture for the src/ implementation
+- Development documentation and examples
+- Proof of concept for key features
+
+**Important**: This directory is frozen and should not be modified. All active development happens in `src/`.
+
+### 📁 `src/` - Production Code
+**STATUS: ACTIVE DEVELOPMENT**
+
+The production implementation of the package. Key features:
+- Full implementation based on plan/ reference
+- Includes `pl_expr()` method for LazyFrame chain visualization
+- Type-safe with Pydantic models
+- Optimized for performance with Polars lazy evaluation
+
+### 📁 `docs/` - Documentation Website
+**STATUS: ACTIVE - AUTO-DEPLOYED**
+
+Quarto-based documentation that:
+- Imports from `src/` for live examples
+- Automatically deployed via GitHub Actions
+- Provides interactive examples with LazyFrame chain visualization
+- Shows real output including the `pl_expr()` chains
+
+## Key Implementation Details
+
+### MetricData Class Features
+
+The `MetricData` class in `src/polars_eval_metrics/core/metric_data.py` includes:
+
+```python
+class MetricData(BaseModel):
+    name: str
+    label: str | None = None  # Auto-generated from name if not provided
+    type: MetricType
+    shared_by: SharedType | None = None
+    agg_expr: list[str] | None = None
+    select_expr: str | None = None
+    
+    def pl_expr(self) -> str:
+        """Returns the Polars LazyFrame chain for this metric"""
+        # Shows exact operations like:
+        # (
+        #   pl.LazyFrame
+        #   .group_by('subject_id')
+        #   .agg(col("absolute_error").mean().alias("value"))
+        #   .select(col("value").mean())
+        # )
+```
+
+### Metric Types and Their LazyFrame Chains
+
+| MetricType | LazyFrame Chain Pattern |
+|------------|-------------------------|
+| ACROSS_SAMPLES | `.select(expr)` |
+| WITHIN_SUBJECT | `.group_by('subject_id').agg(expr)` |
+| ACROSS_SUBJECT | `.group_by('subject_id').agg(expr).select(selector)` |
+| WITHIN_VISIT | `.group_by(['subject_id', 'visit_id']).agg(expr)` |
+| ACROSS_VISIT | `.group_by(['subject_id', 'visit_id']).agg(expr).select(selector)` |
 
 ## Development Commands
 
@@ -92,9 +167,18 @@ pytest tests/unit/test_metric_data.py
 
 # Run integration tests only
 pytest tests/integration/
+```
 
-# Run with verbose output
-pytest -v
+### Documentation
+```bash
+# Build documentation locally
+cd docs
+quarto render
+
+# Preview documentation
+quarto preview
+
+# The website is automatically deployed via GitHub Actions on push to main
 ```
 
 ### Code Quality
@@ -110,290 +194,141 @@ ruff check src/ tests/
 
 # Type checking
 mypy src/polars_eval_metrics
-
-# Run all checks (format, lint, type check)
-make quality  # If Makefile is set up
 ```
 
-### Documentation
-```bash
-# Build documentation
-mkdocs build
+## GitHub Actions Documentation Workflow
 
-# Serve documentation locally
-mkdocs serve
+The `.github/workflows/docs.yml` file automatically:
+1. Builds the Quarto documentation from `docs/`
+2. Deploys to GitHub Pages
+3. Runs on every push to main branch
 
-# Generate API documentation
-pdoc --html src/polars_eval_metrics --output-dir docs/api
+Example workflow:
+```yaml
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install quarto
+      
+      - name: Build documentation
+        run: |
+          cd docs
+          quarto render
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/_site
 ```
 
-## Architecture Guidelines
+## API Usage Examples
 
-### 1. Separation of Concerns
-
-The package follows a clean architecture with clear separation:
-
-- **`core/`**: Pure data models and business logic (no framework dependencies)
-  - `metric_data.py`: Pydantic models for metric definitions
-  - `metric_factory.py`: Factory pattern for metric creation
-  - `metric_compiler.py`: Polars-specific expression compilation
-
-- **`evaluation/`**: Evaluation engine and configuration
-  - `metric_evaluator.py`: Main evaluation orchestration
-  - `evaluation_config.py`: YAML configuration management
-
-- **`utils/`**: Helper utilities
-  - `data_generator.py`: Test data generation
-
-### 2. Design Principles
-
-#### Single Responsibility
-Each module has one clear purpose:
-- `MetricData`: Configuration and validation only
-- `MetricCompiler`: Expression compilation only
-- `MetricEvaluator`: Pipeline orchestration only
-- `MetricFactory`: Object creation only
-
-#### Dependency Inversion
-- High-level modules don't depend on low-level details
-- `MetricData` doesn't know about Polars
-- `MetricEvaluator` uses `MetricCompiler` interface
-
-#### Open/Closed Principle
-- Open for extension (new metrics, expressions)
-- Closed for modification (stable interfaces)
-
-### 3. Type Safety
-
-Use type hints throughout:
+### Basic Usage
 ```python
-from typing import Any
-import polars as pl
+from polars_eval_metrics.core import MetricData, MetricType
 
-def evaluate_metric(
-    df: pl.DataFrame | pl.LazyFrame,
-    metric: MetricData,
-    estimate: str
-) -> pl.LazyFrame:
-    ...
+# Create a metric
+mae = MetricData(name="mae", type=MetricType.ACROSS_SAMPLES)
+
+# View the metric details and LazyFrame chain
+print(mae)
+# Output:
+# MetricData(name='mae', type=across_samples)
+#   Label: 'mae'
+#   Shared by: none
+#   Aggregation expressions: none
+#   Selection expression:
+#       - [mae] col("absolute_error").mean().alias("value")
+# 
+# (
+#   pl.LazyFrame
+#   .select(col("absolute_error").mean().alias("value"))
+# )
+
+# Get just the LazyFrame chain
+chain = mae.pl_expr()
 ```
 
-### 4. Error Handling
-
-Provide clear, actionable error messages:
+### Hierarchical Metrics
 ```python
-if not metric_name:
-    raise ValueError(
-        f"Metric '{metric_name}' not found. "
-        f"Available metrics: {', '.join(available_metrics)}"
-    )
-```
-
-## API Design Guidelines
-
-### 1. Configuration-First API
-
-Support both programmatic and YAML configuration:
-```python
-# YAML configuration
-evaluator = MetricEvaluator.from_config(df, "config.yaml")
-
-# Programmatic with overrides
-evaluator = MetricEvaluator.from_config(
-    df, config,
-    group_by=["treatment", "gender"]  # Override
+# Two-level aggregation
+mae_mean = MetricData(
+    name="mae:mean", 
+    type=MetricType.ACROSS_SUBJECT
 )
+
+print(mae_mean.pl_expr())
+# Output:
+# (
+#   pl.LazyFrame
+#   .group_by('subject_id')
+#   .agg(col("absolute_error").mean().alias("value"))
+#   .select(col("value").mean())
+# )
 ```
 
-### 2. Fluent Interfaces
+## Important Development Notes
 
-Enable method chaining where appropriate:
+### 1. DO NOT Modify `plan/` Directory
+The `plan/` directory contains the finalized reference implementation. Any changes should be made in `src/` only.
+
+### 2. Documentation Must Import from `src/`
+All documentation in `docs/` should import from the production code:
 ```python
-factory = (MetricFactory()
-    .from_yaml(config)
-    .add_metric(custom_metric)
-    .validate())
+import sys
+sys.path.append('../src')
+from polars_eval_metrics.core.metric_data import MetricData
 ```
 
-### 3. Sensible Defaults
+### 3. LazyFrame Chain Visualization
+The `pl_expr()` method is a key feature that shows users exactly how their metrics will be computed. Ensure this is prominently featured in documentation.
 
-Provide defaults but allow overrides:
-```python
-class MetricEvaluator:
-    def __init__(self,
-                 ground_truth: str = "actual",  # Sensible default
-                 compiler: MetricCompiler = None):  # Auto-create if None
-        self.compiler = compiler or MetricCompiler()
-```
+### 4. Type Safety
+Always use type hints and Pydantic validation for configuration and data models.
+
+### 5. Performance First
+Leverage Polars lazy evaluation wherever possible. Use `.lazy()` and `.collect()` appropriately.
 
 ## Testing Strategy
 
-### 1. Unit Tests
+### Unit Tests
 Test each component in isolation:
 - Metric validation
-- Expression compilation
+- Expression compilation  
 - Factory creation
 - Configuration parsing
 
-### 2. Integration Tests
+### Integration Tests
 Test component interactions:
 - YAML to evaluation workflow
 - Multiple metric evaluation
 - Group/filter combinations
+- LazyFrame chain execution
 
-### 3. Property-Based Testing
-Use hypothesis for edge cases:
-```python
-from hypothesis import given, strategies as st
-
-@given(st.lists(st.floats()))
-def test_metric_calculation(values):
-    # Test metric properties
-    ...
-```
-
-### 4. Performance Testing
-Benchmark critical paths:
-```python
-import pytest
-
-@pytest.mark.benchmark
-def test_large_dataset_performance(benchmark):
-    result = benchmark(evaluate_metrics, large_df)
-    assert result.shape[0] > 0
-```
-
-## Performance Considerations
-
-### 1. Lazy Evaluation
-Always use LazyFrames for large datasets:
-```python
-# Good
-df_lazy = df.lazy()
-result = df_lazy.filter(...).group_by(...).agg(...).collect()
-
-# Avoid
-result = df.filter(...).group_by(...).agg(...)
-```
-
-### 2. Expression Reuse
-Compile expressions once:
-```python
-# Good
-compiler = MetricCompiler()
-expr = compiler.compile_expression(metric)
-for df in dataframes:
-    result = df.select(expr)
-
-# Avoid
-for df in dataframes:
-    expr = compiler.compile_expression(metric)  # Recompiling
-    result = df.select(expr)
-```
-
-### 3. Memory Management
-Use streaming for large results:
-```python
-# For large datasets
-results = evaluator.evaluate_streaming()
-for chunk in results:
-    process(chunk)
-```
-
-## YAML Configuration Schema
-
-### Complete Configuration Example
-```yaml
-# Data configuration
-data:
-  population: adsv
-  observation: adlb
-
-# Column mappings
-columns:
-  subject_id: usubjid
-  visit_id: visitid
-  ground_truth: aval
-  estimates: [model1, model2]
-  group: [treatment, region]
-  subgroup: [age_group, sex]
-
-# Filters
-filter:
-  - "pl.col('visit_id') <= 3"
-  - "pl.col('treatment').is_not_null()"
-
-# Metrics
-metrics:
-  - name: mae
-    label: Mean Absolute Error
-    type: across_samples
-    
-  - name: rmse_per_subject
-    label: RMSE per Subject
-    type: within_subject
-    
-  - name: custom_weighted_mae
-    label: Weighted MAE
-    type: across_samples
-    agg:
-      expr: 
-        - "pl.col('absolute_error').mean().alias('value')"
-        - "pl.col('weight').sum().alias('total_weight')"
-    select:
-      expr: "pl.col('value') * pl.col('total_weight')"
-```
-
-## Release Process
-
-### 1. Version Management
-Follow semantic versioning (MAJOR.MINOR.PATCH):
-- MAJOR: Breaking API changes
-- MINOR: New features (backward compatible)
-- PATCH: Bug fixes
-
-### 2. Release Checklist
-- [ ] Update CHANGELOG.md
-- [ ] Run full test suite
-- [ ] Update version in pyproject.toml
-- [ ] Create git tag
-- [ ] Build distribution
-- [ ] Upload to PyPI
-
-### 3. Publishing
-```bash
-# Build package
-python -m build
-
-# Test on TestPyPI first
-twine upload --repository testpypi dist/*
-
-# Publish to PyPI
-twine upload dist/*
-```
-
-## Migration from `plan/` to `src/`
-
-### File Mapping
-```
-plan/metric_data.py      → src/polars_eval_metrics/core/metric_data.py
-plan/metric_factory.py   → src/polars_eval_metrics/core/metric_factory.py
-plan/metric_compiler.py  → src/polars_eval_metrics/core/metric_compiler.py
-plan/metric_evaluator.py → src/polars_eval_metrics/evaluation/metric_evaluator.py
-plan/evaluation_config.py → src/polars_eval_metrics/evaluation/evaluation_config.py
-plan/data.py             → src/polars_eval_metrics/utils/data_generator.py
-```
-
-### Import Updates
-```python
-# Old (plan/)
-from metric_data import MetricData
-from metric_evaluator import MetricEvaluator
-
-# New (src/)
-from polars_eval_metrics.core import MetricData
-from polars_eval_metrics.evaluation import MetricEvaluator
-```
+### Documentation Tests
+Ensure all code examples in documentation work:
+- Quarto documents render without errors
+- Examples produce expected output
+- LazyFrame chains are displayed correctly
 
 ## Contributing Guidelines
 
@@ -410,48 +345,39 @@ from polars_eval_metrics.evaluation import MetricEvaluator
 
 ### 3. Documentation
 - Update docstrings
-- Add examples for new features
+- Add examples to docs/
 - Update CHANGELOG.md
 
 ### 4. Pull Request Process
-1. Create feature branch
-2. Write tests first (TDD)
-3. Implement feature
-4. Run quality checks
-5. Update documentation
+1. Create feature branch from main
+2. Make changes in `src/` (never in `plan/`)
+3. Write/update tests
+4. Update documentation
+5. Run quality checks
 6. Submit PR with clear description
 
 ## Common Issues and Solutions
 
-### Issue: Import errors after migration
-**Solution**: Update all imports to use package structure:
+### Issue: Import errors in documentation
+**Solution**: Ensure proper path setup:
 ```python
-from polars_eval_metrics.core import MetricData, MetricFactory
-from polars_eval_metrics.evaluation import MetricEvaluator
+import sys
+sys.path.append('../src')
 ```
+
+### Issue: LazyFrame chain not displaying
+**Solution**: Check that `pl_expr()` method is properly implemented and MetricCompiler handles the metric type correctly.
 
 ### Issue: YAML configuration not loading
-**Solution**: Ensure YAML follows the schema and check for indentation:
-```yaml
-metrics:  # Note: list of metrics
-  - name: mae
-    type: across_samples
-```
-
-### Issue: Performance degradation
-**Solution**: Ensure using LazyFrames and check query plan:
-```python
-lazy_df = df.lazy()
-print(lazy_df.explain())  # Check optimization
-```
+**Solution**: Verify YAML schema and check Pydantic validation errors.
 
 ## Support and Resources
 
-- **Documentation**: [docs/](./docs/)
-- **Examples**: [examples/](./examples/)
+- **Documentation Website**: Auto-deployed to GitHub Pages
+- **Source Code**: `src/polars_eval_metrics/`
+- **Reference Implementation**: `plan/` (read-only)
 - **Issues**: GitHub Issues
-- **Discussions**: GitHub Discussions
-- **API Reference**: [API Docs](./docs/api_reference.md)
+- **API Reference**: Generated from docstrings
 
 ## License
 

@@ -98,3 +98,32 @@ class MetricFactory:
             data['shared_by'] = SharedType(data['shared_by'])
         
         return MetricData(**data)
+    
+    @staticmethod
+    def from_config(config: dict[str, Any]) -> list[MetricData]:
+        """
+        Create a list of MetricData objects from a configuration dictionary
+        
+        Args:
+            config: Configuration dictionary containing 'metrics' key with list of metric configs
+            
+        Returns:
+            List of MetricData instances
+            
+        Example:
+            config = {
+                'metrics': [
+                    {'name': 'mae', 'label': 'Mean Absolute Error'},
+                    {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+                ]
+            }
+            metrics = MetricFactory.from_config(config)
+        """
+        if 'metrics' not in config:
+            raise ValueError("Configuration must contain 'metrics' key")
+        
+        metric_configs = config['metrics']
+        if not isinstance(metric_configs, list):
+            raise ValueError("'metrics' must be a list of metric configurations")
+        
+        return [MetricFactory.from_yaml(m) for m in metric_configs]

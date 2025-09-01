@@ -66,7 +66,13 @@ The main pattern demonstrated across all examples:
 
 ```python
 # 1. Create metrics from configuration
-metrics = [MetricFactory.from_yaml(m) for m in config['metrics']]
+config = {
+    'metrics': [
+        {'name': 'mae', 'label': 'Mean Absolute Error'},
+        {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+    ]
+}
+metrics = MetricFactory.from_config(config)
 
 # 2. Initialize evaluator with complete context
 evaluator = MetricEvaluator(

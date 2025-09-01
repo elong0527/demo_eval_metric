@@ -96,13 +96,16 @@ Now let's evaluate some metrics:
 
 ```{python}
 # Define multiple metrics
-metric_configs = [
-    {'name': 'mae', 'label': 'MAE'},
-    {'name': 'rmse', 'label': 'RMSE'},
-    {'name': 'bias', 'label': 'Bias'}
-]
+config = {
+    'metrics': [
+        {'name': 'mae', 'label': 'MAE'},
+        {'name': 'rmse', 'label': 'RMSE'},
+        {'name': 'bias', 'label': 'Bias'}
+    ]
+}
 
-metrics = [MetricFactory.from_yaml(m) for m in metric_configs]
+# Create metrics directly from config
+metrics = MetricFactory.from_config(config)
 
 # Create evaluator
 evaluator = MetricEvaluator(
@@ -160,6 +163,4 @@ pivot_results
 
 ## Next Steps
 
-- [Basic Usage Examples](examples/basic_usage.qmd) - See more examples
-- [Metric Factory Guide](examples/metric_factory.qmd) - Learn about creating metrics
-- [Advanced Usage](examples/advanced_usage.qmd) - Custom metrics and advanced features
+- [Metric Examples](metric_examples.qmd) - See detailed examples and use cases

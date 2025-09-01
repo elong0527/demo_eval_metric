@@ -27,8 +27,8 @@ config = {
     ]
 }
 
-# Create metrics
-metrics = [MetricFactory.from_yaml(m) for m in config['metrics']]
+# Create metrics directly from config
+metrics = MetricFactory.from_config(config)
 
 # Evaluate
 evaluator = MetricEvaluator(
@@ -57,6 +57,4 @@ pip install -e .
 ## Documentation
 
 - [Getting Started](getting_started.qmd) - Installation and basic concepts
-- [Basic Usage](examples/basic_usage.qmd) - Common use cases
-- [Metric Factory](examples/metric_factory.qmd) - Creating metrics from configuration
-- [Advanced Usage](examples/advanced_usage.qmd) - Custom metrics and advanced features
+- [Metric Examples](metric_examples.qmd) - Detailed examples and use cases
