@@ -13,7 +13,11 @@ This document demonstrates how to use `MetricData` for defining and examining me
 ## Setup
 
 ```{python}
-from metric_data import MetricData, MetricType, SharedType
+import sys
+sys.path.append('../src')
+
+from polars_eval_metrics.core.metric_data import MetricData, MetricType, SharedType
+from polars_eval_metrics.core.metric_compiler import MetricCompiler
 ```
 
 ## Creating MetricData
@@ -24,8 +28,6 @@ There are built-in metrics to set up metrics.
 
 ```{python}
 # List all available built-in metrics
-from metric_compiler import MetricCompiler
-
 compiler = MetricCompiler()
 for name, expr in sorted(compiler.BUILTIN_METRICS.items()):
     print(f"{name}: {expr}")
@@ -44,8 +46,6 @@ structure.
 
 ```{python}
 # List all available built-in metrics
-from metric_compiler import MetricCompiler
-
 compiler = MetricCompiler()
 for name, expr in sorted(compiler.BUILTIN_SELECTORS.items()):
     print(f"{name}: {expr}")
