@@ -61,3 +61,6 @@ venv.bak/
 *.log
 *.tmp
 .uv/
+
+# Quarto/documentation build artifacts
+docs/_site/

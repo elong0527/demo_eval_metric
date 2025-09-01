@@ -39,7 +39,8 @@ class MetricCompiler:
     def compile_expressions(self, 
                           name: str,
                           agg_expr: list[str] | None,
-                          select_expr: str | None) -> tuple[list[pl.Expr], pl.Expr | None]:
+                          select_expr: str | None,
+                          metric_type=None) -> tuple[list[pl.Expr], pl.Expr | None]:
         """
         Compile metric expressions to Polars expressions
         
@@ -47,16 +48,29 @@ class MetricCompiler:
             name: Metric name (may contain built-in references)
             agg_expr: List of aggregation expression strings
             select_expr: Selection expression string
+            metric_type: The type of metric (e.g., MetricType.ACROSS_SAMPLES)
             
         Returns:
             Tuple of (aggregation_expressions, selection_expression)
         """
+        # Import here to avoid circular dependency
+        from .metric_data import MetricType
+        
         # Handle custom expressions
         if agg_expr or select_expr:
-            return self._compile_custom_expressions(agg_expr, select_expr)
+            result = self._compile_custom_expressions(agg_expr, select_expr)
+        else:
+            # Handle built-in metrics
+            result = self._compile_builtin_expressions(name)
         
-        # Handle built-in metrics
-        return self._compile_builtin_expressions(name)
+        # For ACROSS_SAMPLES, move single expression to selection
+        if metric_type == MetricType.ACROSS_SAMPLES:
+            agg_exprs, sel_expr = result
+            if agg_exprs and not sel_expr:
+                # Move aggregation to selection for ACROSS_SAMPLES
+                return [], agg_exprs[0] if len(agg_exprs) == 1 else agg_exprs[0]
+            
+        return result
     
     def _compile_custom_expressions(self, 
                                    agg_expr: list[str] | None,
@@ -92,8 +106,11 @@ class MetricCompiler:
             select_expr = self.BUILTIN_SELECTORS.get(select_name)
             if select_expr is None:
                 raise ValueError(f"Unknown built-in selector: {select_name}")
+            # If there's a selector, return as aggregation + selection
+            return [agg_expr], select_expr
         
-        return [agg_expr], select_expr
+        # No selector: this is likely ACROSS_SAMPLES, return as selection only
+        return [], agg_expr
     
     def _evaluate_expression(self, expr_str: str) -> pl.Expr:
         """Convert string expression to Polars expression"""

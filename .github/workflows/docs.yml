@@ -39,13 +39,13 @@ jobs:
           
       - name: Build documentation
         run: |
-          cd plan
+          cd docs
           quarto render --to html --execute
           
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: plan/_site
+          path: docs/_site
           
   deploy:
     environment:
