@@ -1,0 +1,183 @@
+---
+title: "Model Evaluation Framework Examples"
+format: html
+execute:
+  echo: true
+  warning: false
+---
+
+# Model Evaluation Framework
+
+This document demonstrates the refactored model evaluation framework using Polars lazy evaluation.
+
+## Setup
+
+```{python}
+import polars as pl
+from config_parser import ConfigParser
+from lazy_evaluator import LazyEvaluator
+from data import get_sample_data
+
+# Get sample data
+df = get_sample_data()
+df
+```
+
+## Core Concepts
+
+### Metric Types
+
+The framework supports 5 types of metric aggregations:
+
+```{python}
+from metric import MetricType
+```
+
+## Simple Example: Single Metric
+
+### Across Samples (Population Level)
+
+```{python}
+# Configure a simple MAE metric
+config = {
+    'columns': {'group': [], 'subgroup': []},
+    'metrics': [{
+        'name': 'mae',
+        'type': 'across_samples',
+        'label': 'Mean Absolute Error'
+    }]
+}
+
+# Parse and evaluate
+parser = ConfigParser(config)
+evaluator = LazyEvaluator()
+
+# Evaluate MAE for model1
+result = evaluator.evaluate_pipeline(
+    df=df,
+    metric=parser.metrics[0],
+    ground_truth="aval",
+    estimate="model1",
+    use_group=False,
+    use_subgroup=False
+).collect()
+
+result
+```
+
+### Within Subject (Subject Level)
+
+```{python}
+# Configure subject-level metric
+config = {
+    'columns': {'group': [], 'subgroup': []},
+    'metrics': [{
+        'name': 'mae',
+        'type': 'within_subject',
+        'label': 'MAE per Subject'
+    }]
+}
+
+parser = ConfigParser(config)
+metric = parser.metrics[0]
+
+# Evaluate - returns one value per subject
+result = evaluator.evaluate_pipeline(
+    df=df,
+    metric=metric,
+    ground_truth="aval",
+    estimate="model1",
+    use_group=False,
+    use_subgroup=False
+).collect()
+
+print(f"Result shape: {result.shape}")
+print("\nMAE per subject:")
+print(result.select(["subject_id", "value"]))
+```
+
+### Across Subject (Two-level Aggregation)
+
+```{python}
+# Configure two-level aggregation
+config = {
+    'columns': {'group': [], 'subgroup': []},
+    'metrics': [{
+        'name': 'mae:mean',
+        'type': 'across_subject',
+        'label': 'Mean of Subject MAEs'
+    }]
+}
+
+parser = ConfigParser(config)
+metric = parser.metrics[0]
+
+# First computes MAE per subject, then averages across subjects
+result = evaluator.evaluate_pipeline(
+    df=df,
+    metric=metric,
+    ground_truth="aval",
+    estimate="model1",
+    use_group=False,
+    use_subgroup=False
+).collect()
+
+print("Two-level aggregation result:")
+print(result)
+```
+
+## Grouped Analysis
+
+```{python}
+# Use treatment as grouping variable
+config = {
+    'columns': {
+        'group': ['treatment'],
+        'subgroup': []
+    },
+    'metrics': [{
+        'name': 'mae',
+        'type': 'across_samples',
+        'label': 'MAE by Treatment'
+    }]
+}
+
+parser = ConfigParser(config)
+evaluator = LazyEvaluator(group_cols=['treatment'])
+
+# Evaluate with grouping
+result = evaluator.evaluate_pipeline(
+    df=df,
+    metric=parser.metrics[0],
+    ground_truth="aval",
+    estimate="model1",
+    use_group=True,
+    use_subgroup=False
+).collect()
+
+result
+```
+
+## Multiple Models Comparison
+
+```{python}
+# Compare multiple models
+models = ["model1", "model2"]
+results = []
+
+for model in models:
+    result = evaluator.evaluate_pipeline(
+        df=df,
+        metric=parser.metrics[0],
+        ground_truth="aval",
+        estimate=model,
+        use_group=True,
+        use_subgroup=False
+    )
+    results.append(result)
+
+# Combine results
+combined = pl.concat(results).collect()
+
+combined
+```
