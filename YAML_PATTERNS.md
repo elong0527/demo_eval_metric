@@ -119,18 +119,65 @@ metrics:
 - Use `shared_by` to optimize calculation frequency
 - Single function lookup in registry
 
-### Pattern C: Custom Expressions
+### Pattern C: Custom Expressions with agg.expr and select.expr
 ```yaml
 metrics:
-  - name: "custom_weighted_mae"
-    agg: "(pl.col('absolute_error') * pl.col('weight')).sum() / pl.col('weight').sum()"
-    type: within_subject
+  # Simple select expression (direct aggregation)
+  - name: "ae:pct_threshold"
+    label: "Percent of samples with absolute error < 1"
+    type: across_samples
+    select:
+      expr: (pl.col("absolute_error") < 1).mean() * 100
+  
+  # Multiple aggregation expressions with select
+  - name: "mae:wmean"
+    label: "Weighted Mean of per subject MAE"
+    type: across_subject
+    agg:
+      expr: 
+        - mae.alias("_value")
+        - pl.col("weight").mean().alias("_weight")
+    select:
+      expr: "(pl.col('_value') * pl.col('_weight')).sum() / pl.col('_weight').sum()"
 ```
 
 **Processing Strategy:**
-- Evaluate expressions in sandboxed environment
-- Provide safe namespace with `pl`, column names
-- Apply same grouping logic based on `type`
+
+#### agg.expr Pattern (Aggregation Expressions)
+- `agg.expr`: Can be a single expression or list of expressions
+- For list: All expressions are computed in the aggregation step
+- Built-in metrics (like `mae`) can be used directly in expressions
+
+```python
+# Single expression
+agg:
+  expr: pl.col("absolute_error").mean()
+
+# Multiple expressions (list)
+agg:
+  expr:
+    - mae.alias("_value")  # Built-in metric reference
+    - pl.col("weight").mean().alias("_weight")
+```
+
+#### select.expr Pattern (Selection/Post-aggregation)
+- `select.expr`: Applied after first-level aggregation
+- When used alone: Acts as the primary aggregation expression
+- When used with `agg.expr`: Transforms the aggregated results
+
+```python
+# When select.expr is used alone (no agg.expr)
+if select_expr and not agg_expr:
+    return select_expr  # Used as main aggregation
+
+# When both agg.expr and select.expr are present
+# Step 1: First-level aggregation with agg.expr
+first_agg = lf.group_by(first_group).agg(agg_expr_list)
+
+# Step 2: Second-level selection with select.expr
+result = first_agg.group_by(second_group).agg(
+    select_expr.alias("value")
+)
 
 ## 2. Aggregation Level Patterns
 

@@ -19,7 +19,7 @@ columns:
   
   # Model evaluation columns
   ground_truth: aval
-  estimates: [est1, est2, est3]  # Multiple models
+  estimates: [model1, model2]  # Multiple models
   
   # Grouping variables
   group: [trt01a, region]        # Hierarchical groups
@@ -51,9 +51,19 @@ metrics:
 
   - name: "mae:mean"
     label: "Mean of per subject MAE"
-    parameters:
-      weight_within: adlb.weight
-  
+    type: across_subject
+
+  # an example of customized wegithed mean. 
+  - name: "mae:wmean"
+    label: "Weighted Mean of per subject MAE"
+    type: across_subject
+    agg:
+      expr: 
+        - mae.alias("_value")
+        - pl.col("weight").mean().alias("_weight")
+    select:
+      expr: "(pl.col('_value') * pl.col('_weight')).sum() / pl.col('_weight').sum()"
+
   - name: "mae"
     label: "MAE of each subject"
     type: within_subject
@@ -64,8 +74,8 @@ metrics:
   
   - name: "ae:pct_threshold" 
     label: "Percent of samples with absolute error < 1"
-    type: across_sample
-    select_parameters:
-      upper: 1
+    type: across_samples
+    select:
+      expr: (pl.col("absolute_error") < 1).mean() * 100
   
 
