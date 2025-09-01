@@ -1,0 +1,71 @@
+# Minimal YAML for model evaluation
+
+data: 
+  # Data sources (supports joining multiple datasets)
+  population: adsv       # Subject-level data
+  observation: adlb      # Measurement-level data
+  
+# Data filtering
+filter:
+  - adsv.enrlfl == True
+  - adlb.anafl == True
+
+# Column mappings
+columns:
+  # Required identifiers
+  subject_id: usubjid
+  visit_id: visitid
+  time: adt
+  
+  # Model evaluation columns
+  ground_truth: aval
+  estimates: [est1, est2, est3]  # Multiple models
+  
+  # Grouping variables
+  group: [trt01a, region]        # Hierarchical groups
+  subgroup: [agegr1, sex, race]  # Marginal subgroups
+  
+  additional_variables: [var1, var2]
+
+metrics:
+
+  - name: "total_subject"         
+    label: "Total Number of Subjects"
+    type: across_samples
+    shared_by: all              # Same value used for all models / group / subgroup.
+    
+  - name: "n_subject"
+    label: "Number of Subjects"
+    type: across_samples
+    shared_by: model            # Same value used for all models
+  
+  - name: "n_visit"
+    label: "Number of Visits"
+    type: across_samples
+    shared_by: model                
+
+  - name: "n_sample"
+    label: "Number of Samples"
+    type: across_samples
+    shared_by: model
+
+  - name: "mae:mean"
+    label: "Mean of per subject MAE"
+    parameters:
+      weight_within: adlb.weight
+  
+  - name: "mae"
+    label: "MAE of each subject"
+    type: within_subject
+
+  - name: "rmse:mean" 
+    label: "Mean of per visit RMSE"
+    type: across_visit
+  
+  - name: "ae:pct_threshold" 
+    label: "Percent of samples with absolute error < 1"
+    type: across_sample
+    select_parameters:
+      upper: 1
+  
+
