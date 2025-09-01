@@ -69,7 +69,10 @@ evaluator = MetricEvaluator(
 
 # Evaluate all metrics for all models - no arguments needed!
 results = evaluator.evaluate_all()
+results
+```
 
+```{python}
 # Display as pivot table
 summary = results.pivot(
     values="value",
@@ -121,8 +124,7 @@ evaluator_pop = MetricEvaluator(
 )
 
 results = evaluator_pop.evaluate_all()
-print("Population-level MAE:")
-results.select(["estimate", "value"])
+results 
 ```
 
 ### Example 5: Multiple Grouping Columns
@@ -140,8 +142,7 @@ evaluator_multi = MetricEvaluator(
 )
 
 results = evaluator_multi.evaluate_all()
-print("MAE by treatment and gender:")
-results.select(["estimate", "treatment", "gender", "value"])
+results
 ```
 
 ## Different Metric Types
