@@ -115,10 +115,7 @@ evaluator = MetricEvaluator(
 
 # Evaluate all metrics
 results = evaluator.evaluate_all()
-print(f"Results shape: {results.shape}")
-
-# Display results
-results.select(["metric", "estimate", "treatment", "value"])
+results
 ```
 
 ### 5. Configuration-Based Workflow
@@ -148,7 +145,10 @@ evaluator = MetricEvaluator(
 
 # Evaluate
 results = evaluator.evaluate_all()
+results
+```
 
+```{python}
 # Pivot for better readability
 pivot_results = results.pivot(
     values="value",
