@@ -72,7 +72,7 @@ config = {
         {'name': 'rmse', 'label': 'Root Mean Squared Error'}
     ]
 }
-metrics = MetricFactory.from_config(config)
+metrics = MetricFactory.from_dict(config)
 
 # 2. Initialize evaluator with complete context
 evaluator = MetricEvaluator(

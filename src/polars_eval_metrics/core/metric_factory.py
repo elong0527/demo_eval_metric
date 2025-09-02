@@ -59,7 +59,7 @@ class MetricFactory:
         return metric
     
     @staticmethod
-    def from_config(config: dict[str, Any]) -> list[MetricDefine]:
+    def from_dict(config: dict[str, Any]) -> list[MetricDefine]:
         """
         Create a list of MetricDefine objects from a configuration dictionary
         
@@ -76,7 +76,7 @@ class MetricFactory:
                     {'name': 'rmse', 'label': 'Root Mean Squared Error'}
                 ]
             }
-            metrics = MetricFactory.from_config(config)
+            metrics = MetricFactory.from_dict(config)
         """
         if 'metrics' not in config:
             raise ValueError("Configuration must contain 'metrics' key")

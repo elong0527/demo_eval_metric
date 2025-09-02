@@ -106,7 +106,7 @@ config = {
 }
 
 # Create metrics directly from config
-metrics = MetricFactory.from_config(config)
+metrics = MetricFactory.from_dict(config)
 
 # Create evaluator
 evaluator = MetricEvaluator(
