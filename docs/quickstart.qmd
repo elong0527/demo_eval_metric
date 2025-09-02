@@ -1,8 +1,8 @@
 ---
-title: "Getting Started"
+title: "Quick Start"
 ---
 
-# Getting Started with Polars Eval Metrics
+# Quick Start with Polars Eval Metrics
 
 [![codecov](https://codecov.io/gh/elong0527/demo_eval_metric/branch/main/graph/badge.svg)](https://codecov.io/gh/elong0527/demo_eval_metric)
 [![Tests](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml/badge.svg)](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml)

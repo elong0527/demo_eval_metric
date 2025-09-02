@@ -60,5 +60,5 @@ pip install -e .
 
 ## Documentation
 
-- [Getting Started](getting_started.qmd) - Installation and basic concepts
+- [Quick Start](quickstart.qmd) - Installation and basic concepts
 - [Metric Examples](metric.qmd) - Detailed examples and use cases
