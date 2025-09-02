@@ -34,7 +34,7 @@ demo_eval_metric/
 |       |   +-- __init__.py
 |       |   +-- metric_define.py     # MetricDefine class - metric definition
 |       |   +-- metric_factory.py    # MetricFactory - creates metrics from YAML
-|       |   +-- builtin.py          # Built-in metrics and selectors
+|       |   +-- metric_registry.py   # Unified registry for all expressions
 |       +-- evaluation/         # Evaluation engine
 |       |   +-- __init__.py
 |       |   +-- metric_evaluator.py  # MetricEvaluator - executes evaluations
@@ -69,19 +69,44 @@ demo_eval_metric/
 
 ```mermaid
 graph TD
-    A[MetricDefine] -->|created by| B[MetricFactory]
-    B -->|used by| C[EvaluationConfig]
-    C -->|configures| D[MetricEvaluator]
-    E[builtin.py] -->|provides| A
+    A[MetricRegistry] -->|provides expressions to| B[MetricDefine]
+    B -->|created by| C[MetricFactory]
+    C -->|used by| D[EvaluationConfig]
+    D -->|configures| E[MetricEvaluator]
+    A -->|provides error columns to| E
 ```
 
-### 1. **MetricDefine** (`core/metric_define.py`)
+### 1. **MetricRegistry** (`core/metric_registry.py`)
+**Purpose**: Unified registry for all expression types  
+**Responsibilities**:
+- Manage error expressions (data preparation)
+- Manage metric expressions (aggregation)
+- Manage selector expressions (second-level aggregation)
+- Provide consistent API for registration and retrieval
+
+**Key Features**:
+```python
+# Error expressions
+MetricRegistry.register_error(name, func)
+MetricRegistry.get_error(name, estimate, ground_truth, **params)
+MetricRegistry.generate_error_columns(estimate, ground_truth, error_types)
+
+# Metric expressions
+MetricRegistry.register_metric(name, expr)
+MetricRegistry.get_metric(name)
+
+# Selector expressions
+MetricRegistry.register_selector(name, expr)
+MetricRegistry.get_selector(name)
+```
+
+### 2. **MetricDefine** (`core/metric_define.py`)
 **Purpose**: Core metric definition class  
 **Responsibilities**:
 - Define metric properties (name, label, type, scope)
 - Hold aggregation and selection expressions
 - Validate metric configuration
-- Support both built-in and custom expressions
+- Resolve expressions from MetricRegistry
 
 **Key Features**:
 ```python
@@ -94,7 +119,7 @@ class MetricDefine:
     select_expr: str | pl.Expr         # Selection expression
 ```
 
-### 2. **MetricFactory** (`core/metric_factory.py`)
+### 3. **MetricFactory** (`core/metric_factory.py`)
 **Purpose**: Factory pattern for creating MetricDefine instances  
 **Responsibilities**:
 - Parse YAML/dict configuration
@@ -110,7 +135,7 @@ def from_yaml(config: dict) -> MetricDefine
 def from_dict(config: dict) -> list[MetricDefine]
 ```
 
-### 3. **EvaluationConfig** (`evaluation/config.py`)
+### 4. **EvaluationConfig** (`evaluation/config.py`)
 **Purpose**: Complete evaluation configuration container  
 **Responsibilities**:
 - Hold all evaluation settings
@@ -127,19 +152,14 @@ metrics: list[MetricDefine]   # Metrics to evaluate
 filter_expr: str | None       # Optional filter
 ```
 
-### 4. **MetricEvaluator** (`evaluation/metric_evaluator.py`)
+### 5. **MetricEvaluator** (`evaluation/metric_evaluator.py`)
 **Purpose**: Main evaluation engine  
 **Responsibilities**:
 - Execute metric evaluations on data
+- Generate error columns using MetricRegistry
 - Handle hierarchical aggregations
 - Apply filters and grouping
 - Return results as Polars DataFrames
-
-### 5. **Built-in Metrics** (`core/builtin.py`)
-**Purpose**: Pre-defined metrics and selectors  
-**Content**:
-- `BUILTIN_METRICS`: Common metrics (mae, rmse, etc.)
-- `BUILTIN_SELECTORS`: Aggregation selectors (mean, median, etc.)
 
 ## Metric Types and Aggregation Patterns
 
@@ -210,14 +230,36 @@ quarto preview
 
 ## API Usage Examples
 
-### Basic Usage
+### Using the Unified MetricRegistry
+```python
+from polars_eval_metrics import MetricRegistry
+import polars as pl
+
+# Register custom error type
+MetricRegistry.register_error('within_threshold', 
+    lambda est, gt, threshold=1.0: (pl.col(est) - pl.col(gt)).abs() <= threshold)
+
+# Register custom metric using the error type
+MetricRegistry.register_metric('accuracy',
+    pl.col('within_threshold').mean() * 100)
+
+# Register custom selector
+MetricRegistry.register_selector('p90', pl.col('value').quantile(0.9))
+
+# List available expressions
+print(MetricRegistry.list_errors())    # All error types
+print(MetricRegistry.list_metrics())   # All metrics
+print(MetricRegistry.list_selectors()) # All selectors
+```
+
+### Basic Metric Definition
 ```python
 from polars_eval_metrics import MetricDefine, MetricType
 
-# Simple metric
+# Simple metric using built-in expression
 mae = MetricDefine(name="mae")
 
-# Custom metric
+# Custom metric with inline expression
 pct_accurate = MetricDefine(
     name="pct_within_1",
     label="% Within +/- 1",
@@ -318,6 +360,26 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 
 ## Common Patterns
 
+### Registering Custom Expressions
+```python
+# Register custom error type with parameters
+def buffer_error(estimate: str, ground_truth: str, buffer: float = 0.5):
+    return (pl.col(estimate) - pl.col(ground_truth)).abs() <= buffer
+
+MetricRegistry.register_error('buffer_error', buffer_error)
+
+# Register metric that uses the custom error
+MetricRegistry.register_metric('buffer_accuracy',
+    pl.col('buffer_error').mean() * 100)
+
+# Use in evaluation
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[MetricDefine(name='buffer_accuracy')],
+    # ... other parameters
+)
+```
+
 ### Creating Custom Metrics
 ```python
 # Pattern 1: Simple custom expression
@@ -326,11 +388,11 @@ metric = MetricDefine(
     select_expr=pl.col("error").abs().mean()
 )
 
-# Pattern 2: Using built-in with custom selector
+# Pattern 2: Using registered metric with custom selector
 metric = MetricDefine(
     name="mae_p90",
     type=MetricType.ACROSS_SUBJECT,
-    agg_expr="mae",  # Built-in
+    agg_expr="mae",  # From registry
     select_expr=pl.col("value").quantile(0.9)  # Custom
 )
 
@@ -368,16 +430,15 @@ from polars_eval_metrics import MetricDefine
 
 ### Planned Features
 1. **pl_expr() method**: Show LazyFrame chain visualization
-2. **Metric Compiler**: Separate expression compilation logic
-3. **More built-in metrics**: Expand the metric library
-4. **Performance benchmarks**: Add performance testing suite
-5. **CLI interface**: Command-line evaluation tool
+2. **More built-in expressions**: Expand the registry with more error types, metrics, and selectors
+3. **Performance benchmarks**: Add performance testing suite
+4. **CLI interface**: Command-line evaluation tool
+5. **Expression composition**: Build complex metrics from simpler ones
 
-### Refactoring Opportunities
-1. Consider separating MetricCompiler from MetricDefine
-2. Add metric registry pattern for built-ins
-3. Implement metric composition patterns
-4. Add async evaluation support
+### Completed Features
+- ✅ **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
+- ✅ **Custom Expression Support**: Easy registration of custom expressions
+- ✅ **Clean Architecture**: Separation of concerns between definition and evaluation
 
 ## Contributing Guidelines
 
@@ -405,5 +466,6 @@ from polars_eval_metrics import MetricDefine
 
 ---
 
-*Last updated: 2024-12-02*  
-*Maintainer: Engineering Team*
+*Last updated: 2025-01-02*  
+*Maintainer: Engineering Team*  
+*Major Update: Unified MetricRegistry system - all expressions in one place*

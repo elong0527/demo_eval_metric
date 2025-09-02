@@ -59,17 +59,21 @@ class MetricEvaluator:
     def _prepare_error_columns(self, df: pl.LazyFrame, estimate: str) -> pl.LazyFrame:
         """Add error columns for a specific estimate using unified MetricRegistry"""
         from ..core import MetricRegistry
-        
+
         # Use default built-in error types for backward compatibility
-        error_types = ["error", "absolute_error", "squared_error", "percent_error", "absolute_percent_error"]
-        
+        error_types = [
+            "error",
+            "absolute_error",
+            "squared_error",
+            "percent_error",
+            "absolute_percent_error",
+        ]
+
         # Generate error expressions using the unified registry
         error_expressions = MetricRegistry.generate_error_columns(
-            estimate=estimate,
-            ground_truth=self.ground_truth,
-            error_types=error_types
+            estimate=estimate, ground_truth=self.ground_truth, error_types=error_types
         )
-        
+
         return df.with_columns(error_expressions)
 
     def evaluate_single(self, metric: MetricDefine, estimate: str) -> pl.LazyFrame:
