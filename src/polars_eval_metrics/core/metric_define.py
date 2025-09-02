@@ -6,9 +6,10 @@ providing a single class for defining metrics and preparing Polars expressions.
 """
 
 from enum import Enum
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator, ConfigDict
 from typing import Self
 import polars as pl
+import textwrap
 from .builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
 
 
@@ -36,13 +37,14 @@ class MetricDefine(BaseModel):
     expressions to Polars expressions, focusing solely on defining and
     preparing metrics for evaluation.
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     
     name: str
     label: str | None = None
     type: MetricType = MetricType.ACROSS_SAMPLES
     scope: MetricScope | None = None
-    agg_expr: list[str] | None = None
-    select_expr: str | None = None
+    agg_expr: list[str | pl.Expr] | None = None
+    select_expr: str | pl.Expr | None = None
     
     def __init__(self, **kwargs):
         """Initialize with default label if not provided"""
@@ -68,29 +70,56 @@ class MetricDefine(BaseModel):
             raise ValueError("Metric label cannot be empty")
         return v.strip()
     
-    @field_validator('agg_expr')
+    @field_validator('agg_expr', mode='before')
     @classmethod
-    def validate_agg_expr(cls, v: list[str] | None) -> list[str] | None:
-        """Validate aggregation expressions are not empty"""
+    def normalize_agg_expr(cls, v):
+        """Convert single string to list before validation"""
         if v is None:
             return None
+        if isinstance(v, str):
+            return [v]  # Convert single string to list
+        if isinstance(v, pl.Expr):
+            return [v]  # Convert single expression to list
+        return v  # Already a list or something else
+    
+    @field_validator('agg_expr')
+    @classmethod
+    def validate_agg_expr(cls, v: list[str | pl.Expr] | None) -> list[str | pl.Expr] | None:
+        """Validate aggregation expressions list"""
+        if v is None:
+            return None
+        
+        if not isinstance(v, list):
+            raise ValueError(f"agg_expr must be a list after normalization, got {type(v)}")
+        
         if not v:
             raise ValueError("agg_expr cannot be an empty list")
         
-        for expr in v:
-            if not expr or not expr.strip():
-                raise ValueError("agg_expr cannot contain empty expressions")
+        for i, item in enumerate(v):
+            if isinstance(item, str):
+                if not item.strip():
+                    raise ValueError(f"agg_expr[{i}]: Built-in metric name cannot be empty")
+            elif not isinstance(item, pl.Expr):
+                raise ValueError(f"agg_expr[{i}] must be a string (built-in name) or Polars expression, got {type(item)}")
         
         return v
     
     @field_validator('select_expr')
     @classmethod
-    def validate_select_expr(cls, v: str | None) -> str | None:
-        """Validate select expression is not empty"""
+    def validate_select_expr(cls, v: str | pl.Expr | None) -> str | pl.Expr | None:
+        """Validate select expression - can be built-in selector name or Polars expression"""
         if v is None:
             return None
-        if not v.strip():
-            raise ValueError("select_expr cannot be empty")
+        
+        # If it's a string, validate it's not empty (will check if valid built-in during compile)
+        if isinstance(v, str):
+            if not v.strip():
+                raise ValueError("Built-in selector name cannot be empty")
+            return v.strip()
+        
+        # Otherwise it must be a Polars expression
+        if not isinstance(v, pl.Expr):
+            raise ValueError(f"select_expr must be a string (built-in selector) or Polars expression, got {type(v)}")
         return v
     
     @model_validator(mode='after')
@@ -100,12 +129,12 @@ class MetricDefine(BaseModel):
         
         if is_custom:
             # Custom metrics must have at least one expression
-            if not self.agg_expr and not self.select_expr:
+            if self.agg_expr is None and self.select_expr is None:
                 raise ValueError("Custom metrics must have at least agg_expr or select_expr")
             
             # For two-level aggregation with multiple agg_expr, select_expr is required
             if self.type in (MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT):
-                if self.agg_expr and len(self.agg_expr) > 1 and not self.select_expr:
+                if self.agg_expr and len(self.agg_expr) > 1 and self.select_expr is None:
                     raise ValueError(
                         f"select_expr required for multiple agg expressions in {self.type.value}"
                     )
@@ -126,7 +155,7 @@ class MetricDefine(BaseModel):
             Tuple of (aggregation_expressions, selection_expression)
         """
         # Handle custom expressions
-        if self.agg_expr or self.select_expr:
+        if self.agg_expr is not None or self.select_expr is not None:
             result = self._compile_custom_expressions()
         else:
             # Handle built-in metrics
@@ -135,24 +164,44 @@ class MetricDefine(BaseModel):
         # For ACROSS_SAMPLES, move single expression to selection
         if self.type == MetricType.ACROSS_SAMPLES:
             agg_exprs, sel_expr = result
-            if agg_exprs and not sel_expr:
+            if agg_exprs and sel_expr is None:
                 # Move aggregation to selection for ACROSS_SAMPLES
                 return [], agg_exprs[0] if len(agg_exprs) == 1 else agg_exprs[0]
         
         return result
     
     def _compile_custom_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
-        """Compile custom metric expressions"""
+        """Return custom metric expressions - handle built-in names and Polars expressions in list"""
         agg_exprs = []
-        if self.agg_expr:
-            agg_exprs = [self._evaluate_expression(expr) for expr in self.agg_expr]
         
+        # Handle agg_expr - always a list after normalization
+        if self.agg_expr is not None:
+            # List - resolve each item
+            for item in self.agg_expr:
+                if isinstance(item, str):
+                    # Built-in metric name
+                    builtin_expr = BUILTIN_METRICS.get(item)
+                    if builtin_expr is None:
+                        raise ValueError(f"Unknown built-in metric in agg_expr: {item}")
+                    agg_exprs.append(builtin_expr)
+                else:
+                    # Already a Polars expression
+                    agg_exprs.append(item)
+        
+        # Handle select_expr - can be string (built-in selector) or expression
         select_pl_expr = None
-        if self.select_expr:
-            select_pl_expr = self._evaluate_expression(self.select_expr)
+        if self.select_expr is not None:
+            if isinstance(self.select_expr, str):
+                # Built-in selector name
+                select_pl_expr = BUILTIN_SELECTORS.get(self.select_expr)
+                if select_pl_expr is None:
+                    raise ValueError(f"Unknown built-in selector in select_expr: {self.select_expr}")
+            else:
+                # Already a Polars expression
+                select_pl_expr = self.select_expr
         
         # If only select_expr provided (no agg_expr), use it as single aggregation
-        if not agg_exprs and select_pl_expr is not None:
+        if len(agg_exprs) == 0 and select_pl_expr is not None:
             return [select_pl_expr], None
         
         return agg_exprs, select_pl_expr
@@ -179,20 +228,6 @@ class MetricDefine(BaseModel):
         # No selector: this is likely ACROSS_SAMPLES, return as selection only
         return [], agg_expr
     
-    def _evaluate_expression(self, expr_str: str) -> pl.Expr:
-        """Convert string expression to Polars expression"""
-        namespace = {
-            'pl': pl,
-            'col': pl.col,
-            'lit': pl.lit,
-            'len': pl.len,
-            'struct': pl.struct,
-        }
-        
-        try:
-            return eval(expr_str, namespace, {})
-        except Exception as e:
-            raise ValueError(f"Failed to evaluate expression '{expr_str}': {e}")
     
     def get_pl_chain(self) -> str:
         """
@@ -205,45 +240,125 @@ class MetricDefine(BaseModel):
         
         chain_lines = ["(", "  pl.LazyFrame"]
         
+        # Helper to clean and format Polars expressions
+        def clean_expr(expr_str: str) -> str:
+            """Remove Polars internal representation artifacts"""
+            # Remove "dyn type:" prefixes
+            import re
+            cleaned = re.sub(r'dyn \w+:\s*', '', expr_str)
+            # Remove outer brackets if they wrap the entire expression
+            if cleaned.startswith('[') and cleaned.endswith(']'):
+                cleaned = cleaned[1:-1]
+            # Clean up nested brackets
+            cleaned = cleaned.replace('[(', '(').replace(')]', ')')
+            return cleaned
+        
+        def format_expr(expr, max_width=70):
+            """Format a single expression with text wrapping"""
+            expr_str = clean_expr(str(expr))
+            
+            # If short enough, return as-is
+            if len(expr_str) <= max_width:
+                return expr_str
+            
+            # Use textwrap for longer expressions
+            return textwrap.fill(
+                expr_str,
+                width=max_width,
+                subsequent_indent="      ",
+                break_long_words=False,
+                break_on_hyphens=False
+            )
+        
+        # Helper to format multiple expressions with proper indentation
+        def format_exprs(exprs, indent="    "):
+            if len(exprs) == 1:
+                return format_expr(exprs[0])
+            else:
+                # Format as multi-line list for readability
+                lines = ["["]
+                for i, expr in enumerate(exprs):
+                    formatted = format_expr(expr)
+                    # Add comma except for last item
+                    comma = "," if i < len(exprs) - 1 else ""
+                    
+                    # Handle multi-line expressions
+                    expr_lines = formatted.split('\n')
+                    if len(expr_lines) == 1:
+                        lines.append(f"{indent}  {formatted}{comma}")
+                    else:
+                        lines.append(f"{indent}  {expr_lines[0]}")
+                        for line in expr_lines[1:]:
+                            lines.append(f"{indent}  {line}")
+                        lines[-1] += comma  # Add comma to last line
+                        
+                lines.append(f"{indent}]")
+                return "\n".join(lines)
+        
         # Determine the chain based on metric type
         if self.type == MetricType.ACROSS_SAMPLES:
             # Simple aggregation across all samples
             if select_expr is not None:
-                chain_lines.append(f"  .select({select_expr})")
+                chain_lines.append(f"  .select({format_expr(select_expr)})")
             elif agg_exprs:
-                chain_lines.append(f"  .select({agg_exprs[0]})")
+                if len(agg_exprs) == 1:
+                    chain_lines.append(f"  .select({format_expr(agg_exprs[0])})")
+                else:
+                    chain_lines.append("  .select(")
+                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append("  )")
                 
         elif self.type == MetricType.WITHIN_SUBJECT:
             # Group by subject, then aggregate
             chain_lines.append("  .group_by('subject_id')")
             if select_expr is not None:
-                chain_lines.append(f"  .agg({select_expr})")
+                chain_lines.append(f"  .agg({format_expr(select_expr)})")
             elif agg_exprs:
-                chain_lines.append(f"  .agg({agg_exprs[0]})")
+                if len(agg_exprs) == 1:
+                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                else:
+                    chain_lines.append("  .agg(")
+                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append("  )")
                 
         elif self.type == MetricType.ACROSS_SUBJECT:
             # Two-level: group by subject, aggregate, then aggregate across
             if agg_exprs:
                 chain_lines.append("  .group_by('subject_id')")
-                chain_lines.append(f"  .agg({agg_exprs[0]})")
+                if len(agg_exprs) == 1:
+                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                else:
+                    chain_lines.append("  .agg(")
+                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append("  )")
             if select_expr is not None:
-                chain_lines.append(f"  .select({select_expr})")
+                chain_lines.append(f"  .select({format_expr(select_expr)})")
                 
         elif self.type == MetricType.WITHIN_VISIT:
             # Group by subject and visit
             chain_lines.append("  .group_by(['subject_id', 'visit_id'])")
             if select_expr is not None:
-                chain_lines.append(f"  .agg({select_expr})")
+                chain_lines.append(f"  .agg({format_expr(select_expr)})")
             elif agg_exprs:
-                chain_lines.append(f"  .agg({agg_exprs[0]})")
+                if len(agg_exprs) == 1:
+                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                else:
+                    chain_lines.append("  .agg(")
+                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append("  )")
                 
         elif self.type == MetricType.ACROSS_VISIT:
             # Two-level: group by visit, aggregate, then aggregate across
             if agg_exprs:
                 chain_lines.append("  .group_by(['subject_id', 'visit_id'])")
-                chain_lines.append(f"  .agg({agg_exprs[0]})")
+                if len(agg_exprs) == 1:
+                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                else:
+                    chain_lines.append("  .agg(")
+                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append("  )")
             if select_expr is not None:
-                chain_lines.append(f"  .select({select_expr})")
+                chain_lines.append(f"  .select({format_expr(select_expr)})")
         
         chain_lines.append(")")
         
@@ -269,19 +384,28 @@ class MetricDefine(BaseModel):
             # Show aggregation expressions (only if they exist)
             if agg_exprs:
                 lines.append("  Aggregation expressions:")
-                for expr in agg_exprs:
-                    source = "custom" if self.agg_expr else base_name
+                for i, expr in enumerate(agg_exprs):
+                    # Determine source for each expression
+                    if self.agg_expr is not None and i < len(self.agg_expr):
+                        item = self.agg_expr[i]
+                        source = item if isinstance(item, str) else "custom"
+                    else:
+                        source = base_name  # From metric name
                     lines.append(f"    - [{source}] {expr}")
             
             # Show selection expression (only if it exists)
             if select_expr is not None:
                 lines.append("  Selection expression:")
-                if self.select_expr:
-                    lines.append(f"    - [custom] {select_expr}")
+                # Determine source for selection expression
+                if isinstance(self.select_expr, str):
+                    source = self.select_expr  # Built-in selector name
+                elif self.select_expr is not None:
+                    source = "custom"  # Custom expression
                 elif selector_name:
-                    lines.append(f"    - [{selector_name}] {select_expr}")
+                    source = selector_name  # From metric name's selector part
                 else:
-                    lines.append(f"    - [{base_name}] {select_expr}")
+                    source = base_name  # From metric name
+                lines.append(f"    - [{source}] {select_expr}")
             
             # Add the LazyFrame chain
             lines.append("")

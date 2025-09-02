@@ -45,19 +45,18 @@ MetricDefine(name="mae")
    - For `across_samples` metrics, it's a simple `.select()` operation
    - This enables efficient lazy evaluation
 
-### What Happens Behind the Scenes
-
-`MetricDefine` automatically:
-- Recognizes "mae" as a built-in metric and loads its formula
-- Sets appropriate defaults for the aggregation type and label
-- Compiles the expression into an optimized Polars lazy expression
-
 ## Available Built-in Metrics
 
 The framework provides many common metrics out of the box. Here's the complete list:
 
+> please note the built-in expression will be stored into a `value` column by default. 
+
 ```{python}
+#| code-fold: true
+
 import polars as pl
+
+pl.Config.set_fmt_str_lengths(200)
 
 # Create a Polars DataFrame of built-in metrics
 metrics_data = [
@@ -100,11 +99,12 @@ Notice how the output now shows both aggregation levels:
    - The `[mean]` tag shows this uses the built-in mean selector
 
 3. **Polars LazyFrame Chain**:
-   ```python
-   .group_by('subject_id')     # Step 1: Group data by subject
-   .agg(...)                    # Step 2: Calculate MAE for each subject
-   .select(...)                 # Step 3: Average across all subjects
-   ```
+
+```python
+.group_by('subject_id')      # Step 1: Group data by subject
+.agg(...)                    # Step 2: Calculate for each subject
+.select(...)                 # Step 3: Average across all subjects
+```
 
 This two-level pattern is particularly useful in clinical trials, longitudinal studies, or any analysis where you need to respect the hierarchical structure of your data.
 
@@ -113,6 +113,8 @@ This two-level pattern is particularly useful in clinical trials, longitudinal s
 Selectors are used in the second level of hierarchical aggregation. They define how to combine the first-level results:
 
 ```{python}
+#| code-fold: true
+
 # Create a Polars DataFrame of built-in selectors
 selectors_data = [
     {"name": name, "expression": str(expr)} 
@@ -124,4 +126,94 @@ selectors_df
 
 ## Custom Expressions
 
-You can also define custom metrics by providing your own Polars expressions. This gives you complete flexibility to create metrics tailored to your specific needs.
+Beyond built-in metrics, you can define custom metrics using Polars expressions. 
+It provides flexibility to customized functions.
+
+### Percentage of Accurate Predictions
+
+Let's create a custom metric that calculates the percentage of samples where the absolute error is less than 1:
+
+```{python}
+MetricDefine(
+    name="pct_within_1",
+    label="% Predictions Within +/- 1",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=(pl.col('absolute_error') < 1).mean() * 100
+)
+```
+
+### Percentile of per Subject MAE
+
+- calculate MAE for each subject. 
+- calculate 90th percentile of the MAE.
+
+```{python}
+MetricDefine(
+    name="mae_p90_by_subject",
+    label="90th Percentile of Subject MAEs",
+    type=MetricType.ACROSS_SUBJECT,
+    agg_expr="mae",
+    select_expr=pl.col('value').quantile(0.9)
+)
+```
+
+In this example we mixed built-in metrics `mae` and 
+customized expression. 
+
+### Weighted Average of per Subject MAE
+
+For calculating weighted averages across subjects, we need to:
+1. Calculate MAE for each subject
+2. Get the weight for each subject (e.g., sample count or custom weight)
+3. Calculate the weighted average across subjects
+
+#### Method 1: 
+
+```{python}
+MetricDefine(
+    name="weighted_mae",
+    label="Weighted Average of Subject MAEs",
+    type=MetricType.ACROSS_SUBJECT,
+    agg_expr=[
+        "mae",  # MAE per subject (stored in 'value' column)
+        pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
+    ],
+    select_expr=(
+        (pl.col('value') * pl.col('avg_weight')).sum() / 
+        pl.col('avg_weight').sum()
+    )
+)
+```
+
+#### Method 2: Using Lambda Function
+Alternatively, we can use a user-defined function (UDF) with NumPy for the weighted average calculation:
+
+```{python}
+import numpy as np
+
+# Define the weighted average expression
+weighted_average = (
+    pl.struct(['value', 'avg_weight'])
+    .map_batches(
+        lambda x: pl.Series([
+            np.average(
+                x.struct.field('value'), 
+                weights=x.struct.field('avg_weight')
+            )
+        ]),
+        return_dtype=pl.Float64
+    )
+)
+    
+MetricDefine(
+    name="weighted_mae_numpy",
+    label="Weighted Average of Subject MAEs (NumPy)",
+    type=MetricType.ACROSS_SUBJECT,
+    agg_expr=[
+        "mae",  # MAE per subject (stored in 'value' column)
+        pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
+    ],
+    select_expr=weighted_average
+)
+```
+

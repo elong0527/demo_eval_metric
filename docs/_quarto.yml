@@ -11,7 +11,9 @@ website:
       - href: getting_started.qmd
         text: Getting Started
       - href: metric.qmd
-        text: Metric
+        text: MetricDefine
+      - href: expression_validation.qmd
+        text: Expression Validation
 
 format:
   html:

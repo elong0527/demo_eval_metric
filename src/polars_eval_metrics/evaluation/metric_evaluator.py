@@ -87,9 +87,9 @@ class MetricEvaluator:
         # Get metric expressions
         agg_exprs, select_expr = metric.compile_expressions()
         
-        # Determine grouping based on metric type and shared_by
+        # Determine grouping based on metric type and scope
         agg_groups, select_groups = self._get_grouping_columns(
-            metric.type, metric.shared_by, estimate
+            metric.type, metric.scope, estimate
         )
         
         # Build pipeline
@@ -208,8 +208,8 @@ class MetricEvaluator:
         Returns:
             Tuple of (first_level_groups, second_level_groups)
         """
-        # Apply SharedType to modify group_by
-        effective_group_by = self._apply_shared_type(shared_by)
+        # Apply MetricScope to modify group_by
+        effective_group_by = self._apply_metric_scope(scope)
         
         # Define grouping rules as a mapping
         grouping_rules = {

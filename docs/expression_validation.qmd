@@ -1,0 +1,304 @@
+---
+title: "Expression Validation Examples"
+format: html
+execute:
+  echo: true
+  warning: false
+---
+
+# Type-Safe Polars Expression Validation
+
+This guide demonstrates the type-safe expression validation system in `polars-eval-metrics`. The framework now requires actual Polars expressions instead of strings, providing better IDE support, type safety, and immediate validation.
+
+## Setup
+
+```{python}
+import sys
+sys.path.append('../src')
+
+import polars as pl
+from polars_eval_metrics.core.metric_define import MetricDefine, MetricType
+from pydantic import ValidationError
+```
+
+## Valid Expression Examples
+
+### Simple Custom Metric
+
+```{python}
+# Valid: Using actual Polars expression
+metric = MetricDefine(
+    name="mae_squared",
+    label="Mean Absolute Error Squared",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=pl.col('absolute_error').pow(2).mean()
+)
+
+print(metric)
+```
+
+### Complex Multi-Level Metric
+
+```{python}
+# Valid: Complex expression with multiple operations
+metric = MetricDefine(
+    name="weighted_rmse",
+    label="Weighted RMSE",
+    type=MetricType.ACROSS_SUBJECT,
+    agg_expr=[
+        (pl.col('squared_error') * pl.col('weight')).sum().alias('weighted_sum'),
+        pl.col('weight').sum().alias('total_weight')
+    ],
+    select_expr=(pl.col('weighted_sum') / pl.col('total_weight')).sqrt()
+)
+
+print(metric)
+```
+
+### Conditional Metric
+
+```{python}
+# Valid: Conditional expression
+metric = MetricDefine(
+    name="high_error_rate",
+    label="Percentage of High Errors (>5)",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=(pl.col('absolute_error') > 5).mean() * 100
+)
+
+print(metric)
+```
+
+## Invalid Expression Examples (Will Raise Errors)
+
+### String Instead of Expression
+
+```{python}
+#| error: true
+# Invalid: Passing string instead of Polars expression
+try:
+    metric = MetricDefine(
+        name="invalid_metric",
+        label="Invalid Metric",
+        type=MetricType.ACROSS_SAMPLES,
+        select_expr="pl.col('error').mean()"  # String not allowed!
+    )
+except ValidationError as e:
+    print(f"Validation Error:\n{e}")
+```
+
+### Non-Expression Object
+
+```{python}
+#| error: true
+# Invalid: Passing wrong type
+try:
+    metric = MetricDefine(
+        name="invalid_metric2",
+        label="Invalid Metric 2",
+        type=MetricType.ACROSS_SAMPLES,
+        select_expr=42  # Integer not allowed!
+    )
+except ValidationError as e:
+    print(f"Validation Error:\n{e}")
+```
+
+### Invalid List Type for agg_expr
+
+```{python}
+#| error: true
+# Invalid: List contains non-expression
+try:
+    metric = MetricDefine(
+        name="invalid_metric3",
+        label="Invalid Metric 3",
+        type=MetricType.ACROSS_SUBJECT,
+        agg_expr=[
+            pl.col('error').mean(),  # Valid
+            "pl.col('count').sum()"   # Invalid - string!
+        ]
+    )
+except ValidationError as e:
+    print(f"Validation Error:\n{e}")
+```
+
+## Advanced Expression Patterns
+
+### Window Functions
+
+```{python}
+# Valid: Using window functions
+metric = MetricDefine(
+    name="rolling_mae",
+    label="Rolling MAE (3-period)",
+    type=MetricType.WITHIN_VISIT,
+    select_expr=pl.col('absolute_error').rolling_mean(window_size=3)
+)
+
+print(f"Created metric: {metric.name}")
+print(f"Expression type: {type(metric.select_expr)}")
+```
+
+### Aggregation with Filters
+
+```{python}
+# Valid: Filtered aggregation
+metric = MetricDefine(
+    name="mae_outliers",
+    label="MAE for Outliers Only",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=pl.col('absolute_error').filter(pl.col('absolute_error') > pl.col('absolute_error').quantile(0.95)).mean()
+)
+
+print(f"Created metric: {metric.name}")
+```
+
+### Multiple Column Operations
+
+```{python}
+# Valid: Operations across multiple columns
+metric = MetricDefine(
+    name="combined_score",
+    label="Combined Accuracy Score",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=(
+        pl.col('absolute_error').rank(method='min') * 0.5 +
+        pl.col('squared_error').rank(method='min') * 0.5
+    ).mean()
+)
+
+print(f"Created metric: {metric.name}")
+```
+
+## Benefits of Type-Safe Expressions
+
+### 1. IDE Support
+
+When using actual Polars expressions:
+- **Auto-completion**: Your IDE can suggest available methods
+- **Type hints**: Proper type information is available
+- **Documentation**: Inline help for Polars functions
+
+### 2. Immediate Validation
+
+```{python}
+# Validation happens at metric creation time
+def create_metric_safely(name: str, expr: pl.Expr):
+    try:
+        metric = MetricDefine(
+            name=name,
+            type=MetricType.ACROSS_SAMPLES,
+            select_expr=expr
+        )
+        return metric
+    except ValidationError as e:
+        print(f"Failed to create metric '{name}': {e}")
+        return None
+
+# Valid expression
+valid_metric = create_metric_safely(
+    "test_valid",
+    pl.col('value').mean()
+)
+print(f"✓ Created: {valid_metric.name if valid_metric else 'None'}")
+
+# Invalid expression (string)
+invalid_metric = create_metric_safely(
+    "test_invalid",
+    "pl.col('value').mean()"  # type: ignore
+)
+```
+
+### 3. Performance
+
+- **No runtime parsing**: Expressions are already compiled
+- **Query optimization**: Polars can optimize the expression tree
+- **Lazy evaluation**: Full benefits of Polars' lazy evaluation
+
+### 4. Composability
+
+```{python}
+# Expressions can be composed and reused
+base_error = pl.col('absolute_error')
+threshold = 2.0
+
+# Create multiple metrics from composed expressions
+metrics = [
+    MetricDefine(
+        name="within_threshold",
+        label=f"% Within ±{threshold}",
+        type=MetricType.ACROSS_SAMPLES,
+        select_expr=(base_error <= threshold).mean() * 100
+    ),
+    MetricDefine(
+        name="beyond_threshold",
+        label=f"% Beyond ±{threshold}",
+        type=MetricType.ACROSS_SAMPLES,
+        select_expr=(base_error > threshold).mean() * 100
+    ),
+    MetricDefine(
+        name="threshold_mae",
+        label=f"MAE for errors ≤{threshold}",
+        type=MetricType.ACROSS_SAMPLES,
+        select_expr=base_error.filter(base_error <= threshold).mean()
+    )
+]
+
+for metric in metrics:
+    print(f"- {metric.label}: {metric.name}")
+```
+
+## Migration Guide
+
+If you're migrating from string-based expressions:
+
+### Before (String-based - No longer supported)
+```python
+# OLD - This will NOT work anymore
+metric = MetricDefine(
+    name="custom",
+    select_expr="pl.col('error').mean()"  # String
+)
+```
+
+### After (Expression-based - Required)
+```python
+# NEW - Use actual Polars expression
+metric = MetricDefine(
+    name="custom",
+    select_expr=pl.col('error').mean()  # Expression object
+)
+```
+
+## Common Expression Patterns Reference
+
+Here are common patterns you might need:
+
+```{python}
+# Print common patterns
+patterns = {
+    "Mean": pl.col('value').mean(),
+    "Median": pl.col('value').median(),
+    "Std Dev": pl.col('value').std(),
+    "Percentile": pl.col('value').quantile(0.95),
+    "Count Non-null": pl.col('value').count(),
+    "Conditional Count": (pl.col('value') > 0).sum(),
+    "Weighted Mean": (pl.col('value') * pl.col('weight')).sum() / pl.col('weight').sum(),
+    "Clipped Mean": pl.col('value').clip(0, 100).mean(),
+    "Normalized": (pl.col('value') - pl.col('value').mean()) / pl.col('value').std(),
+}
+
+for name, expr in patterns.items():
+    print(f"{name:20} -> {expr}")
+```
+
+## Summary
+
+The type-safe expression system provides:
+
+1. **Safety**: Catch errors at metric definition time
+2. **Performance**: No runtime parsing overhead
+3. **Developer Experience**: Full IDE support with auto-completion
+4. **Clarity**: Code is more readable and maintainable
+
+Always use actual Polars expressions when defining custom metrics - the framework will validate them automatically and provide clear error messages if something is wrong.

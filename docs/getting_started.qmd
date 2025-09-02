@@ -27,6 +27,7 @@ from polars_eval_metrics import (
     MetricType,
     EvaluationConfig
 )
+from polars_eval_metrics.core.metric_define import MetricDefine
 
 print("Package loaded successfully!")
 ```
@@ -161,6 +162,38 @@ pivot_results = results.pivot(
 pivot_results
 ```
 
+### 6. Custom Metrics with Type-Safe Expressions
+
+The framework requires actual Polars expressions for custom metrics, providing type safety and IDE support:
+
+```{python}
+# Define a custom metric with Polars expression
+custom_metric = MetricDefine(
+    name="accuracy_90",
+    label="90% Accuracy Rate",
+    type=MetricType.ACROSS_SAMPLES,
+    select_expr=(pl.col('absolute_error') < pl.col('actual').abs() * 0.1).mean() * 100
+)
+
+print(f"Custom metric created: {custom_metric.name}")
+print(f"Expression type: {type(custom_metric.select_expr)}")
+```
+
+Note: String expressions are NOT supported - you must use actual Polars expression objects:
+
+```{python}
+#| error: true
+# This will raise a validation error
+try:
+    invalid_metric = MetricDefine(
+        name="invalid",
+        select_expr="pl.col('error').mean()"  # String not allowed!
+    )
+except Exception as e:
+    print(f"Error: {type(e).__name__}")
+```
+
 ## Next Steps
 
 - [Metric Examples](metric.qmd) - See detailed examples and use cases
+- [Expression Validation](expression_validation.qmd) - Learn about type-safe expressions
