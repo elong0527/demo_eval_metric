@@ -1,9 +1,9 @@
 /* Custom styles for Polars Eval Metrics documentation */
 
 /* Badge styling */
-p img[alt*="codecov"],
 p img[alt*="Tests"],
-p img[alt*="Documentation"] {
+p img[alt*="Documentation"],
+p img[alt*="Python"] {
   display: inline-block;
   margin-right: 5px;
   vertical-align: middle;
