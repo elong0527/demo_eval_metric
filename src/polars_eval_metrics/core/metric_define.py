@@ -55,8 +55,10 @@ class MetricDefine(BaseModel):
         if "label" not in kwargs or kwargs["label"] is None:
             kwargs["label"] = kwargs.get("name", "Unknown Metric")
         # Extract registry if provided, but don't store in model
-        self._registry = kwargs.pop("registry", None)
+        registry = kwargs.pop("registry", None)
         super().__init__(**kwargs)
+        # Set _registry after Pydantic initialization
+        self._registry = registry
 
     @field_validator("name")
     @classmethod
@@ -237,7 +239,7 @@ class MetricDefine(BaseModel):
             Tuple of (aggregation_expressions, selection_expression)
         """
         # Use provided registry, or instance registry, or create default
-        reg = registry or self._registry or MetricRegistry()
+        reg = registry or getattr(self, '_registry', None) or MetricRegistry()
 
         # Handle custom expressions
         if self.agg_expr is not None or self.select_expr is not None:

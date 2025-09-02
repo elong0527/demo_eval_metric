@@ -10,8 +10,7 @@ Supports both global (class-level) and local (instance-level) registries.
 """
 
 import polars as pl
-from typing import Callable, Dict, Any, Optional
-import copy
+from typing import Callable, Any
 
 
 class MetricRegistry:
@@ -27,9 +26,9 @@ class MetricRegistry:
     """
 
     # Global class-level registries
-    _global_errors: Dict[str, Callable[[str, str, ...], pl.Expr]] = {}
-    _global_metrics: Dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
-    _global_selectors: Dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
+    _global_errors: dict[str, Callable[..., pl.Expr]] = {}
+    _global_metrics: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
+    _global_selectors: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
 
     def __init__(self, inherit_global: bool = True):
         """
@@ -121,7 +120,7 @@ class MetricRegistry:
         estimate: str,
         ground_truth: str,
         error_types: list[str] | None = None,
-        error_params: Dict[str, Dict[str, Any]] | None = None,
+        error_params: dict[str, dict[str, Any]] | None = None,
     ) -> list[pl.Expr]:
         """
         Generate error column expressions for specified error types.
