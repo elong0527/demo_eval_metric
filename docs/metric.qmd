@@ -16,8 +16,9 @@ execute:
 import sys
 sys.path.append('../src')
 
-from polars_eval_metrics.core.metric_define import MetricDefine, MetricType, MetricScope
-from polars_eval_metrics.core.builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
+import polars as pl 
+
+from polars_eval_metrics.core.metric_define import MetricDefine
 ```
 
 ## Getting Started: A Simple MAE Metric
@@ -54,7 +55,7 @@ The framework provides many common metrics out of the box. Here's the complete l
 ```{python}
 #| code-fold: true
 
-import polars as pl
+from polars_eval_metrics.core.builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
 
 pl.Config.set_fmt_str_lengths(200)
 
@@ -85,7 +86,7 @@ For built-in metrics, you can specify two-level aggregation using the colon (`:`
 
 ```{python}
 # Calculate MAE within each subject, then average across subjects
-MetricDefine(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
+MetricDefine(name="mae:mean", type="across_subject")
 ```
 
 Notice how the output now shows both aggregation levels:
@@ -137,7 +138,7 @@ Let's create a custom metric that calculates the percentage of samples where the
 MetricDefine(
     name="pct_within_1",
     label="% Predictions Within +/- 1",
-    type=MetricType.ACROSS_SAMPLES,
+    type="across_samples",
     select_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
 ```
@@ -151,7 +152,7 @@ MetricDefine(
 MetricDefine(
     name="mae_p90_by_subject",
     label="90th Percentile of Subject MAEs",
-    type=MetricType.ACROSS_SUBJECT,
+    type="across_subject",
     agg_expr="mae",
     select_expr=pl.col('value').quantile(0.9)
 )
@@ -173,7 +174,7 @@ For calculating weighted averages across subjects, we need to:
 MetricDefine(
     name="weighted_mae",
     label="Weighted Average of Subject MAEs",
-    type=MetricType.ACROSS_SUBJECT,
+    type="across_subject",
     agg_expr=[
         "mae",  # MAE per subject (stored in 'value' column)
         pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
@@ -208,7 +209,7 @@ weighted_average = (
 MetricDefine(
     name="weighted_mae_numpy",
     label="Weighted Average of Subject MAEs (NumPy)",
-    type=MetricType.ACROSS_SUBJECT,
+    type="across_subject",
     agg_expr=[
         "mae",  # MAE per subject (stored in 'value' column)
         pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
