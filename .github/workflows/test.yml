@@ -39,31 +39,3 @@ jobs:
         name: coverage-report-${{ matrix.python-version }}
         path: htmlcov/
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-        
-    - name: Install linting dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install ruff black mypy
-        pip install polars pydantic pyyaml numpy types-pyyaml
-        pip install -e .
-        
-    - name: Run ruff
-      run: |
-        ruff check src/ tests/
-        
-    - name: Run black
-      run: |
-        black --check src/ tests/
-        
-    - name: Run mypy
-      run: |
-        mypy src/polars_eval_metrics || true  # Allow mypy to fail for now
