@@ -59,10 +59,13 @@ from polars_eval_metrics import MetricRegistry
 
 pl.Config.set_fmt_str_lengths(200)
 
+# Create a registry instance to access built-in metrics
+registry = MetricRegistry()
+
 # Create a Polars DataFrame of built-in metrics
 metrics_data = [
-    {"name": name, "expression": str(MetricRegistry.get_metric(name))} 
-    for name in sorted(MetricRegistry.list_metrics())
+    {"name": name, "expression": str(registry.get_metric(name))} 
+    for name in sorted(registry.list_metrics())
 ]
 metrics_df = pl.DataFrame(metrics_data)
 metrics_df
@@ -116,10 +119,10 @@ Selectors are used in the second level of hierarchical aggregation. They define 
 ```{python}
 #| code-fold: true
 
-# Create a Polars DataFrame of built-in selectors
+# Use the same registry instance to access built-in selectors
 selectors_data = [
-    {"name": name, "expression": str(MetricRegistry.get_selector(name))} 
-    for name in sorted(MetricRegistry.list_selectors())
+    {"name": name, "expression": str(registry.get_selector(name))} 
+    for name in sorted(registry.list_selectors())
 ]
 selectors_df = pl.DataFrame(selectors_data)
 selectors_df
@@ -217,4 +220,3 @@ MetricDefine(
     select_expr=weighted_average
 )
 ```
-

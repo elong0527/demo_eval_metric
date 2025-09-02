@@ -184,3 +184,42 @@ print(gender_results)
 print("\nRace subgroup results:")
 print(race_results)
 ```
+
+## Custom Metrics with Registry
+
+You can register custom metrics and use them in evaluation:
+
+```{python}
+# Create a custom registry
+from polars_eval_metrics import MetricRegistry
+
+custom_registry = MetricRegistry()
+
+# Register a custom error type
+def within_threshold(estimate: str, ground_truth: str, threshold: float = 2.0):
+    error = (pl.col(estimate) - pl.col(ground_truth)).abs()
+    return (error <= threshold).cast(pl.Int32)
+
+custom_registry.register_error('within_2', within_threshold)
+
+# Register a metric using the custom error
+custom_registry.register_metric(
+    'accuracy_within_2',
+    (pl.col('within_2').mean() * 100).alias('value')
+)
+
+# Use in evaluation
+evaluator_custom = MetricEvaluator(
+    df=df,
+    metrics=[
+        MetricDefine(name='accuracy_within_2'),
+        MetricDefine(name='mae')  # Still has access to built-ins
+    ],
+    ground_truth="actual",
+    estimates="model1",
+    registry=custom_registry,
+    error_params={'within_2': {'threshold': 2.0}}
+)
+
+evaluator_custom.evaluate()
+```

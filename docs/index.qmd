@@ -13,6 +13,8 @@ A high-performance model evaluation framework built on Polars lazy evaluation.
 
 - **Fast**: Leverages Polars lazy evaluation for optimal performance
 - **Flexible**: Support for custom metrics and expressions
+- **Registry-based**: Extensible registry system for errors, metrics, and selectors
+- **Context Isolation**: Create isolated registries for different evaluation contexts
 - **Type-safe**: Pydantic models with validation
 - **Simple**: Clean API with sensible defaults
 - **Extensible**: Easy to add new metrics and aggregation types
@@ -20,21 +22,42 @@ A high-performance model evaluation framework built on Polars lazy evaluation.
 ## Quick Start
 
 ```python
-from polars_eval_metrics import MetricEvaluator, create_metrics
+from polars_eval_metrics import MetricEvaluator, MetricDefine, MetricRegistry
 
-# Create metrics from simple names or configurations
-metrics = create_metrics(['mae', 'rmse'])
-
-# Evaluate
+# Use built-in metrics
 evaluator = MetricEvaluator(
     df=data,
-    metrics=metrics,
+    metrics=[
+        MetricDefine(name='mae'),
+        MetricDefine(name='rmse')
+    ],
     ground_truth="actual",
     estimates=["model1", "model2"],
     group_by=["treatment"]
 )
 
 results = evaluator.evaluate()
+```
+
+## Custom Metrics
+
+```python
+# Create a custom registry
+registry = MetricRegistry()
+
+# Register custom error and metric
+registry.register_error('within_tolerance', 
+    lambda est, gt: (pl.col(est) - pl.col(gt)).abs() <= 1.0)
+    
+registry.register_metric('accuracy',
+    pl.col('within_tolerance').mean() * 100)
+
+# Use custom registry in evaluation
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[MetricDefine(name='accuracy')],
+    registry=registry  # Pass custom registry
+)
 ```
 
 ## Installation

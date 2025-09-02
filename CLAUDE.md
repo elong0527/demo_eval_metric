@@ -355,7 +355,6 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 2. **Don't Skip Validation**: Always validate user input
 3. **Don't Mix Concerns**: Keep metric definition separate from evaluation
 4. **Don't Hardcode**: Use configuration for all settings
-5. **Don't Break API**: Maintain backward compatibility
 6. **Don't Use Unicode**: No emojis, special symbols, or non-ASCII characters
 
 ## Common Patterns

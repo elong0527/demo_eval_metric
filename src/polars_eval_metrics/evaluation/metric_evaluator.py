@@ -6,7 +6,7 @@ using Polars LazyFrames, following the architecture design.
 """
 
 import polars as pl
-from ..core import MetricDefine, MetricType, MetricScope
+from ..core import MetricDefine, MetricType, MetricScope, MetricRegistry
 
 
 class MetricEvaluator:
@@ -18,9 +18,11 @@ class MetricEvaluator:
         metrics: MetricDefine | list[MetricDefine],
         ground_truth: str = "actual",
         estimates: str | list[str] = None,
+        registry: MetricRegistry = None,
         group_by: list[str] = None,
         subgroup_by: list[str] = None,
         filter_expr: pl.Expr = None,
+        error_params: dict[str, dict] = None,
     ):
         """
         Initialize evaluator with complete evaluation context
@@ -30,9 +32,11 @@ class MetricEvaluator:
             metrics: Single metric or list of metrics to evaluate
             ground_truth: Name of ground truth column
             estimates: Single estimate column or list of estimate columns
+            registry: MetricRegistry instance to use. If None, uses default global registry
             group_by: Grouping columns for analysis
             subgroup_by: Additional subgrouping columns (combined with group_by)
             filter_expr: Optional filter expression
+            error_params: Parameters for error functions, e.g. {'buffer_error': {'threshold': 1.0}}
         """
         # Store data as LazyFrame
         self.df_raw = df.lazy() if isinstance(df, pl.DataFrame) else df
@@ -46,6 +50,10 @@ class MetricEvaluator:
         self.group_by = group_by or []
         self.subgroup_by = subgroup_by or []
         self.filter_expr = filter_expr
+        self.error_params = error_params or {}
+
+        # Use provided registry or create a new one with global defaults
+        self.registry = registry if registry is not None else MetricRegistry()
 
         # Prepare data once with filter
         self.df = self._prepare_base_data()
@@ -57,21 +65,13 @@ class MetricEvaluator:
         return self.df_raw
 
     def _prepare_error_columns(self, df: pl.LazyFrame, estimate: str) -> pl.LazyFrame:
-        """Add error columns for a specific estimate using unified MetricRegistry"""
-        from ..core import MetricRegistry
-
-        # Use default built-in error types for backward compatibility
-        error_types = [
-            "error",
-            "absolute_error",
-            "squared_error",
-            "percent_error",
-            "absolute_percent_error",
-        ]
-
-        # Generate error expressions using the unified registry
-        error_expressions = MetricRegistry.generate_error_columns(
-            estimate=estimate, ground_truth=self.ground_truth, error_types=error_types
+        """Add error columns for a specific estimate using the registry"""
+        # Generate ALL registered error expressions using the instance registry
+        error_expressions = self.registry.generate_error_columns(
+            estimate=estimate,
+            ground_truth=self.ground_truth,
+            error_types=None,  # None means use ALL registered errors
+            error_params=self.error_params,
         )
 
         return df.with_columns(error_expressions)
@@ -93,8 +93,8 @@ class MetricEvaluator:
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
 
-        # Get metric expressions
-        agg_exprs, select_expr = metric.compile_expressions()
+        # Get metric expressions using the evaluator's registry
+        agg_exprs, select_expr = metric.compile_expressions(self.registry)
 
         # Determine grouping based on metric type and scope
         agg_groups, select_groups = self._get_grouping_columns(
@@ -136,8 +136,8 @@ class MetricEvaluator:
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
 
-        # Get metric expressions
-        agg_exprs, select_expr = metric.compile_expressions()
+        # Get metric expressions using the evaluator's registry
+        agg_exprs, select_expr = metric.compile_expressions(self.registry)
 
         # Determine grouping based on metric type and scope, but with the subgroup
         # Temporarily modify group_by to include the subgroup for this calculation
