@@ -57,24 +57,20 @@ class MetricEvaluator:
         return self.df_raw
 
     def _prepare_error_columns(self, df: pl.LazyFrame, estimate: str) -> pl.LazyFrame:
-        """Add error columns for a specific estimate"""
-        error = pl.col(estimate) - pl.col(self.ground_truth)
-
-        return df.with_columns(
-            [
-                error.alias("error"),
-                error.abs().alias("absolute_error"),
-                (error**2).alias("squared_error"),
-                pl.when(pl.col(self.ground_truth) != 0)
-                .then(error / pl.col(self.ground_truth) * 100)
-                .otherwise(None)
-                .alias("percent_error"),
-                pl.when(pl.col(self.ground_truth) != 0)
-                .then((error / pl.col(self.ground_truth) * 100).abs())
-                .otherwise(None)
-                .alias("absolute_percent_error"),
-            ]
+        """Add error columns for a specific estimate using ErrorExpressions registry"""
+        from ..core.error_expressions import ErrorExpressions
+        
+        # Use default built-in error types for backward compatibility
+        error_types = ["error", "absolute_error", "squared_error", "percent_error", "absolute_percent_error"]
+        
+        # Generate error expressions using the registry
+        error_expressions = ErrorExpressions.generate_error_columns(
+            estimate=estimate,
+            ground_truth=self.ground_truth,
+            error_types=error_types
         )
+        
+        return df.with_columns(error_expressions)
 
     def evaluate_single(self, metric: MetricDefine, estimate: str) -> pl.LazyFrame:
         """
