@@ -4,6 +4,10 @@ title: "Polars Eval Metrics"
 
 # Welcome to Polars Eval Metrics
 
+[![codecov](https://codecov.io/gh/elong0527/demo_eval_metric/branch/main/graph/badge.svg)](https://codecov.io/gh/elong0527/demo_eval_metric)
+[![Tests](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml/badge.svg)](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml)
+[![Documentation](https://github.com/elong0527/demo_eval_metric/actions/workflows/docs.yml/badge.svg)](https://github.com/elong0527/demo_eval_metric/actions/workflows/docs.yml)
+
 A high-performance model evaluation framework built on Polars lazy evaluation.
 
 ## Features

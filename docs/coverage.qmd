@@ -1,0 +1,78 @@
+---
+title: "Code Coverage"
+---
+
+# Code Coverage Report
+
+This project maintains comprehensive test coverage to ensure code quality and reliability.
+
+## Current Coverage Status
+
+[![codecov](https://codecov.io/gh/elong0527/demo_eval_metric/branch/main/graph/badge.svg)](https://codecov.io/gh/elong0527/demo_eval_metric)
+
+## Coverage Trends
+
+The coverage trends and detailed reports are available on [Codecov](https://codecov.io/gh/elong0527/demo_eval_metric).
+
+## Detailed HTML Report
+
+<div style="margin: 20px 0;">
+  <a href="htmlcov/index.html" class="btn btn-primary" target="_blank">
+    📊 Open Full Coverage Report
+  </a>
+</div>
+
+<iframe src="htmlcov/index.html" width="100%" height="800px" style="border: 1px solid #ddd; border-radius: 8px;"></iframe>
+
+## Coverage by Module
+
+The test suite covers the following key modules:
+
+- **core/metric_data.py**: Core data structures and validation
+- **core/metric_factory.py**: Factory pattern for metric creation
+- **core/metric_compiler.py**: Expression compilation logic
+- **evaluation/metric_evaluator.py**: Main evaluation engine
+- **evaluation/evaluation_config.py**: Configuration management
+
+## Running Coverage Locally
+
+To generate a coverage report locally:
+
+```bash
+# Install test dependencies
+pip install pytest pytest-cov
+
+# Run tests with coverage
+pytest tests/ --cov=src/polars_eval_metrics --cov-report=html --cov-report=term
+
+# View HTML report
+open htmlcov/index.html  # On macOS
+# or
+xdg-open htmlcov/index.html  # On Linux
+```
+
+## Coverage Goals
+
+We aim to maintain:
+- **Overall coverage**: > 80%
+- **Critical modules**: > 90%
+- **New features**: 100% coverage required
+
+## Contributing
+
+When contributing new features or bug fixes:
+
+1. Write tests for all new code
+2. Ensure existing tests pass
+3. Check coverage doesn't decrease
+4. Add integration tests for complex features
+
+## Continuous Integration
+
+Our CI pipeline automatically:
+- Runs tests on multiple Python versions (3.11, 3.12)
+- Generates coverage reports
+- Uploads results to Codecov
+- Comments on pull requests with coverage changes
+
+View the latest CI runs on our [GitHub Actions page](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml).

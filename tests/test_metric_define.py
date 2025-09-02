@@ -172,6 +172,47 @@ class TestMetricDefineTypes:
                 scope=scope
             )
             assert metric.scope == scope
+    
+    def test_string_to_enum_conversion(self):
+        """Test that string inputs are converted to proper enum types."""
+        
+        # Test MetricType string conversion
+        m1 = MetricDefine(name="test", type="across_samples")
+        assert m1.type == MetricType.ACROSS_SAMPLES
+        
+        m2 = MetricDefine(name="test", type="WITHIN_SUBJECT")  # Different case
+        assert m2.type == MetricType.WITHIN_SUBJECT
+        
+        m3 = MetricDefine(name="test", type="across-visit")  # With hyphen
+        assert m3.type == MetricType.ACROSS_VISIT
+        
+        # Test MetricScope string conversion
+        m4 = MetricDefine(name="test", scope="global")
+        assert m4.scope == MetricScope.GLOBAL
+        
+        m5 = MetricDefine(name="test", scope="MODEL")  # Different case
+        assert m5.scope == MetricScope.MODEL
+        
+        # Test None scope remains None
+        m6 = MetricDefine(name="test", scope=None)
+        assert m6.scope is None
+        
+        # Test invalid type string raises error
+        with pytest.raises(ValueError, match="Invalid metric type"):
+            MetricDefine(name="test", type="invalid_type")
+        
+        # Test invalid scope string raises error
+        with pytest.raises(ValueError, match="Invalid metric scope"):
+            MetricDefine(name="test", scope="invalid_scope")
+        
+        # Test that enum values still work directly
+        m7 = MetricDefine(
+            name="test",
+            type=MetricType.ACROSS_VISIT,
+            scope=MetricScope.GROUP
+        )
+        assert m7.type == MetricType.ACROSS_VISIT
+        assert m7.scope == MetricScope.GROUP
 
 
 class TestMetricDefineValidation:

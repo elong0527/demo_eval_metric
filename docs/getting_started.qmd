@@ -4,6 +4,9 @@ title: "Getting Started"
 
 # Getting Started with Polars Eval Metrics
 
+[![codecov](https://codecov.io/gh/elong0527/demo_eval_metric/branch/main/graph/badge.svg)](https://codecov.io/gh/elong0527/demo_eval_metric)
+[![Tests](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml/badge.svg)](https://github.com/elong0527/demo_eval_metric/actions/workflows/test.yml)
+
 This guide will help you get up and running with the polars-eval-metrics package.
 
 ## Setup

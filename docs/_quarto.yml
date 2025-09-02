@@ -10,16 +10,26 @@ website:
         text: Home
       - href: getting_started.qmd
         text: Getting Started
-      - href: metric.qmd
-        text: MetricDefine
-      - href: expression_validation.qmd
-        text: Expression Validation
+      - text: Examples
+        menu:
+          - href: metric.qmd
+            text: MetricDefine
+      - href: coverage.qmd
+        text: Coverage
+    right:
+      - icon: github
+        href: https://github.com/elong0527/demo_eval_metric
+        aria-label: GitHub
 
 format:
   html:
     theme: cosmo
     toc: true
     toc-depth: 3
+    toc-title: "On this page"
+    code-copy: true
+    code-overflow: wrap
+    css: styles.css
 
 execute:
   freeze: auto
