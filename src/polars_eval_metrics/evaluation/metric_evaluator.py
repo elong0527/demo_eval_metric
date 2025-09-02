@@ -6,7 +6,7 @@ using Polars LazyFrames, following the architecture design.
 """
 
 import polars as pl
-from ..core import MetricData, MetricType, SharedType, MetricCompiler
+from ..core import MetricDefine, MetricType, SharedType
 
 
 class MetricEvaluator:
@@ -14,12 +14,11 @@ class MetricEvaluator:
     
     def __init__(self, 
                  df: pl.DataFrame | pl.LazyFrame,
-                 metrics: list[MetricData],
+                 metrics: list[MetricDefine],
                  ground_truth: str = "actual",
                  estimates: list[str] = None,
                  group_by: list[str] = None,
-                 filter_expr: pl.Expr = None,
-                 compiler: MetricCompiler = None):
+                 filter_expr: pl.Expr = None):
         """
         Initialize evaluator with complete evaluation context
         
@@ -30,7 +29,6 @@ class MetricEvaluator:
             estimates: List of estimate/model columns to evaluate
             group_by: Grouping columns for analysis
             filter_expr: Optional filter expression
-            compiler: Metric compiler (creates default if not provided)
         """
         # Store data as LazyFrame
         self.df_raw = df.lazy() if isinstance(df, pl.DataFrame) else df
@@ -41,9 +39,6 @@ class MetricEvaluator:
         self.estimates = estimates or []
         self.group_by = group_by or []
         self.filter_expr = filter_expr
-        
-        # Initialize expression compiler
-        self.compiler = compiler or MetricCompiler()
         
         # Prepare data once with filter
         self.df = self._prepare_base_data()
@@ -72,7 +67,7 @@ class MetricEvaluator:
                 .alias("absolute_percent_error"),
         ])
     
-    def evaluate_single(self, metric: MetricData, estimate: str) -> pl.LazyFrame:
+    def evaluate_single(self, metric: MetricDefine, estimate: str) -> pl.LazyFrame:
         """
         Evaluate a single metric for one estimate
         
@@ -89,10 +84,8 @@ class MetricEvaluator:
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
         
-        # Get metric expressions using the compiler
-        agg_exprs, select_expr = self.compiler.compile_expressions(
-            metric.name, metric.agg_expr, metric.select_expr
-        )
+        # Get metric expressions
+        agg_exprs, select_expr = metric.compile_expressions()
         
         # Determine grouping based on metric type and shared_by
         agg_groups, select_groups = self._get_grouping_columns(
@@ -129,7 +122,7 @@ class MetricEvaluator:
         
         return pl.concat(results).collect()
     
-    def evaluate_metric(self, metric: MetricData) -> pl.DataFrame:
+    def evaluate_metric(self, metric: MetricDefine) -> pl.DataFrame:
         """
         Evaluate a single metric for all configured estimates
         

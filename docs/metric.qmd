@@ -1,14 +1,14 @@
 ---
-title: "MetricData Examples"
+title: "MetricDefine Examples"
 format: html
 execute:
   echo: true
   warning: false
 ---
 
-# MetricData Guide
+# MetricDefine Guide
 
-This document demonstrates how to use `MetricData` for defining and examining metrics.
+This document demonstrates how to use `MetricDefine` for defining and examining metrics.
 
 ## Setup
 
@@ -16,11 +16,11 @@ This document demonstrates how to use `MetricData` for defining and examining me
 import sys
 sys.path.append('../src')
 
-from polars_eval_metrics.core.metric_data import MetricData, MetricType, SharedType
-from polars_eval_metrics.core.metric_compiler import MetricCompiler
+from polars_eval_metrics.core.metric_define import MetricDefine, MetricType, SharedType
+from polars_eval_metrics.core.builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
 ```
 
-## Creating MetricData
+## Creating MetricDefine
 
 ### Basic Built-in Metrics
 
@@ -28,14 +28,13 @@ There are built-in metrics to set up metrics.
 
 ```{python}
 # List all available built-in metrics
-compiler = MetricCompiler()
-for name, expr in sorted(compiler.BUILTIN_METRICS.items()):
+for name, expr in sorted(BUILTIN_METRICS.items()):
     print(f"{name}: {expr}")
 ```
 
 ```{python}
 # Simple MAE metric with automatic label
-MetricData(name="mae", type=MetricType.ACROSS_SAMPLES)
+MetricDefine(name="mae", type=MetricType.ACROSS_SAMPLES)
 ```
 
 ### Built-in Metrics with Selectors
@@ -44,9 +43,8 @@ There are also built-in selectors that allow hirachical
 structure. 
 
 ```{python}
-# List all available built-in metrics
-compiler = MetricCompiler()
-for name, expr in sorted(compiler.BUILTIN_SELECTORS.items()):
+# List all available built-in selectors
+for name, expr in sorted(BUILTIN_SELECTORS.items()):
     print(f"{name}: {expr}")
 ```
 

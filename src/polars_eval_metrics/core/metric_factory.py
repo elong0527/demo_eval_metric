@@ -5,16 +5,16 @@ Handles YAML parsing and metric initialization logic.
 """
 
 from typing import Any
-from .metric_data import MetricData, MetricType, SharedType
+from .metric_define import MetricDefine, MetricType, SharedType
 
 
 class MetricFactory:
-    """Factory for creating MetricData instances from various sources"""
+    """Factory for creating MetricDefine instances from various sources"""
     
     @staticmethod
-    def from_yaml(config: dict[str, Any]) -> MetricData:
+    def from_yaml(config: dict[str, Any]) -> MetricDefine:
         """
-        Create MetricData from YAML configuration dict
+        Create MetricDefine from YAML configuration dict
         
         This method handles the YAML-specific parsing logic and ensures
         the resulting Metric is in a complete, valid state.
@@ -23,7 +23,7 @@ class MetricFactory:
             config: Dictionary from YAML configuration
             
         Returns:
-            MetricData instance with proper defaults
+            MetricDefine instance with proper defaults
         """
         # Extract basic fields
         metric_data = {
@@ -50,45 +50,20 @@ class MetricFactory:
             metric_data['select_expr'] = select_config['expr']
         
         # Create the metric with validation
-        metric = MetricData(**metric_data)
-        
-        # Post-process to ensure completeness for downstream processing
-        metric = MetricFactory._ensure_complete_expressions(metric)
+        metric = MetricDefine(**metric_data)
         
         return metric
     
     @staticmethod
-    def _ensure_complete_expressions(metric: MetricData) -> MetricData:
+    def from_dict(data: dict[str, Any]) -> MetricDefine:
         """
-        Ensure expressions are complete for downstream processing
-        
-        This method returns a new metric with default expressions filled in
-        where necessary, eliminating the need for null checks in downstream code.
-        
-        Args:
-            metric: The metric to process
-            
-        Returns:
-            MetricData with complete expressions
-        """
-        # For two-level aggregations, ensure select_expr exists
-        if metric.type in (MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT):
-            if metric.agg_expr and not metric.select_expr:
-                # Default to mean for two-level aggregation
-                return metric.model_copy(update={'select_expr': "mean"})
-        
-        return metric
-    
-    @staticmethod
-    def from_dict(data: dict[str, Any]) -> MetricData:
-        """
-        Create MetricData from a simple dictionary
+        Create MetricDefine from a simple dictionary
         
         Args:
             data: Dictionary with metric fields
             
         Returns:
-            MetricData instance
+            MetricDefine instance
         """
         # Convert string types to enums if needed
         if 'type' in data and isinstance(data['type'], str):
@@ -97,18 +72,18 @@ class MetricFactory:
         if 'shared_by' in data and isinstance(data['shared_by'], str):
             data['shared_by'] = SharedType(data['shared_by'])
         
-        return MetricData(**data)
+        return MetricDefine(**data)
     
     @staticmethod
-    def from_config(config: dict[str, Any]) -> list[MetricData]:
+    def from_config(config: dict[str, Any]) -> list[MetricDefine]:
         """
-        Create a list of MetricData objects from a configuration dictionary
+        Create a list of MetricDefine objects from a configuration dictionary
         
         Args:
             config: Configuration dictionary containing 'metrics' key with list of metric configs
             
         Returns:
-            List of MetricData instances
+            List of MetricDefine instances
             
         Example:
             config = {

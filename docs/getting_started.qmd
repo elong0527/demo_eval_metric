@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 # Import the package
 import polars as pl
 from polars_eval_metrics import (
-    MetricData,
+    MetricDefine,
     MetricFactory,
     MetricEvaluator,
     MetricType,
@@ -47,11 +47,11 @@ for metric_type in MetricType:
 
 Metrics can be defined in two ways:
 
-#### Programmatically with MetricData
+#### Programmatically with MetricDefine
 
 ```{python}
 # Define a metric directly
-metric = MetricData(
+metric = MetricDefine(
     name="mae",
     label="Mean Absolute Error",
     type=MetricType.ACROSS_SAMPLES

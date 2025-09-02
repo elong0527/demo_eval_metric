@@ -1,13 +1,11 @@
 """Core components for metric evaluation."""
 
-from .metric_compiler import MetricCompiler
-from .metric_data import MetricData, MetricType, SharedType
+from .metric_define import MetricDefine, MetricType, SharedType
 from .metric_factory import MetricFactory
 
 __all__ = [
-    "MetricData",
+    "MetricDefine",
     "MetricType",
     "SharedType",
-    "MetricCompiler",
     "MetricFactory",
 ]

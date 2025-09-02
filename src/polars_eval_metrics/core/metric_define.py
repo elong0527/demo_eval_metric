@@ -1,12 +1,15 @@
 """
-Metric definition with Pydantic validation
+Metric definition and expression preparation
 
-Pure data model for metric configuration without any Polars dependencies.
+This module combines metric configuration with expression compilation,
+providing a single class for defining metrics and preparing Polars expressions.
 """
 
 from enum import Enum
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Self
+import polars as pl
+from .builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
 
 
 class MetricType(Enum):
@@ -25,8 +28,15 @@ class SharedType(Enum):
     GROUP = "group"
 
 
-class MetricData(BaseModel):
-    """Metric definition with validation - pure data model"""
+class MetricDefine(BaseModel):
+    """
+    Metric definition with expression preparation capabilities.
+    
+    This class combines metric configuration with the ability to compile
+    expressions to Polars expressions, focusing solely on defining and
+    preparing metrics for evaluation.
+    """
+    
     name: str
     label: str | None = None
     type: MetricType
@@ -35,11 +45,9 @@ class MetricData(BaseModel):
     select_expr: str | None = None
     
     def __init__(self, **kwargs):
-        """Initialize with default settings for easy user review"""
-        # Set default label if not provided (keep as-is, no case changes)
+        """Initialize with default label if not provided"""
         if 'label' not in kwargs or kwargs['label'] is None:
             kwargs['label'] = kwargs.get('name', 'Unknown Metric')
-        
         super().__init__(**kwargs)
     
     @field_validator('name')
@@ -88,7 +96,6 @@ class MetricData(BaseModel):
     @model_validator(mode='after')
     def validate_expressions(self) -> Self:
         """Validate expression combinations"""
-        # For custom metrics, at least one expression must be provided
         is_custom = self.agg_expr is not None or self.select_expr is not None
         
         if is_custom:
@@ -111,34 +118,91 @@ class MetricData(BaseModel):
         
         return self
     
-    def get_compiled_expressions(self):
+    def compile_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
         """
-        Get the actual Polars expressions that will be used for this metric.
+        Compile this metric's expressions to Polars expressions.
         
         Returns:
-            tuple[list[Expr], Expr | None]: (agg_expressions, select_expression)
+            Tuple of (aggregation_expressions, selection_expression)
         """
-        from .metric_compiler import MetricCompiler
-        compiler = MetricCompiler()
+        # Handle custom expressions
+        if self.agg_expr or self.select_expr:
+            result = self._compile_custom_expressions()
+        else:
+            # Handle built-in metrics
+            result = self._compile_builtin_expressions()
         
-        return compiler.compile_expressions(
-            self.name, 
-            self.agg_expr, 
-            self.select_expr,
-            self.type
-        )
+        # For ACROSS_SAMPLES, move single expression to selection
+        if self.type == MetricType.ACROSS_SAMPLES:
+            agg_exprs, sel_expr = result
+            if agg_exprs and not sel_expr:
+                # Move aggregation to selection for ACROSS_SAMPLES
+                return [], agg_exprs[0] if len(agg_exprs) == 1 else agg_exprs[0]
+        
+        return result
     
-    def pl_expr(self) -> str:
+    def _compile_custom_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+        """Compile custom metric expressions"""
+        agg_exprs = []
+        if self.agg_expr:
+            agg_exprs = [self._evaluate_expression(expr) for expr in self.agg_expr]
+        
+        select_pl_expr = None
+        if self.select_expr:
+            select_pl_expr = self._evaluate_expression(self.select_expr)
+        
+        # If only select_expr provided (no agg_expr), use it as single aggregation
+        if not agg_exprs and select_pl_expr is not None:
+            return [select_pl_expr], None
+        
+        return agg_exprs, select_pl_expr
+    
+    def _compile_builtin_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+        """Compile built-in metric expressions"""
+        parts = (self.name + ':').split(':')[:2]
+        agg_name, select_name = parts[0], parts[1] if parts[1] else None
+        
+        # Get built-in aggregation expression (already a Polars expression)
+        agg_expr = BUILTIN_METRICS.get(agg_name)
+        if agg_expr is None:
+            raise ValueError(f"Unknown built-in metric: {agg_name}")
+        
+        # Get selector expression if specified (already a Polars expression)
+        select_expr = None
+        if select_name:
+            select_expr = BUILTIN_SELECTORS.get(select_name)
+            if select_expr is None:
+                raise ValueError(f"Unknown built-in selector: {select_name}")
+            # If there's a selector, return as aggregation + selection
+            return [agg_expr], select_expr
+        
+        # No selector: this is likely ACROSS_SAMPLES, return as selection only
+        return [], agg_expr
+    
+    def _evaluate_expression(self, expr_str: str) -> pl.Expr:
+        """Convert string expression to Polars expression"""
+        namespace = {
+            'pl': pl,
+            'col': pl.col,
+            'lit': pl.lit,
+            'len': pl.len,
+            'struct': pl.struct,
+        }
+        
+        try:
+            return eval(expr_str, namespace, {})
+        except Exception as e:
+            raise ValueError(f"Failed to evaluate expression '{expr_str}': {e}")
+    
+    def get_pl_chain(self) -> str:
         """
-        Show the Polars LazyFrame chain that would be executed for this metric.
+        Get a string representation of the Polars LazyFrame chain for this metric.
         
         Returns:
-            String representation of the LazyFrame chain
+            String showing the LazyFrame operations that would be executed
         """
-        # Get compiled expressions
-        agg_exprs, select_expr = self.get_compiled_expressions()
+        agg_exprs, select_expr = self.compile_expressions()
         
-        # Build the chain representation
         chain_lines = ["(", "  pl.LazyFrame"]
         
         # Determine the chain based on metric type
@@ -186,14 +250,13 @@ class MetricData(BaseModel):
         return '\n'.join(chain_lines)
     
     def __str__(self) -> str:
-        """Detailed string representation matching expected format"""
-        lines = [f"MetricData(name='{self.name}', type={self.type.value})"]
+        """String representation for display"""
+        lines = [f"MetricDefine(name='{self.name}', type={self.type.value})"]
         lines.append(f"  Label: '{self.label}'")
         lines.append(f"  Shared by: {self.shared_by.value if self.shared_by else 'none'}")
         
         try:
-            # Get compiled expressions
-            agg_exprs, select_expr = self.get_compiled_expressions()
+            agg_exprs, select_expr = self.compile_expressions()
             
             # Determine base metric and selector names
             if ':' in self.name:
@@ -215,23 +278,23 @@ class MetricData(BaseModel):
             if select_expr is not None:
                 lines.append("  Selection expression:")
                 if self.select_expr:
-                    lines.append(f"      - [custom] {select_expr}")
+                    lines.append(f"    - [custom] {select_expr}")
                 elif selector_name:
-                    lines.append(f"      - [{selector_name}] {select_expr}")
+                    lines.append(f"    - [{selector_name}] {select_expr}")
                 else:
-                    lines.append(f"      - [{base_name}] {select_expr}")
+                    lines.append(f"    - [{base_name}] {select_expr}")
             else:
                 lines.append("  Selection expression: none")
             
             # Add the LazyFrame chain
             lines.append("")
-            lines.append(self.pl_expr())
+            lines.append(self.get_pl_chain())
                 
         except Exception as e:
-            lines.append(f"  error: {str(e)}")
+            lines.append(f"  Error compiling expressions: {str(e)}")
         
         return '\n'.join(lines)
     
     def __repr__(self) -> str:
-        """Detailed representation for interactive display"""
+        """Representation for interactive display"""
         return self.__str__()

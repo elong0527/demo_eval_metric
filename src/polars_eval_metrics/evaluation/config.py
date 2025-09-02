@@ -8,7 +8,7 @@ import yaml
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, Field
-from ..core import MetricData, MetricFactory
+from ..core import MetricDefine, MetricFactory
 
 
 class EvaluationConfig(BaseModel):
@@ -17,7 +17,7 @@ class EvaluationConfig(BaseModel):
     ground_truth: str = Field(default="actual", description="Ground truth column name")
     estimates: list[str] = Field(default_factory=list, description="List of estimate columns")
     group_by: list[str] = Field(default_factory=list, description="Grouping columns")
-    metrics: list[MetricData] = Field(default_factory=list, description="List of metrics")
+    metrics: list[MetricDefine] = Field(default_factory=list, description="List of metrics")
     filter_expr: str | None = Field(default=None, description="Filter expression")
     
     @classmethod
