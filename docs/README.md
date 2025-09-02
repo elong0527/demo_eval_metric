@@ -5,7 +5,7 @@ This directory contains the documentation for the polars-eval-metrics package.
 ## Structure
 
 - `index.qmd` - Main documentation page
-- `getting_started.qmd` - Installation and basic concepts
+- `quickstart.qmd` - Installation and basic concepts
 - `examples/` - Detailed usage examples
   - `basic_usage.qmd` - Common use cases
   - `metric_factory.qmd` - Creating metrics from configuration

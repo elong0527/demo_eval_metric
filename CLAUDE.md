@@ -8,59 +8,59 @@ This document provides comprehensive guidance for developing and maintaining the
 **Purpose**: A flexible, high-performance framework for evaluating model predictions with support for hierarchical aggregations, custom metrics, and YAML-based configuration.
 
 ### Key Features
-- 🚀 **Lazy Evaluation**: Leverages Polars LazyFrame for optimal query planning
-- 📊 **Flexible Metrics**: Built-in and custom metric definitions
-- 🔧 **YAML Configuration**: Complete evaluation setup via YAML
-- 🎯 **Type Safety**: Pydantic validation throughout
-- 🔄 **Hierarchical Aggregation**: Support for subject/visit level metrics
-- 📈 **Clear Architecture**: Separation of definition, creation, and evaluation
+- **Lazy Evaluation**: Leverages Polars LazyFrame for optimal query planning
+- **Flexible Metrics**: Built-in and custom metric definitions
+- **YAML Configuration**: Complete evaluation setup via YAML
+- **Type Safety**: Pydantic validation throughout
+- **Hierarchical Aggregation**: Support for subject/visit level metrics
+- **Clear Architecture**: Separation of definition, creation, and evaluation
 
 ## Project Structure
 
 ```
 demo_eval_metric/
-├── plan/                        # [REFERENCE ONLY - DO NOT MODIFY]
-│   ├── CLAUDE.md               # Original planning documentation
-│   ├── class_diagram.md        # Architecture diagrams
-│   ├── polar_expression.md     # Polars expression patterns
-│   ├── YAML_PATTERNS.md        # YAML configuration patterns
-│   ├── examples.qmd            # Example notebooks
-│   └── evaluation_schema.yaml  # Schema reference
-│
-├── src/                         # [PRODUCTION CODE]
-│   └── polars_eval_metrics/
-│       ├── __init__.py         # Package exports
-│       ├── core/               # Core metric functionality
-│       │   ├── __init__.py
-│       │   ├── metric_define.py     # MetricDefine class - metric definition
-│       │   ├── metric_factory.py    # MetricFactory - creates metrics from YAML
-│       │   └── builtin.py          # Built-in metrics and selectors
-│       ├── evaluation/         # Evaluation engine
-│       │   ├── __init__.py
-│       │   ├── metric_evaluator.py  # MetricEvaluator - executes evaluations
-│       │   └── config.py           # EvaluationConfig - full configuration
-│       └── py.typed            # PEP 561 type hint marker
-│
-├── docs/                        # [DOCUMENTATION WEBSITE]
-│   ├── _quarto.yml             # Quarto configuration
-│   ├── index.qmd               # Homepage
-│   ├── getting_started.qmd    # Getting started guide
-│   ├── metric.qmd              # MetricDefine examples
-│   └── _site/                  # [GENERATED - git ignored]
-│
-├── tests/                       # [TEST SUITE]
-│   ├── test_metric_define.py  # Unit tests for MetricDefine
-│   └── test_basic.py.bak       # [BACKUP - to be updated]
-│
-├── .github/
-│   └── workflows/
-│       ├── docs.yml            # Documentation deployment
-│       └── test.yml            # CI/CD testing pipeline
-│
-├── pyproject.toml              # Package configuration
-├── README.md                   # Project README
-├── LICENSE                     # MIT License
-└── CLAUDE.md                   # This file
++-- plan/                        # [REFERENCE ONLY - DO NOT MODIFY]
+|   +-- CLAUDE.md               # Original planning documentation
+|   +-- class_diagram.md        # Architecture diagrams
+|   +-- polar_expression.md     # Polars expression patterns
+|   +-- YAML_PATTERNS.md        # YAML configuration patterns
+|   +-- examples.qmd            # Example notebooks
+|   +-- evaluation_schema.yaml  # Schema reference
+|
++-- src/                         # [PRODUCTION CODE]
+|   +-- polars_eval_metrics/
+|       +-- __init__.py         # Package exports
+|       +-- core/               # Core metric functionality
+|       |   +-- __init__.py
+|       |   +-- metric_define.py     # MetricDefine class - metric definition
+|       |   +-- metric_factory.py    # MetricFactory - creates metrics from YAML
+|       |   +-- builtin.py          # Built-in metrics and selectors
+|       +-- evaluation/         # Evaluation engine
+|       |   +-- __init__.py
+|       |   +-- metric_evaluator.py  # MetricEvaluator - executes evaluations
+|       |   +-- config.py           # EvaluationConfig - full configuration
+|       +-- py.typed            # PEP 561 type hint marker
+|
++-- docs/                        # [DOCUMENTATION WEBSITE]
+|   +-- _quarto.yml             # Quarto configuration
+|   +-- index.qmd               # Homepage
+|   +-- quickstart.qmd         # Quick start guide
+|   +-- metric.qmd              # MetricDefine examples
+|   +-- _site/                  # [GENERATED - git ignored]
+|
++-- tests/                       # [TEST SUITE]
+|   +-- test_metric_define.py  # Unit tests for MetricDefine
+|   +-- test_basic.py.bak       # [BACKUP - to be updated]
+|
++-- .github/
+|   +-- workflows/
+|       +-- docs.yml            # Documentation deployment
+|       +-- test.yml            # CI/CD testing pipeline
+|
++-- pyproject.toml              # Package configuration
++-- README.md                   # Project README
++-- LICENSE                     # MIT License
++-- CLAUDE.md                   # This file
 ```
 
 ## Core Architecture
@@ -220,7 +220,7 @@ mae = MetricDefine(name="mae")
 # Custom metric
 pct_accurate = MetricDefine(
     name="pct_within_1",
-    label="% Within ±1",
+    label="% Within +/- 1",
     type=MetricType.ACROSS_SAMPLES,
     select_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
@@ -268,17 +268,17 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 ## Testing Strategy
 
 ### Current Test Coverage
-- ✅ **test_metric_define.py**: Comprehensive tests for MetricDefine
+- [x] **test_metric_define.py**: Comprehensive tests for MetricDefine
   - Basic metric creation
   - Custom expressions
   - Validation rules
   - All metric types and scopes
 
 ### Needed Tests
-- 📝 MetricFactory tests
-- 📝 EvaluationConfig tests
-- 📝 MetricEvaluator integration tests
-- 📝 End-to-end workflow tests
+- [ ] MetricFactory tests
+- [ ] EvaluationConfig tests
+- [ ] MetricEvaluator integration tests
+- [ ] End-to-end workflow tests
 
 ## GitHub Actions CI/CD
 
@@ -300,19 +300,21 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 
 ## Important Development Notes
 
-### ✅ DO's
+### DO's
 1. **Use Type Hints**: All functions should have type annotations
 2. **Write Tests First**: TDD approach for new features
 3. **Follow Factory Pattern**: Use MetricFactory for creating metrics
 4. **Validate Early**: Use Pydantic validation in MetricDefine
 5. **Document Examples**: Add examples to docs/ for new features
+6. **Use ASCII Only**: All code, documentation, and comments must use ASCII characters only
 
-### ❌ DON'Ts
+### DON'Ts
 1. **Don't Modify plan/**: Reference only, contains original design
 2. **Don't Skip Validation**: Always validate user input
 3. **Don't Mix Concerns**: Keep metric definition separate from evaluation
 4. **Don't Hardcode**: Use configuration for all settings
 5. **Don't Break API**: Maintain backward compatibility
+6. **Don't Use Unicode**: No emojis, special symbols, or non-ASCII characters
 
 ## Common Patterns
 
