@@ -10,8 +10,8 @@ website:
         text: Home
       - href: getting_started.qmd
         text: Getting Started
-      - href: metric_examples.qmd
-        text: Examples
+      - href: metric.qmd
+        text: Metric
 
 format:
   html:

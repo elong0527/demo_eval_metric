@@ -163,4 +163,4 @@ pivot_results
 
 ## Next Steps
 
-- [Metric Examples](metric_examples.qmd) - See detailed examples and use cases
+- [Metric Examples](metric.qmd) - See detailed examples and use cases

@@ -42,7 +42,7 @@ jobs:
       - name: Build documentation
         run: |
           cd docs
-          quarto render --to html --no-execute
+          quarto render --to html --execute
           
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

@@ -35,8 +35,7 @@ for name, expr in sorted(compiler.BUILTIN_METRICS.items()):
 
 ```{python}
 # Simple MAE metric with automatic label
-mae = MetricData(name="mae", type=MetricType.ACROSS_SAMPLES)
-mae
+MetricData(name="mae", type=MetricType.ACROSS_SAMPLES)
 ```
 
 ### Built-in Metrics with Selectors
@@ -55,17 +54,5 @@ Using `:` to set <agg_expr:selector_expr> if it is built-in.
 
 ```{python}
 # MAE with mean selector for two-level aggregation
-mae_mean = MetricData(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
-mae_mean
+MetricData(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
 ```
-
-## Summary
-
-MetricData provides:
-
-- **Automatic label generation** from metric names
-- **Built-in expression examination** with `examine_builtin()`
-- **Expression compilation viewing** with `show_expressions()`
-- **Multiple display options** with `summary()` and `details()`
-- **Support for all metric types** and sharing strategies
-- **Custom expression support** with validation
