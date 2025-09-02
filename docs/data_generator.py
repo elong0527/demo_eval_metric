@@ -6,10 +6,9 @@ import polars as pl
 
 
 def generate_sample_data(
-    n_subjects: int = 3,
-    n_visits: int = 3,
-    n_groups: int = 2,
-    seed: int = 42,
+    n_subjects: int = 13,
+    n_visits: int = 5,
+    n_groups: int = 3,
 ) -> pl.DataFrame:
     """
     Generate sample data for testing metrics.
@@ -30,9 +29,12 @@ def generate_sample_data(
 
     # Generate combinations
     data = []
+    races = ["White", "Black", "Asian", "Hispanic"]
+    
     for subject in subjects:
         group = groups[(subject - 1) % n_groups]
         gender = "M" if subject % 2 == 0 else "F"
+        race = races[(subject - 1) % len(races)]
 
         for visit in visits:
             # Generate values with some pattern
@@ -43,9 +45,10 @@ def generate_sample_data(
                 "visit_id": visit,
                 "treatment": group,
                 "gender": gender,
+                "race": race,
                 "actual": float(base_value),
-                "model1": float(base_value + (subject % 3) - 1),
-                "model2": float(base_value - (visit % 2)),
+                "model1": float(base_value + (subject % 3) - 0.2),
+                "model2": float(base_value - (visit % 2) + 0.3),
                 "weight": 1.0 + (subject % 3) * 0.1,
             })
 

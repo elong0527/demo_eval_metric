@@ -37,7 +37,6 @@ df = generate_sample_data(n_subjects=3, n_visits=2, n_groups=2)
 print(f"Data shape: {df.shape}")
 print(f"Columns: {df.columns}")
 
-# Show first few rows
 df.head()
 ```
 
@@ -63,10 +62,125 @@ evaluator = MetricEvaluator(
     df=df,
     metrics=metric,
     ground_truth="actual",
-    estimates=["model1", "model2"],
-    group_by=["treatment"]
+    estimates="model1",
 )
-evaluator.evaluate() # rename evaluate_all to evaluate
+```
+
+- Results 
+
+```{python}
+# Returns DataFrame by default
+evaluator.evaluate()  
+```
+
+- Equivalent Polars code
+
+The framework calculation can be replicated with a single Polars expression:
+
+```{python}
+# Direct MAE calculation using one expression
+df.select(
+    (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae")
+)
+``` 
+
+- LazyFrame Explain
+
+```{python}
+# Returns LazyFrame
+lazy_result = evaluator.evaluate(collect=False)  
+print(lazy_result.explain())
 ```
 
 
+## Evaluate by Groups
+
+```{python}
+evaluator = MetricEvaluator(
+    df=df,
+    metrics=[
+        MetricDefine(name="mae"),
+        MetricDefine(name="rmse"),
+    ],
+    ground_truth="actual",
+    estimates=["model1", "model2"],
+    group_by = ["treatment"]
+)
+```
+
+- Results
+
+```{python}
+evaluator.evaluate()
+```
+
+- Equivalent Polars code
+
+```{python}
+# Direct calculation using single expression
+df.group_by("treatment").agg([
+    # MAE for both models
+    (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
+    (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
+    # RMSE for both models  
+    (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
+    (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
+]).sort("treatment")
+```
+
+
+## Evaluate by Groups with Subgroups
+
+```{python}
+pl.Config.set_tbl_rows(-1)
+evaluator = MetricEvaluator(
+    df=df,
+    metrics=[
+        MetricDefine(name="mae"),
+        MetricDefine(name="rmse"),
+    ],
+    ground_truth="actual",
+    estimates=["model1", "model2"],
+    group_by = ["treatment"],
+    subgroup_by = ["gender", "race"]
+)
+```
+
+- Results
+
+```{python}
+evaluator.evaluate()
+```
+
+- Equivalent Polars code
+
+```{python}
+# Direct calculation for gender subgroup with standardized columns
+gender_results = df.group_by(["treatment", "gender"]).agg([
+    # MAE for both models
+    (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
+    (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
+    # RMSE for both models  
+    (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
+    (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
+]).sort(["treatment", "gender"])
+
+# Direct calculation for race subgroup with standardized columns  
+race_results = df.group_by(["treatment", "race"]).agg([
+    # MAE for both models
+    (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
+    (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
+    # RMSE for both models  
+    (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
+    (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
+]).with_columns([
+    pl.lit("race").alias("subgroup_name"),
+    pl.col("race").alias("subgroup_value")
+]).sort(["treatment", "race"])
+
+# Show both results
+print("Gender subgroup results:")
+print(gender_results)
+print("\nRace subgroup results:")
+print(race_results)
+```
