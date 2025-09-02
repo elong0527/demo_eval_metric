@@ -1,14 +1,14 @@
 ---
-title: "MetricDefine Examples"
+title: "MetricDefine"
 format: html
 execute:
   echo: true
   warning: false
 ---
 
-# MetricDefine Guide
+# MetricDefine
 
-This document demonstrates how to use `MetricDefine` for defining and examining metrics.
+`MetricDefine` is the core class for defining metrics in the polars-eval-metrics framework. This guide shows you how to define both simple and complex metrics for model evaluation.
 
 ## Setup
 
@@ -16,41 +16,112 @@ This document demonstrates how to use `MetricDefine` for defining and examining 
 import sys
 sys.path.append('../src')
 
-from polars_eval_metrics.core.metric_define import MetricDefine, MetricType, SharedType
+from polars_eval_metrics.core.metric_define import MetricDefine, MetricType, MetricScope
 from polars_eval_metrics.core.builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
 ```
 
-## Creating MetricDefine
+## Getting Started: A Simple MAE Metric
 
-### Basic Built-in Metrics
-
-There are built-in metrics to set up metrics. 
+Let's start with the simplest possible metric definition - Mean Absolute Error (MAE). This example demonstrates how to define a metric using Polars expressions for lazy evaluation.
 
 ```{python}
-# List all available built-in metrics
-for name, expr in sorted(BUILTIN_METRICS.items()):
-    print(f"{name}: {expr}")
+MetricDefine(name="mae")
 ```
 
+### Understanding the Output
+
+1. **Basic Information**:
+   - `name='mae'`: The metric identifier used to reference this metric
+   - `type=across_samples`: The default aggregation type that computes across all samples
+   - `Label: 'mae'`: The display label (automatically derived from the name)
+
+2. **Selection Expression**:
+   - `[mae] col("absolute_error").mean().alias("value")`: The actual Polars expression
+   - `[mae]` indicates this uses the built-in MAE formula
+   - The expression calculates the mean of the `absolute_error` column
+
+3. **Polars LazyFrame Chain**:
+   - Shows the exact operations that will be executed
+   - For `across_samples` metrics, it's a simple `.select()` operation
+   - This enables efficient lazy evaluation
+
+### What Happens Behind the Scenes
+
+`MetricDefine` automatically:
+- Recognizes "mae" as a built-in metric and loads its formula
+- Sets appropriate defaults for the aggregation type and label
+- Compiles the expression into an optimized Polars lazy expression
+
+## Available Built-in Metrics
+
+The framework provides many common metrics out of the box. Here's the complete list:
+
 ```{python}
-# Simple MAE metric with automatic label
-MetricDefine(name="mae", type=MetricType.ACROSS_SAMPLES)
+import polars as pl
+
+# Create a Polars DataFrame of built-in metrics
+metrics_data = [
+    {"name": name, "expression": str(expr)} 
+    for name, expr in sorted(BUILTIN_METRICS.items())
+]
+metrics_df = pl.DataFrame(metrics_data)
+metrics_df
 ```
 
-### Built-in Metrics with Selectors
+## Hierarchical Aggregation
 
-There are also built-in selectors that allow hirachical 
-structure. 
+Sometimes you need to calculate metrics at multiple levels. For example, you might want to:
+1. Calculate MAE for each subject individually
+2. Then take the average across all subjects
+
+This two-level aggregation respects the hierarchical structure of your data and can provide different insights than calculating metrics across all samples directly.
+
+### Using the Colon Convention
+
+For built-in metrics, you can specify two-level aggregation using the colon (`:`) convention:
+- Format: `"metric_name:selector_name"`
+- Example: `"mae:mean"` calculates MAE per subject, then takes the mean
+
+### Example: Subject-Level MAE
 
 ```{python}
-# List all available built-in selectors
-for name, expr in sorted(BUILTIN_SELECTORS.items()):
-    print(f"{name}: {expr}")
-```
-
-Using `:` to set <agg_expr:selector_expr> if it is built-in.
-
-```{python}
-# MAE with mean selector for two-level aggregation
+# Calculate MAE within each subject, then average across subjects
 MetricDefine(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
 ```
+
+Notice how the output now shows both aggregation levels:
+
+1. **Aggregation Expression** `[mae] col("absolute_error").mean().alias("value")`:
+   - **First level**: Calculates MAE within each subject group
+   - The `[mae]` tag shows this uses the built-in MAE formula
+
+2. **Selection Expression** `[mean] col("value").mean()`:
+   - **Second level**: Averages the per-subject MAE values
+   - The `[mean]` tag shows this uses the built-in mean selector
+
+3. **Polars LazyFrame Chain**:
+   ```python
+   .group_by('subject_id')     # Step 1: Group data by subject
+   .agg(...)                    # Step 2: Calculate MAE for each subject
+   .select(...)                 # Step 3: Average across all subjects
+   ```
+
+This two-level pattern is particularly useful in clinical trials, longitudinal studies, or any analysis where you need to respect the hierarchical structure of your data.
+
+## Built-in Selectors
+
+Selectors are used in the second level of hierarchical aggregation. They define how to combine the first-level results:
+
+```{python}
+# Create a Polars DataFrame of built-in selectors
+selectors_data = [
+    {"name": name, "expression": str(expr)} 
+    for name, expr in sorted(BUILTIN_SELECTORS.items())
+]
+selectors_df = pl.DataFrame(selectors_data)
+selectors_df
+```
+
+## Custom Expressions
+
+You can also define custom metrics by providing your own Polars expressions. This gives you complete flexibility to create metrics tailored to your specific needs.

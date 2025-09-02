@@ -6,7 +6,7 @@ using Polars LazyFrames, following the architecture design.
 """
 
 import polars as pl
-from ..core import MetricDefine, MetricType, SharedType
+from ..core import MetricDefine, MetricType, MetricScope
 
 
 class MetricEvaluator:
@@ -195,14 +195,14 @@ class MetricEvaluator:
     
     def _get_grouping_columns(self, 
                              metric_type: MetricType,
-                             shared_by: SharedType | None,
+                             scope: MetricScope | None,
                              estimate: str) -> tuple[list[str] | None, list[str] | None]:
         """
-        Determine grouping columns based on metric type and shared_by
+        Determine grouping columns based on metric type and scope
         
         Args:
             metric_type: Type of metric aggregation
-            shared_by: How the metric is shared (ALL, GROUP, or None)
+            scope: Metric calculation scope (GLOBAL, MODEL, GROUP, or None)
             estimate: Current estimate/model column name
             
         Returns:
@@ -228,26 +228,30 @@ class MetricEvaluator:
         
         return rule
     
-    def _apply_shared_type(self, shared_by: SharedType | None) -> list[str]:
+    def _apply_metric_scope(self, scope: MetricScope | None) -> list[str]:
         """
-        Apply SharedType to determine effective grouping columns
+        Apply MetricScope to determine effective grouping columns
         
         Args:
-            shared_by: How the metric is shared
+            scope: Metric calculation scope (GLOBAL, MODEL, or GROUP)
             
         Returns:
             Effective group_by columns
         """
-        if shared_by == SharedType.ALL:
+        if scope == MetricScope.GLOBAL:
             # No grouping - aggregate across everything
             return []
-        elif shared_by == SharedType.GROUP:
-            # Group by group columns only (same value for all models)
+        elif scope == MetricScope.MODEL:
+            # No grouping - per model metrics ignore group_by columns
+            # The model separation happens at evaluate_single level
+            return []
+        elif scope == MetricScope.GROUP:
+            # Group-only scope - this will be handled specially in evaluation
+            # to aggregate across models for each group
             return self.group_by
-        elif shared_by == SharedType.MODEL:
-            # This doesn't make sense since we calculate per model already
-            # Could either raise error or treat as default
+        elif scope is None:
+            # Default: use configured group_by columns (per model-group)
             return self.group_by
         else:
-            # Default: use configured group_by
-            return self.group_by
+            # Unexpected scope value
+            raise ValueError(f"Unknown scope: {scope}")

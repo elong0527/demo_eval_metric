@@ -21,11 +21,11 @@ class MetricType(Enum):
     WITHIN_VISIT = "within_visit"
 
 
-class SharedType(Enum):
-    """Shared semantics for metric calculation optimization"""
-    MODEL = "model"
-    ALL = "all"
-    GROUP = "group"
+class MetricScope(Enum):
+    """Scope for metric calculation - determines at what level the metric is computed"""
+    GLOBAL = "global"  # Calculate once for entire dataset
+    MODEL = "model"    # Calculate per model only, ignoring groups
+    GROUP = "group"    # Calculate per group only, ignoring models
 
 
 class MetricDefine(BaseModel):
@@ -39,8 +39,8 @@ class MetricDefine(BaseModel):
     
     name: str
     label: str | None = None
-    type: MetricType
-    shared_by: SharedType | None = None
+    type: MetricType = MetricType.ACROSS_SAMPLES
+    scope: MetricScope | None = None
     agg_expr: list[str] | None = None
     select_expr: str | None = None
     
@@ -253,7 +253,8 @@ class MetricDefine(BaseModel):
         """String representation for display"""
         lines = [f"MetricDefine(name='{self.name}', type={self.type.value})"]
         lines.append(f"  Label: '{self.label}'")
-        lines.append(f"  Shared by: {self.shared_by.value if self.shared_by else 'none'}")
+        if self.scope is not None:
+            lines.append(f"  Scope: {self.scope.value}")
         
         try:
             agg_exprs, select_expr = self.compile_expressions()
@@ -265,16 +266,14 @@ class MetricDefine(BaseModel):
                 base_name = self.name
                 selector_name = None
             
-            # Show aggregation expressions
+            # Show aggregation expressions (only if they exist)
             if agg_exprs:
                 lines.append("  Aggregation expressions:")
                 for expr in agg_exprs:
                     source = "custom" if self.agg_expr else base_name
                     lines.append(f"    - [{source}] {expr}")
-            else:
-                lines.append("  Aggregation expressions: none")
             
-            # Show selection expression
+            # Show selection expression (only if it exists)
             if select_expr is not None:
                 lines.append("  Selection expression:")
                 if self.select_expr:
@@ -283,8 +282,6 @@ class MetricDefine(BaseModel):
                     lines.append(f"    - [{selector_name}] {select_expr}")
                 else:
                     lines.append(f"    - [{base_name}] {select_expr}")
-            else:
-                lines.append("  Selection expression: none")
             
             # Add the LazyFrame chain
             lines.append("")
