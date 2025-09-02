@@ -349,32 +349,37 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 4. **Validate Early**: Use Pydantic validation in MetricDefine
 5. **Document Examples**: Add examples to docs/ for new features
 6. **Use ASCII Only**: All code, documentation, and comments must use ASCII characters only
+7  **Using typing consistently** using |, dict etc
 
 ### DON'Ts
 1. **Don't Modify plan/**: Reference only, contains original design
 2. **Don't Skip Validation**: Always validate user input
 3. **Don't Mix Concerns**: Keep metric definition separate from evaluation
 4. **Don't Hardcode**: Use configuration for all settings
-6. **Don't Use Unicode**: No emojis, special symbols, or non-ASCII characters
+5. **Don't Use Unicode**: No emojis, special symbols, or non-ASCII characters
 
 ## Common Patterns
 
 ### Registering Custom Expressions
 ```python
+# Create a registry instance
+registry = MetricRegistry()
+
 # Register custom error type with parameters
 def buffer_error(estimate: str, ground_truth: str, buffer: float = 0.5):
     return (pl.col(estimate) - pl.col(ground_truth)).abs() <= buffer
 
-MetricRegistry.register_error('buffer_error', buffer_error)
+registry.register_error('buffer_error', buffer_error)
 
 # Register metric that uses the custom error
-MetricRegistry.register_metric('buffer_accuracy',
+registry.register_metric('buffer_accuracy',
     pl.col('buffer_error').mean() * 100)
 
 # Use in evaluation
 evaluator = MetricEvaluator(
     df=data,
     metrics=[MetricDefine(name='buffer_accuracy')],
+    registry=registry,  # Pass the custom registry
     # ... other parameters
 )
 ```
