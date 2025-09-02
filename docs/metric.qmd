@@ -52,5 +52,5 @@ Using `:` to set <agg_expr:selector_expr> if it is built-in.
 
 ```{python}
 # MAE with mean selector for two-level aggregation
-MetricData(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
+MetricDefine(name="mae:mean", type=MetricType.ACROSS_SUBJECT)
 ```

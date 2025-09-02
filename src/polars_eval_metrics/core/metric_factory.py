@@ -55,26 +55,6 @@ class MetricFactory:
         return metric
     
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> MetricDefine:
-        """
-        Create MetricDefine from a simple dictionary
-        
-        Args:
-            data: Dictionary with metric fields
-            
-        Returns:
-            MetricDefine instance
-        """
-        # Convert string types to enums if needed
-        if 'type' in data and isinstance(data['type'], str):
-            data['type'] = MetricType(data['type'])
-        
-        if 'shared_by' in data and isinstance(data['shared_by'], str):
-            data['shared_by'] = SharedType(data['shared_by'])
-        
-        return MetricDefine(**data)
-    
-    @staticmethod
     def from_config(config: dict[str, Any]) -> list[MetricDefine]:
         """
         Create a list of MetricDefine objects from a configuration dictionary
