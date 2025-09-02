@@ -8,7 +8,8 @@ import yaml
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, Field
-from ..core import MetricDefine, MetricFactory
+from ..core import MetricDefine
+from ..core.metric_helpers import create_metrics
 
 
 class EvaluationConfig(BaseModel):
@@ -43,11 +44,8 @@ class EvaluationConfig(BaseModel):
         else:
             config_dict = config
         
-        # Parse metrics using MetricFactory
-        metrics = []
-        for metric_config in config_dict.get('metrics', []):
-            metric = MetricFactory.from_yaml(metric_config)
-            metrics.append(metric)
+        # Parse metrics using helper function
+        metrics = create_metrics(config_dict.get('metrics', []))
         
         # Create config with all settings
         return cls(
@@ -95,11 +93,8 @@ class EvaluationConfig(BaseModel):
         # Handle metrics specially - if provided as dicts, convert them
         if 'metrics' in kwargs:
             metrics_raw = kwargs.pop('metrics')
-            if metrics_raw and isinstance(metrics_raw[0], dict):
-                kwargs['metrics'] = [
-                    MetricFactory.from_yaml(m) if isinstance(m, dict) else m
-                    for m in metrics_raw
-                ]
+            if metrics_raw and not isinstance(metrics_raw[0], MetricDefine):
+                kwargs['metrics'] = create_metrics(metrics_raw)
         
         current_data.update(kwargs)
         return self.__class__(**current_data)

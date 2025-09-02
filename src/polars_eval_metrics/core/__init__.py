@@ -1,11 +1,11 @@
 """Core components for metric evaluation."""
 
 from .metric_define import MetricDefine, MetricType, MetricScope
-from .metric_factory import MetricFactory
+from .metric_helpers import create_metrics
 
 __all__ = [
     "MetricDefine",
     "MetricType",
     "MetricScope",
-    "MetricFactory",
+    "create_metrics",
 ]
