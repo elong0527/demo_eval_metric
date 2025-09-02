@@ -24,7 +24,7 @@ The test suite covers the following key modules:
 
 - **core/metric_define.py**: Core metric definitions and validation
 - **core/metric_helpers.py**: Helper functions for metric creation  
-- **core/builtin.py**: Built-in metric implementations
+- **core/metric_registry.py**: Unified registry for all expressions (errors, metrics, selectors)
 - **evaluation/metric_evaluator.py**: Main evaluation engine
 - **evaluation/config.py**: Configuration management
 

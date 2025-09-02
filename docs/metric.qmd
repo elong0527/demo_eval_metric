@@ -55,14 +55,14 @@ The framework provides many common metrics out of the box. Here's the complete l
 ```{python}
 #| code-fold: true
 
-from polars_eval_metrics.core.builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
+from polars_eval_metrics import MetricRegistry
 
 pl.Config.set_fmt_str_lengths(200)
 
 # Create a Polars DataFrame of built-in metrics
 metrics_data = [
-    {"name": name, "expression": str(expr)} 
-    for name, expr in sorted(BUILTIN_METRICS.items())
+    {"name": name, "expression": str(MetricRegistry.get_metric(name))} 
+    for name in sorted(MetricRegistry.list_metrics())
 ]
 metrics_df = pl.DataFrame(metrics_data)
 metrics_df
@@ -118,8 +118,8 @@ Selectors are used in the second level of hierarchical aggregation. They define 
 
 # Create a Polars DataFrame of built-in selectors
 selectors_data = [
-    {"name": name, "expression": str(expr)} 
-    for name, expr in sorted(BUILTIN_SELECTORS.items())
+    {"name": name, "expression": str(MetricRegistry.get_selector(name))} 
+    for name in sorted(MetricRegistry.list_selectors())
 ]
 selectors_df = pl.DataFrame(selectors_data)
 selectors_df
