@@ -5,7 +5,7 @@ Handles YAML parsing and metric initialization logic.
 """
 
 from typing import Any
-from .metric_define import MetricDefine, MetricType, MetricScope
+from .metric_define import MetricDefine
 
 
 class MetricFactory:
@@ -29,7 +29,7 @@ class MetricFactory:
         metric_data = {
             'name': config['name'],
             'label': config.get('label', config['name']),
-            'type': MetricType(config.get('type', 'across_samples'))
+            'type': config.get('type', 'across_samples')
         }
         
         # Parse scope if present (also support old 'shared_by' for compatibility)
@@ -40,7 +40,7 @@ class MetricFactory:
                 # Map old values to new ones if needed
                 if scope_value == 'all':
                     scope_value = 'global'
-                metric_data['scope'] = MetricScope(scope_value)
+                metric_data['scope'] = scope_value
         
         # Parse agg expressions (normalize to list)
         agg_config = config.get('agg', {})

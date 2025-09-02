@@ -70,6 +70,56 @@ class MetricDefine(BaseModel):
             raise ValueError("Metric label cannot be empty")
         return v.strip()
     
+    @field_validator('type', mode='before')
+    @classmethod
+    def validate_type(cls, v) -> MetricType:
+        """Convert string to MetricType enum if needed"""
+        if isinstance(v, MetricType):
+            return v
+        if isinstance(v, str):
+            # Try to convert string to enum
+            try:
+                # First try exact match
+                return MetricType(v)
+            except ValueError:
+                # Try case-insensitive match with underscores
+                v_normalized = v.lower().replace('-', '_')
+                for member in MetricType:
+                    if member.value == v_normalized:
+                        return member
+                # List valid options in error message
+                valid_options = [m.value for m in MetricType]
+                raise ValueError(
+                    f"Invalid metric type: '{v}'. Valid options are: {', '.join(valid_options)}"
+                )
+        raise ValueError(f"type must be a MetricType enum or string, got {type(v)}")
+    
+    @field_validator('scope', mode='before')
+    @classmethod
+    def validate_scope(cls, v) -> MetricScope | None:
+        """Convert string to MetricScope enum if needed"""
+        if v is None:
+            return None
+        if isinstance(v, MetricScope):
+            return v
+        if isinstance(v, str):
+            # Try to convert string to enum
+            try:
+                # First try exact match
+                return MetricScope(v)
+            except ValueError:
+                # Try case-insensitive match
+                v_normalized = v.lower()
+                for member in MetricScope:
+                    if member.value == v_normalized:
+                        return member
+                # List valid options in error message
+                valid_options = [m.value for m in MetricScope]
+                raise ValueError(
+                    f"Invalid metric scope: '{v}'. Valid options are: {', '.join(valid_options)}"
+                )
+        raise ValueError(f"scope must be a MetricScope enum, string, or None, got {type(v)}")
+    
     @field_validator('agg_expr', mode='before')
     @classmethod
     def normalize_agg_expr(cls, v):
