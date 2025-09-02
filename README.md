@@ -7,19 +7,19 @@
 
 A high-performance model evaluation framework built on Polars lazy evaluation.
 
-## =Ú Documentation
+## =ï¿½ Documentation
 
 Visit our [documentation website](https://elong0527.github.io/demo_eval_metric/) for detailed guides and examples.
 
 ## ( Features
 
-- **=€ Fast**: Leverages Polars lazy evaluation for optimal performance
+- **=ï¿½ Fast**: Leverages Polars lazy evaluation for optimal performance
 - **=' Flexible**: Support for custom metrics and expressions
-- **<¯ Type-safe**: Pydantic models with validation
-- **=Ê Simple**: Clean API with sensible defaults
+- **<ï¿½ Type-safe**: Pydantic models with validation
+- **=ï¿½ Simple**: Clean API with sensible defaults
 - **= Extensible**: Easy to add new metrics and aggregation types
 
-## =æ Installation
+## =ï¿½ Installation
 
 ```bash
 # Install from source
@@ -32,22 +32,20 @@ pip install -e ".[dev]"
 pip install -e ".[dev,test,docs]"
 ```
 
-## =€ Quick Start
+## =ï¿½ Quick Start
 
 ```python
-from polars_eval_metrics import MetricEvaluator, MetricFactory
+from polars_eval_metrics import MetricEvaluator, create_metrics
 import polars as pl
 
-# Define metrics from configuration
-config = {
-    'metrics': [
-        {'name': 'mae', 'label': 'Mean Absolute Error'},
-        {'name': 'rmse', 'label': 'Root Mean Squared Error'}
-    ]
-}
+# Create metrics from simple names or configurations
+metrics = create_metrics(['mae', 'rmse'])
 
-# Create metrics
-metrics = MetricFactory.from_dict(config)
+# Or from detailed configurations
+# metrics = create_metrics([
+#     {'name': 'mae', 'label': 'Mean Absolute Error'},
+#     {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+# ])
 
 # Create sample data
 df = pl.DataFrame({
@@ -66,18 +64,18 @@ evaluator = MetricEvaluator(
     group_by=["treatment"]
 )
 
-results = evaluator.evaluate_all()
+results = evaluator.evaluate()
 print(results)
 ```
 
-## =Ê Code Coverage
+## =ï¿½ Code Coverage
 
 We maintain comprehensive test coverage to ensure code quality:
 
 - View our [coverage report](https://elong0527.github.io/demo_eval_metric/coverage.html)
 - Check [Codecov](https://codecov.io/gh/elong0527/demo_eval_metric) for detailed metrics
 
-## >ê Testing
+## >ï¿½ Testing
 
 ```bash
 # Run all tests
@@ -90,7 +88,7 @@ pytest --cov=src/polars_eval_metrics --cov-report=html
 open htmlcov/index.html
 ```
 
-## =Ö Documentation Development
+## =ï¿½ Documentation Development
 
 ```bash
 # Install documentation dependencies
@@ -113,7 +111,7 @@ Contributions are welcome! Please:
 3. Maintain or improve code coverage
 4. Follow the existing code style
 
-## =Ä License
+## =ï¿½ License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
