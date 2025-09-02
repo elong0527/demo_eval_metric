@@ -10,7 +10,7 @@ from pydantic import BaseModel, field_validator, model_validator, ConfigDict
 from typing import Self
 import polars as pl
 import textwrap
-from .builtin import BUILTIN_METRICS, BUILTIN_SELECTORS
+from .metric_registry import MetricRegistry
 
 
 class MetricType(Enum):
@@ -253,10 +253,11 @@ class MetricDefine(BaseModel):
             for item in self.agg_expr:
                 if isinstance(item, str):
                     # Built-in metric name
-                    builtin_expr = BUILTIN_METRICS.get(item)
-                    if builtin_expr is None:
+                    try:
+                        builtin_expr = MetricRegistry.get_metric(item)
+                        agg_exprs.append(builtin_expr)
+                    except ValueError:
                         raise ValueError(f"Unknown built-in metric in agg_expr: {item}")
-                    agg_exprs.append(builtin_expr)
                 else:
                     # Already a Polars expression
                     agg_exprs.append(item)
@@ -266,8 +267,9 @@ class MetricDefine(BaseModel):
         if self.select_expr is not None:
             if isinstance(self.select_expr, str):
                 # Built-in selector name
-                select_pl_expr = BUILTIN_SELECTORS.get(self.select_expr)
-                if select_pl_expr is None:
+                try:
+                    select_pl_expr = MetricRegistry.get_selector(self.select_expr)
+                except ValueError:
                     raise ValueError(
                         f"Unknown built-in selector in select_expr: {self.select_expr}"
                     )
@@ -287,15 +289,17 @@ class MetricDefine(BaseModel):
         agg_name, select_name = parts[0], parts[1] if parts[1] else None
 
         # Get built-in aggregation expression (already a Polars expression)
-        agg_expr = BUILTIN_METRICS.get(agg_name)
-        if agg_expr is None:
+        try:
+            agg_expr = MetricRegistry.get_metric(agg_name)
+        except ValueError:
             raise ValueError(f"Unknown built-in metric: {agg_name}")
 
         # Get selector expression if specified (already a Polars expression)
         select_expr = None
         if select_name:
-            select_expr = BUILTIN_SELECTORS.get(select_name)
-            if select_expr is None:
+            try:
+                select_expr = MetricRegistry.get_selector(select_name)
+            except ValueError:
                 raise ValueError(f"Unknown built-in selector: {select_name}")
             # If there's a selector, return as aggregation + selection
             return [agg_expr], select_expr
