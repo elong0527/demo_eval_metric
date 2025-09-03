@@ -33,11 +33,27 @@ class MetricScope(Enum):
 
 class MetricDefine(BaseModel):
     """
-    Metric definition with expression preparation capabilities.
+    Metric definition with hierarchical expression support.
 
-    This class combines metric configuration with the ability to compile
-    expressions to Polars expressions, focusing solely on defining and
-    preparing metrics for evaluation.
+    This class defines metrics with support for two-level aggregation patterns:
+    - within_expr: Expressions for within-entity aggregation (e.g., within subject/visit)
+    - across_expr: Expressions for across-entity aggregation or final metric computation
+    
+    Attributes:
+        name: Metric identifier
+        label: Display name for the metric
+        type: Aggregation type (ACROSS_SAMPLES, WITHIN_SUBJECT, ACROSS_SUBJECT, etc.)
+        scope: Calculation scope (GLOBAL, MODEL, GROUP) - orthogonal to aggregation type
+        within_expr: Expression(s) for within-entity aggregation:
+                    - Used in WITHIN_SUBJECT, ACROSS_SUBJECT, WITHIN_VISIT, ACROSS_VISIT
+                    - Not used in ACROSS_SAMPLES (which operates directly on samples)
+        across_expr: Expression for across-entity aggregation or final computation:
+                    - For ACROSS_SAMPLES: Applied directly to error columns
+                    - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
+                    - For WITHIN_SUBJECT/VISIT: Not used (within_expr is final)
+    
+    Note: within_expr and across_expr are distinct from group_by/subgroup_by which control
+          analysis stratification (e.g., by treatment, age, sex) and apply to ALL metric types.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -46,8 +62,8 @@ class MetricDefine(BaseModel):
     label: str | None = None
     type: MetricType = MetricType.ACROSS_SAMPLES
     scope: MetricScope | None = None
-    agg_expr: list[str | pl.Expr] | None = None
-    select_expr: str | pl.Expr | None = None
+    within_expr: list[str | pl.Expr] | None = None
+    across_expr: str | pl.Expr | None = None
     registry: MetricRegistry | None = None
 
     def __init__(self, **kwargs):
@@ -130,9 +146,9 @@ class MetricDefine(BaseModel):
             f"scope must be a MetricScope enum, string, or None, got {type(v)}"
         )
 
-    @field_validator("agg_expr", mode="before")
+    @field_validator("within_expr", mode="before")
     @classmethod
-    def normalize_agg_expr(cls, v):
+    def normalize_within_expr(cls, v):
         """Convert single string to list before validation"""
         if v is None:
             return None
@@ -142,40 +158,40 @@ class MetricDefine(BaseModel):
             return [v]  # Convert single expression to list
         return v  # Already a list or something else
 
-    @field_validator("agg_expr")
+    @field_validator("within_expr")
     @classmethod
-    def validate_agg_expr(
+    def validate_within_expr(
         cls, v: list[str | pl.Expr] | None
     ) -> list[str | pl.Expr] | None:
-        """Validate aggregation expressions list"""
+        """Validate within-entity aggregation expressions list"""
         if v is None:
             return None
 
         if not isinstance(v, list):
             raise ValueError(
-                f"agg_expr must be a list after normalization, got {type(v)}"
+                f"within_expr must be a list after normalization, got {type(v)}"
             )
 
         if not v:
-            raise ValueError("agg_expr cannot be an empty list")
+            raise ValueError("within_expr cannot be an empty list")
 
         for i, item in enumerate(v):
             if isinstance(item, str):
                 if not item.strip():
                     raise ValueError(
-                        f"agg_expr[{i}]: Built-in metric name cannot be empty"
+                        f"within_expr[{i}]: Built-in metric name cannot be empty"
                     )
             elif not isinstance(item, pl.Expr):
                 raise ValueError(
-                    f"agg_expr[{i}] must be a string (built-in name) or Polars expression, got {type(item)}"
+                    f"within_expr[{i}] must be a string (built-in name) or Polars expression, got {type(item)}"
                 )
 
         return v
 
-    @field_validator("select_expr")
+    @field_validator("across_expr")
     @classmethod
-    def validate_select_expr(cls, v: str | pl.Expr | None) -> str | pl.Expr | None:
-        """Validate select expression - can be built-in selector name or Polars expression"""
+    def validate_across_expr(cls, v: str | pl.Expr | None) -> str | pl.Expr | None:
+        """Validate across-entity expression - can be built-in selector name or Polars expression"""
         if v is None:
             return None
 
@@ -188,31 +204,31 @@ class MetricDefine(BaseModel):
         # Otherwise it must be a Polars expression
         if not isinstance(v, pl.Expr):
             raise ValueError(
-                f"select_expr must be a string (built-in selector) or Polars expression, got {type(v)}"
+                f"across_expr must be a string (built-in selector) or Polars expression, got {type(v)}"
             )
         return v
 
     @model_validator(mode="after")
     def validate_expressions(self) -> Self:
         """Validate expression combinations"""
-        is_custom = self.agg_expr is not None or self.select_expr is not None
+        is_custom = self.within_expr is not None or self.across_expr is not None
 
         if is_custom:
             # Custom metrics must have at least one expression
-            if self.agg_expr is None and self.select_expr is None:
+            if self.within_expr is None and self.across_expr is None:
                 raise ValueError(
-                    "Custom metrics must have at least agg_expr or select_expr"
+                    "Custom metrics must have at least within_expr or across_expr"
                 )
 
-            # For two-level aggregation with multiple agg_expr, select_expr is required
+            # For two-level aggregation with multiple within_expr, across_expr is required
             if self.type in (MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT):
                 if (
-                    self.agg_expr
-                    and len(self.agg_expr) > 1
-                    and self.select_expr is None
+                    self.within_expr
+                    and len(self.within_expr) > 1
+                    and self.across_expr is None
                 ):
                     raise ValueError(
-                        f"select_expr required for multiple agg expressions in {self.type.value}"
+                        f"across_expr required for multiple within expressions in {self.type.value}"
                     )
         else:
             # Built-in metrics should follow naming convention
@@ -242,7 +258,7 @@ class MetricDefine(BaseModel):
         reg = registry or getattr(self, '_registry', None) or MetricRegistry()
 
         # Handle custom expressions
-        if self.agg_expr is not None or self.select_expr is not None:
+        if self.within_expr is not None or self.across_expr is not None:
             result = self._compile_custom_expressions(reg)
         else:
             # Handle built-in metrics
@@ -261,43 +277,43 @@ class MetricDefine(BaseModel):
         self, registry: MetricRegistry
     ) -> tuple[list[pl.Expr], pl.Expr | None]:
         """Return custom metric expressions - handle built-in names and Polars expressions in list"""
-        agg_exprs = []
+        within_exprs = []
 
-        # Handle agg_expr - always a list after normalization
-        if self.agg_expr is not None:
+        # Handle within_expr - always a list after normalization
+        if self.within_expr is not None:
             # List - resolve each item
-            for item in self.agg_expr:
+            for item in self.within_expr:
                 if isinstance(item, str):
                     # Built-in metric name
                     try:
                         builtin_expr = registry.get_metric(item)
-                        agg_exprs.append(builtin_expr)
+                        within_exprs.append(builtin_expr)
                     except ValueError:
-                        raise ValueError(f"Unknown built-in metric in agg_expr: {item}")
+                        raise ValueError(f"Unknown built-in metric in within_expr: {item}")
                 else:
                     # Already a Polars expression
-                    agg_exprs.append(item)
+                    within_exprs.append(item)
 
-        # Handle select_expr - can be string (built-in selector) or expression
-        select_pl_expr = None
-        if self.select_expr is not None:
-            if isinstance(self.select_expr, str):
+        # Handle across_expr - can be string (built-in selector) or expression
+        across_pl_expr = None
+        if self.across_expr is not None:
+            if isinstance(self.across_expr, str):
                 # Built-in selector name
                 try:
-                    select_pl_expr = registry.get_selector(self.select_expr)
+                    across_pl_expr = registry.get_selector(self.across_expr)
                 except ValueError:
                     raise ValueError(
-                        f"Unknown built-in selector in select_expr: {self.select_expr}"
+                        f"Unknown built-in selector in across_expr: {self.across_expr}"
                     )
             else:
                 # Already a Polars expression
-                select_pl_expr = self.select_expr
+                across_pl_expr = self.across_expr
 
-        # If only select_expr provided (no agg_expr), use it as single aggregation
-        if len(agg_exprs) == 0 and select_pl_expr is not None:
-            return [select_pl_expr], None
+        # If only across_expr provided (no within_expr), use it as single aggregation
+        if len(within_exprs) == 0 and across_pl_expr is not None:
+            return [across_pl_expr], None
 
-        return agg_exprs, select_pl_expr
+        return within_exprs, across_pl_expr
 
     def _compile_builtin_expressions(
         self, registry: MetricRegistry
@@ -481,25 +497,25 @@ class MetricDefine(BaseModel):
                 base_name = self.name
                 selector_name = None
 
-            # Show aggregation expressions (only if they exist)
+            # Show within-entity expressions (only if they exist)
             if agg_exprs:
-                lines.append("  Aggregation expressions:")
+                lines.append("  Within-entity expressions:")
                 for i, expr in enumerate(agg_exprs):
                     # Determine source for each expression
-                    if self.agg_expr is not None and i < len(self.agg_expr):
-                        item = self.agg_expr[i]
+                    if self.within_expr is not None and i < len(self.within_expr):
+                        item = self.within_expr[i]
                         source = item if isinstance(item, str) else "custom"
                     else:
                         source = base_name  # From metric name
                     lines.append(f"    - [{source}] {expr}")
 
-            # Show selection expression (only if it exists)
+            # Show across-entity expression (only if it exists)
             if select_expr is not None:
-                lines.append("  Selection expression:")
+                lines.append("  Across-entity expression:")
                 # Determine source for selection expression
-                if isinstance(self.select_expr, str):
-                    source = self.select_expr  # Built-in selector name
-                elif self.select_expr is not None:
+                if isinstance(self.across_expr, str):
+                    source = self.across_expr  # Built-in selector name
+                elif self.across_expr is not None:
                     source = "custom"  # Custom expression
                 elif selector_name:
                     source = selector_name  # From metric name's selector part

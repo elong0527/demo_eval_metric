@@ -142,7 +142,7 @@ MetricDefine(
     name="pct_within_1",
     label="% Predictions Within +/- 1",
     type="across_samples",
-    select_expr=(pl.col('absolute_error') < 1).mean() * 100
+    across_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
 ```
 
@@ -156,8 +156,8 @@ MetricDefine(
     name="mae_p90_by_subject",
     label="90th Percentile of Subject MAEs",
     type="across_subject",
-    agg_expr="mae",
-    select_expr=pl.col('value').quantile(0.9)
+    within_expr="mae",
+    across_expr=pl.col('value').quantile(0.9)
 )
 ```
 
@@ -178,11 +178,11 @@ MetricDefine(
     name="weighted_mae",
     label="Weighted Average of Subject MAEs",
     type="across_subject",
-    agg_expr=[
+    within_expr=[
         "mae",  # MAE per subject (stored in 'value' column)
         pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
     ],
-    select_expr=(
+    across_expr=(
         (pl.col('value') * pl.col('avg_weight')).sum() / 
         pl.col('avg_weight').sum()
     )
@@ -213,10 +213,10 @@ MetricDefine(
     name="weighted_mae_numpy",
     label="Weighted Average of Subject MAEs (NumPy)",
     type="across_subject",
-    agg_expr=[
+    within_expr=[
         "mae",  # MAE per subject (stored in 'value' column)
         pl.col("weight").mean().alias("avg_weight")  # Average weight per subject
     ],
-    select_expr=weighted_average
+    across_expr=weighted_average
 )
 ```

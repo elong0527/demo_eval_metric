@@ -94,7 +94,7 @@ class MetricEvaluator:
         df_prep = self._prepare_error_columns(self.df, estimate)
 
         # Get metric expressions using the evaluator's registry
-        agg_exprs, select_expr = metric.compile_expressions(self.registry)
+        within_exprs, across_expr = metric.compile_expressions(self.registry)
 
         # Determine grouping based on metric type and scope
         agg_groups, select_groups = self._get_grouping_columns(
@@ -103,7 +103,7 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            df_prep, agg_exprs, select_expr, agg_groups, select_groups
+            df_prep, within_exprs, across_expr, agg_groups, select_groups
         )
 
         # Add metadata
@@ -137,7 +137,7 @@ class MetricEvaluator:
         df_prep = self._prepare_error_columns(self.df, estimate)
 
         # Get metric expressions using the evaluator's registry
-        agg_exprs, select_expr = metric.compile_expressions(self.registry)
+        within_exprs, across_expr = metric.compile_expressions(self.registry)
 
         # Determine grouping based on metric type and scope, but with the subgroup
         # Temporarily modify group_by to include the subgroup for this calculation
@@ -153,7 +153,7 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            df_prep, agg_exprs, select_expr, agg_groups, select_groups
+            df_prep, within_exprs, across_expr, agg_groups, select_groups
         )
 
         # Add metadata including subgroup information
@@ -319,27 +319,27 @@ class MetricEvaluator:
     def _build_pipeline(
         self,
         df: pl.LazyFrame,
-        agg_exprs: list[pl.Expr],
-        select_expr: pl.Expr,
+        within_exprs: list[pl.Expr],
+        across_expr: pl.Expr,
         agg_groups: list[str] | None,
         select_groups: list[str] | None,
     ) -> pl.LazyFrame:
         """Build the evaluation pipeline"""
         pipeline = df
 
-        # First-level aggregation if needed
-        if agg_groups is not None and agg_exprs:
+        # First-level (within-entity) aggregation if needed
+        if agg_groups is not None and within_exprs:
             if agg_groups:
-                pipeline = pipeline.group_by(agg_groups).agg(agg_exprs)
+                pipeline = pipeline.group_by(agg_groups).agg(within_exprs)
             else:
-                pipeline = pipeline.select(agg_exprs)
+                pipeline = pipeline.select(within_exprs)
 
-        # Second-level selection if needed
+        # Second-level (across-entity) selection if needed
         if select_groups is not None:
-            if select_expr is not None:
-                value_expr = select_expr.alias("value").cast(pl.Float64)
-            elif agg_exprs:
-                value_expr = agg_exprs[0].alias("value").cast(pl.Float64)
+            if across_expr is not None:
+                value_expr = across_expr.alias("value").cast(pl.Float64)
+            elif within_exprs:
+                value_expr = within_exprs[0].alias("value").cast(pl.Float64)
             else:
                 raise ValueError("No expression available for selection")
 

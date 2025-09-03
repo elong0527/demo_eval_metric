@@ -104,7 +104,7 @@ MetricRegistry.get_selector(name)
 **Purpose**: Core metric definition class  
 **Responsibilities**:
 - Define metric properties (name, label, type, scope)
-- Hold aggregation and selection expressions
+- Hold within-entity and across-entity aggregation expressions
 - Validate metric configuration
 - Resolve expressions from MetricRegistry
 
@@ -115,9 +115,20 @@ class MetricDefine:
     label: str | None                   # Display name
     type: MetricType                    # Aggregation type
     scope: MetricScope | None           # Calculation scope
-    agg_expr: list[str | pl.Expr]      # Aggregation expressions
-    select_expr: str | pl.Expr         # Selection expression
+    within_expr: list[str | pl.Expr]   # Within-entity aggregation expressions
+    across_expr: str | pl.Expr         # Across-entity aggregation expression
 ```
+
+**Expression Naming Convention** (Updated 2025-01-03):
+- `within_expr`: Expressions for within-entity aggregation (e.g., within subject/visit)
+  - Used in WITHIN_SUBJECT, ACROSS_SUBJECT, WITHIN_VISIT, ACROSS_VISIT
+  - Aggregates data within each entity (subject or visit)
+- `across_expr`: Expressions for across-entity aggregation or final computation
+  - For ACROSS_SAMPLES: Applied directly to error columns
+  - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
+  - For WITHIN_SUBJECT/VISIT: Not used (within_expr provides final result)
+
+Note: These are distinct from `group_by`/`subgroup_by` which control analysis stratification (e.g., by treatment, age, sex)
 
 ### 3. **MetricFactory** (`core/metric_factory.py`)
 **Purpose**: Factory pattern for creating MetricDefine instances  
@@ -264,7 +275,7 @@ pct_accurate = MetricDefine(
     name="pct_within_1",
     label="% Within +/- 1",
     type=MetricType.ACROSS_SAMPLES,
-    select_expr=(pl.col('absolute_error') < 1).mean() * 100
+    across_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
 ```
 
@@ -389,23 +400,23 @@ evaluator = MetricEvaluator(
 # Pattern 1: Simple custom expression
 metric = MetricDefine(
     name="custom",
-    select_expr=pl.col("error").abs().mean()
+    across_expr=pl.col("error").abs().mean()
 )
 
 # Pattern 2: Using registered metric with custom selector
 metric = MetricDefine(
     name="mae_p90",
     type=MetricType.ACROSS_SUBJECT,
-    agg_expr="mae",  # From registry
-    select_expr=pl.col("value").quantile(0.9)  # Custom
+    within_expr="mae",  # From registry
+    across_expr=pl.col("value").quantile(0.9)  # Custom
 )
 
 # Pattern 3: Multiple aggregations
 metric = MetricDefine(
     name="weighted",
     type=MetricType.ACROSS_SUBJECT,
-    agg_expr=["mae", pl.col("weight").mean().alias("w")],
-    select_expr=(pl.col("value") * pl.col("w")).sum() / pl.col("w").sum()
+    within_expr=["mae", pl.col("weight").mean().alias("w")],
+    across_expr=(pl.col("value") * pl.col("w")).sum() / pl.col("w").sum()
 )
 ```
 

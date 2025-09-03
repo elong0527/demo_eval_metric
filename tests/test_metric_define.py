@@ -18,8 +18,8 @@ class TestMetricDefineBasic:
         assert metric.label == "mae"  # Auto-generated from name
         assert metric.type == MetricType.ACROSS_SAMPLES
         assert metric.scope is None
-        assert metric.agg_expr is None
-        assert metric.select_expr is None
+        assert metric.within_expr is None
+        assert metric.across_expr is None
 
     def test_hierarchical_mae_mean(self):
         """Test MAE with mean aggregation (from metric.qmd line 88)."""
@@ -47,14 +47,14 @@ class TestMetricDefineCustomExpressions:
             name="pct_within_1",
             label="% Predictions Within +/- 1",
             type=MetricType.ACROSS_SAMPLES,
-            select_expr=(pl.col("absolute_error") < 1).mean() * 100,
+            across_expr=(pl.col("absolute_error") < 1).mean() * 100,
         )
 
         assert metric.name == "pct_within_1"
         assert metric.label == "% Predictions Within +/- 1"
         assert metric.type == MetricType.ACROSS_SAMPLES
-        assert metric.select_expr is not None
-        assert isinstance(metric.select_expr, pl.Expr)
+        assert metric.across_expr is not None
+        assert isinstance(metric.across_expr, pl.Expr)
 
     def test_percentile_metric(self):
         """Test percentile of per-subject MAE (from metric.qmd line 151)."""
@@ -62,15 +62,15 @@ class TestMetricDefineCustomExpressions:
             name="mae_p90_by_subject",
             label="90th Percentile of Subject MAEs",
             type=MetricType.ACROSS_SUBJECT,
-            agg_expr="mae",
-            select_expr=pl.col("value").quantile(0.9),
+            within_expr="mae",
+            across_expr=pl.col("value").quantile(0.9),
         )
 
         assert metric.name == "mae_p90_by_subject"
         assert metric.label == "90th Percentile of Subject MAEs"
         assert metric.type == MetricType.ACROSS_SUBJECT
-        assert metric.agg_expr == ["mae"]  # Normalized to list
-        assert isinstance(metric.select_expr, pl.Expr)
+        assert metric.within_expr == ["mae"]  # Normalized to list
+        assert isinstance(metric.across_expr, pl.Expr)
 
     def test_weighted_average(self):
         """Test weighted average of per-subject MAE (from metric.qmd line 173)."""
@@ -78,11 +78,11 @@ class TestMetricDefineCustomExpressions:
             name="weighted_mae",
             label="Weighted Average of Subject MAEs",
             type=MetricType.ACROSS_SUBJECT,
-            agg_expr=[
+            within_expr=[
                 "mae",  # MAE per subject
                 pl.col("weight").mean().alias("avg_weight"),
             ],
-            select_expr=(
+            across_expr=(
                 (pl.col("value") * pl.col("avg_weight")).sum()
                 / pl.col("avg_weight").sum()
             ),
@@ -91,10 +91,10 @@ class TestMetricDefineCustomExpressions:
         assert metric.name == "weighted_mae"
         assert metric.label == "Weighted Average of Subject MAEs"
         assert metric.type == MetricType.ACROSS_SUBJECT
-        assert len(metric.agg_expr) == 2
-        assert metric.agg_expr[0] == "mae"
-        assert isinstance(metric.agg_expr[1], pl.Expr)
-        assert isinstance(metric.select_expr, pl.Expr)
+        assert len(metric.within_expr) == 2
+        assert metric.within_expr[0] == "mae"
+        assert isinstance(metric.within_expr[1], pl.Expr)
+        assert isinstance(metric.across_expr, pl.Expr)
 
 
 class TestMetricDefineWithNumpy:
@@ -118,15 +118,15 @@ class TestMetricDefineWithNumpy:
             name="weighted_mae_numpy",
             label="Weighted Average of Subject MAEs (NumPy)",
             type=MetricType.ACROSS_SUBJECT,
-            agg_expr=["mae", pl.col("weight").mean().alias("avg_weight")],
-            select_expr=weighted_average,
+            within_expr=["mae", pl.col("weight").mean().alias("avg_weight")],
+            across_expr=weighted_average,
         )
 
         assert metric.name == "weighted_mae_numpy"
         assert metric.label == "Weighted Average of Subject MAEs (NumPy)"
         assert metric.type == MetricType.ACROSS_SUBJECT
-        assert len(metric.agg_expr) == 2
-        assert isinstance(metric.select_expr, pl.Expr)
+        assert len(metric.within_expr) == 2
+        assert isinstance(metric.across_expr, pl.Expr)
 
 
 class TestMetricDefineTypes:
@@ -212,16 +212,16 @@ class TestMetricDefineValidation:
         with pytest.raises(ValueError, match="Metric label cannot be empty"):
             MetricDefine(name="test", label="   ")
 
-    def test_single_string_agg_expr_normalized_to_list(self):
-        """Test that single string agg_expr is normalized to list."""
-        metric = MetricDefine(name="test", agg_expr="mae")
-        assert metric.agg_expr == ["mae"]
+    def test_single_string_within_expr_normalized_to_list(self):
+        """Test that single string within_expr is normalized to list."""
+        metric = MetricDefine(name="test", within_expr="mae")
+        assert metric.within_expr == ["mae"]
 
-    def test_single_expr_agg_expr_normalized_to_list(self):
-        """Test that single Polars expression agg_expr is normalized to list."""
+    def test_single_expr_within_expr_normalized_to_list(self):
+        """Test that single Polars expression within_expr is normalized to list."""
         expr = pl.col("test").mean()
-        metric = MetricDefine(name="test", agg_expr=expr)
-        assert metric.agg_expr == [expr]
+        metric = MetricDefine(name="test", within_expr=expr)
+        assert metric.within_expr == [expr]
 
 
 class TestMetricDefineRepresentation:
@@ -271,8 +271,8 @@ class TestMetricDefineRepresentation:
         assert 'Label:' in str_output
         assert 'Mean Absolute Error' in str_output
         
-        # Check for selection expression section
-        assert 'Selection expression:' in str_output
+        # Check for across-entity expression section
+        assert 'Across-entity expression:' in str_output
         
         # Check for the LazyFrame section
         assert '(' in str_output
@@ -289,7 +289,7 @@ class TestMetricDefineRepresentation:
             name="pct_within_1",
             label="% Within +/- 1",
             type=MetricType.ACROSS_SAMPLES,
-            select_expr=(pl.col("absolute_error") < 1).mean() * 100
+            across_expr=(pl.col("absolute_error") < 1).mean() * 100
         )
         str_output = str(metric)
         
@@ -300,7 +300,7 @@ class TestMetricDefineRepresentation:
         assert '% Within +/- 1' in str_output
         
         # Check that custom expression is shown
-        assert 'Selection expression:' in str_output
+        assert 'Across-entity expression:' in str_output
         # The actual expression representation will be there
         assert '[custom]' in str_output or 'col("absolute_error")' in str_output
 

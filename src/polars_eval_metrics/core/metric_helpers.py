@@ -25,8 +25,8 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
             'name': 'mae',
             'label': 'Mean Absolute Error',
             'type': 'across_samples',
-            'agg': {'expr': 'absolute_error.mean()'},
-            'select': {'expr': 'value.mean()'}
+            'within': {'expr': 'absolute_error.mean()'},
+            'across': {'expr': 'value.mean()'}
         }
         metric = create_metric_from_dict(config)
     """
@@ -41,16 +41,22 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     if "scope" in config:
         metric_data["scope"] = config["scope"]
 
-    # Parse nested agg expressions
-    agg_config = config.get("agg", {})
-    if isinstance(agg_config, dict) and "expr" in agg_config:
-        raw_expr = agg_config["expr"]
-        metric_data["agg_expr"] = [raw_expr] if isinstance(raw_expr, str) else raw_expr
+    # Parse within expressions from 'within' key
+    within_config = config.get("within", {})
+    if isinstance(within_config, dict) and "expr" in within_config:
+        raw_expr = within_config["expr"]
+        metric_data["within_expr"] = [raw_expr] if isinstance(raw_expr, str) else raw_expr
 
-    # Parse nested select expression
-    select_config = config.get("select", {})
-    if isinstance(select_config, dict) and "expr" in select_config:
-        metric_data["select_expr"] = select_config["expr"]
+    # Parse across expression from 'across' key
+    across_config = config.get("across", {})
+    if isinstance(across_config, dict) and "expr" in across_config:
+        metric_data["across_expr"] = across_config["expr"]
+        
+    # Handle direct attributes
+    if "within_expr" in config:
+        metric_data["within_expr"] = config["within_expr"]
+    if "across_expr" in config:
+        metric_data["across_expr"] = config["across_expr"]
 
     # Let MetricDefine handle validation and normalization
     return MetricDefine(**metric_data)

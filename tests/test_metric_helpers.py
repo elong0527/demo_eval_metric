@@ -37,25 +37,25 @@ class TestCreateMetricFromDict:
         assert metric.name == "global_mae"
         assert metric.scope == MetricScope.GLOBAL
 
-    def test_nested_agg_expression(self):
-        """Test metric with nested agg expression."""
-        config = {"name": "custom_mae", "agg": {"expr": "absolute_error.mean()"}}
+    def test_nested_within_expression(self):
+        """Test metric with nested within expression."""
+        config = {"name": "custom_mae", "within": {"expr": "absolute_error.mean()"}}
         metric = create_metric_from_dict(config)
 
         assert metric.name == "custom_mae"
-        assert metric.agg_expr == ["absolute_error.mean()"]
+        assert metric.within_expr == ["absolute_error.mean()"]
 
-    def test_nested_select_expression(self):
-        """Test metric with nested select expression."""
+    def test_nested_across_expression(self):
+        """Test metric with nested across expression."""
         config = {
             "name": "mean_mae",
             "type": "across_subject",
-            "select": {"expr": "value.mean()"},
+            "across": {"expr": "value.mean()"},
         }
         metric = create_metric_from_dict(config)
 
         assert metric.name == "mean_mae"
-        assert metric.select_expr == "value.mean()"
+        assert metric.across_expr == "value.mean()"
 
     def test_metric_without_scope(self):
         """Test metric without scope specified."""
@@ -128,8 +128,8 @@ class TestCreateMetrics:
                 "label": "Complex Metric",
                 "type": "across_subject",
                 "scope": "model",
-                "agg": {"expr": "error.mean()"},
-                "select": {"expr": "value.quantile(0.9)"},
+                "within": {"expr": "error.mean()"},
+                "across": {"expr": "value.quantile(0.9)"},
             },
         ]
 
@@ -139,8 +139,8 @@ class TestCreateMetrics:
         assert metrics[0].name == "simple"
         assert metrics[1].type == MetricType.WITHIN_SUBJECT
         assert metrics[2].scope == MetricScope.MODEL
-        assert metrics[2].agg_expr == ["error.mean()"]
-        assert metrics[2].select_expr == "value.quantile(0.9)"
+        assert metrics[2].within_expr == ["error.mean()"]
+        assert metrics[2].across_expr == "value.quantile(0.9)"
 
     def test_single_name(self):
         """Test creating metrics from single name."""
