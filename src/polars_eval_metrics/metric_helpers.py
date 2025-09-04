@@ -75,7 +75,7 @@ def create_metrics(configs: list[dict[str, Any]] | list[str]) -> list[MetricDefi
 
     Examples:
         # From simple names
-        metrics = create_metrics(['mae', 'rmse', 'bias'])
+        metrics = create_metrics(['mae', 'rmse', 'me'])
 
         # From configuration dictionaries
         configs = [

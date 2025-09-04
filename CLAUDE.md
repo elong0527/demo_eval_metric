@@ -275,7 +275,7 @@ metric = MetricDefine(
 )
 
 # Create multiple metrics from list
-metrics = create_metrics(['mae', 'rmse', 'bias'])
+metrics = create_metrics(['mae', 'rmse', 'me'])
 
 # Create from configuration dictionaries
 configs = [
@@ -419,6 +419,30 @@ from polars_eval_metrics import MetricDefine
 - ✅ **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
 - ✅ **Custom Expression Support**: Easy registration of custom expressions
 - ✅ **Clean Architecture**: Separation of concerns between definition and evaluation
+
+### Built-in Expressions
+
+#### Error Types
+- `error`: Basic difference (estimate - ground_truth)
+- `absolute_error`: Absolute difference
+- `squared_error`: Squared difference
+- `percent_error`: Percentage error
+- `absolute_percent_error`: Absolute percentage error
+
+#### Metrics
+- `mae`: Mean Absolute Error
+- `mse`: Mean Squared Error
+- `rmse`: Root Mean Squared Error
+- `me`: Mean Error (bias)
+- `mpe`: Mean Percentage Error
+- `mape`: Mean Absolute Percentage Error
+- `n_subject`: Number of unique subjects
+- `n_visit`: Number of unique visits
+- `n_sample`: Sample count
+
+#### Selectors (Aggregation Functions)
+- Basic statistics: `mean`, `median`, `std`, `min`, `max`, `sum`, `sqrt`
+- Percentiles: `p1`, `p5`, `p25`, `p75`, `p90`, `p95`, `p99`
 
 ## Contributing Guidelines
 

@@ -349,6 +349,8 @@ MetricRegistry.register_error("percent_error", _percent_error)
 MetricRegistry.register_error("absolute_percent_error", _absolute_percent_error)
 
 # Register built-in metrics
+MetricRegistry.register_metric("me", pl.col("error").mean().alias("value"))
+
 MetricRegistry.register_metric(
     "mae", pl.col("absolute_error").mean().alias("value")
 )
@@ -358,7 +360,9 @@ MetricRegistry.register_metric(
 MetricRegistry.register_metric(
     "rmse", pl.col("squared_error").mean().sqrt().alias("value")
 )
-MetricRegistry.register_metric("bias", pl.col("error").mean().alias("value"))
+MetricRegistry.register_metric(
+    "mpe", pl.col("percent_error").mean().alias("value")
+)
 MetricRegistry.register_metric(
     "mape", pl.col("absolute_percent_error").mean().alias("value")
 )
@@ -369,12 +373,6 @@ MetricRegistry.register_metric(
     "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
 )
 MetricRegistry.register_metric("n_sample", pl.len().alias("value"))
-MetricRegistry.register_metric(
-    "total_subject", pl.col("subject_id").n_unique().alias("value")
-)
-MetricRegistry.register_metric(
-    "total_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
-)
 
 # Register built-in summaries
 MetricRegistry.register_summary("mean", pl.col("value").mean())
@@ -384,3 +382,8 @@ MetricRegistry.register_summary("min", pl.col("value").min())
 MetricRegistry.register_summary("max", pl.col("value").max())
 MetricRegistry.register_summary("sum", pl.col("value").sum())
 MetricRegistry.register_summary("sqrt", pl.col("value").sqrt())
+
+# Register percentile summaries
+percentiles = [1, 5, 25, 75, 90, 95, 99]
+for p in percentiles:
+    MetricRegistry.register_summary(f"p{p}", pl.col("value").quantile(p / 100))

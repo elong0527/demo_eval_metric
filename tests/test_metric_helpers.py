@@ -83,7 +83,7 @@ class TestCreateMetrics:
         configs = [
             {"name": "mae", "label": "Mean Absolute Error"},
             {"name": "rmse", "label": "Root Mean Squared Error"},
-            {"name": "bias", "type": "across_samples"},
+            {"name": "me", "type": "across_samples"},
         ]
 
         metrics = create_metrics(configs)
@@ -93,12 +93,12 @@ class TestCreateMetrics:
         assert metrics[0].label == "Mean Absolute Error"
         assert metrics[1].name == "rmse"
         assert metrics[1].label == "Root Mean Squared Error"
-        assert metrics[2].name == "bias"
+        assert metrics[2].name == "me"
         assert metrics[2].type == MetricType.ACROSS_SAMPLES
 
     def test_simple_names(self):
         """Test creating metrics from names."""
-        names = ["mae", "rmse", "bias"]
+        names = ["mae", "rmse", "me"]
         metrics = create_metrics(names)
 
         assert len(metrics) == 3
@@ -106,8 +106,8 @@ class TestCreateMetrics:
         assert metrics[0].label == "mae"
         assert metrics[1].name == "rmse"
         assert metrics[1].label == "rmse"
-        assert metrics[2].name == "bias"
-        assert metrics[2].label == "bias"
+        assert metrics[2].name == "me"
+        assert metrics[2].label == "me"
 
         # All should have default settings
         for metric in metrics:
