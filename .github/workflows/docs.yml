@@ -50,7 +50,17 @@ jobs:
           
       - name: Build documentation
         run: |
+          # Set PYTHONPATH to include the src directory
+          export PYTHONPATH="${{ github.workspace }}/src:$PYTHONPATH"
+          echo "PYTHONPATH: $PYTHONPATH"
+          echo "Current directory: $(pwd)"
+          echo "GitHub workspace: ${{ github.workspace }}"
+          echo "Contents of src directory:"
+          ls -la src/
+          echo "Testing Python import:"
+          python -c "import sys; sys.path.insert(0, 'src'); import polars_eval_metrics; print('Package imported successfully')"
           cd docs
+          echo "Changed to docs directory: $(pwd)"
           # Build the documentation with Quarto
           quarto render --to html --execute
           
