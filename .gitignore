@@ -31,7 +31,8 @@ wheels/
 *.spec
 
 # Unit test / coverage reports
-htmlcov/
+/htmlcov/
+docs/coverage/
 .tox/
 .coverage
 .coverage.*
