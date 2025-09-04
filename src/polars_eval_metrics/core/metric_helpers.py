@@ -20,14 +20,24 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     Returns:
         MetricDefine instance
 
-    Example:
+    Examples:
+        # Single expression
         config = {
             'name': 'mae',
             'label': 'Mean Absolute Error',
             'type': 'across_samples',
-            'within': {'expr': 'absolute_error.mean()'},
-            'across': {'expr': 'value.mean()'}
+            'within_expr': 'mae',  # Single built-in metric name
+            'across_expr': 'mean'  # Single selector name
         }
+        
+        # List of expressions
+        config = {
+            'name': 'multi_metric',
+            'type': 'across_subject',
+            'within_expr': ['mae', 'rmse'],  # List of built-in metrics
+            'across_expr': 'mean'
+        }
+        
         metric = create_metric_from_dict(config)
     """
     # Transform nested YAML structure to flat structure
@@ -41,20 +51,11 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     if "scope" in config:
         metric_data["scope"] = config["scope"]
 
-    # Parse within expressions from 'within' key
-    within_config = config.get("within", {})
-    if isinstance(within_config, dict) and "expr" in within_config:
-        raw_expr = within_config["expr"]
-        metric_data["within_expr"] = [raw_expr] if isinstance(raw_expr, str) else raw_expr
-
-    # Parse across expression from 'across' key
-    across_config = config.get("across", {})
-    if isinstance(across_config, dict) and "expr" in across_config:
-        metric_data["across_expr"] = across_config["expr"]
-        
-    # Handle direct attributes
+    # Handle within_expr
     if "within_expr" in config:
         metric_data["within_expr"] = config["within_expr"]
+    
+    # Handle across_expr
     if "across_expr" in config:
         metric_data["across_expr"] = config["across_expr"]
 
