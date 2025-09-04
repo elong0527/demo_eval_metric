@@ -33,7 +33,6 @@ demo_eval_metric/
 |       +-- core/               # Core metric functionality
 |       |   +-- __init__.py
 |       |   +-- metric_define.py     # MetricDefine class - metric definition
-|       |   +-- metric_factory.py    # MetricFactory - creates metrics from YAML
 |       |   +-- metric_registry.py   # Unified registry for all expressions
 |       +-- evaluation/         # Evaluation engine
 |       |   +-- __init__.py
@@ -70,10 +69,9 @@ demo_eval_metric/
 ```mermaid
 graph TD
     A[MetricRegistry] -->|provides expressions to| B[MetricDefine]
-    B -->|created by| C[MetricFactory]
-    C -->|used by| D[EvaluationConfig]
-    D -->|configures| E[MetricEvaluator]
-    A -->|provides error columns to| E
+    B -->|used by| C[EvaluationConfig]
+    C -->|configures| D[MetricEvaluator]
+    A -->|provides error columns to| D
 ```
 
 ### 1. **MetricRegistry** (`core/metric_registry.py`)
@@ -130,28 +128,12 @@ class MetricDefine:
 
 Note: These are distinct from `group_by`/`subgroup_by` which control analysis stratification (e.g., by treatment, age, sex)
 
-### 3. **MetricFactory** (`core/metric_factory.py`)
-**Purpose**: Factory pattern for creating MetricDefine instances  
-**Responsibilities**:
-- Parse YAML/dict configuration
-- Create MetricDefine instances with validation
-- Handle legacy configuration formats
-- Normalize expressions to proper format
-
-**Key Methods**:
-```python
-@staticmethod
-def from_yaml(config: dict) -> MetricDefine
-@staticmethod
-def from_dict(config: dict) -> list[MetricDefine]
-```
-
-### 4. **EvaluationConfig** (`evaluation/config.py`)
+### 3. **EvaluationConfig** (`evaluation/config.py`)
 **Purpose**: Complete evaluation configuration container  
 **Responsibilities**:
 - Hold all evaluation settings
 - Parse YAML configuration files
-- Use MetricFactory to create metrics
+- Create MetricDefine instances from configuration
 - Provide configuration override capabilities
 
 **Key Attributes**:
@@ -163,7 +145,7 @@ metrics: list[MetricDefine]   # Metrics to evaluate
 filter_expr: str | None       # Optional filter
 ```
 
-### 5. **MetricEvaluator** (`evaluation/metric_evaluator.py`)
+### 4. **MetricEvaluator** (`evaluation/metric_evaluator.py`)
 **Purpose**: Main evaluation engine  
 **Responsibilities**:
 - Execute metric evaluations on data
@@ -304,17 +286,17 @@ metrics:
     type: across_subject
 ```
 
-### Using Factory Pattern
+### Creating Metrics from Configuration
 ```python
-from polars_eval_metrics import MetricFactory, EvaluationConfig
+from polars_eval_metrics import MetricDefine, EvaluationConfig
 
-# From YAML dict
-metric = MetricFactory.from_yaml({
-    'name': 'mae',
-    'type': 'across_samples'
-})
+# Direct metric creation from dict
+metric = MetricDefine(
+    name='mae',
+    type=MetricType.ACROSS_SAMPLES
+)
 
-# Full configuration
+# Full configuration from YAML
 config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 ```
 
@@ -328,7 +310,6 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
   - All metric types and scopes
 
 ### Needed Tests
-- [ ] MetricFactory tests
 - [ ] EvaluationConfig tests
 - [ ] MetricEvaluator integration tests
 - [ ] End-to-end workflow tests
@@ -356,7 +337,7 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
 ### DO's
 1. **Use Type Hints**: All functions should have type annotations
 2. **Write Tests First**: TDD approach for new features
-3. **Follow Factory Pattern**: Use MetricFactory for creating metrics
+3. **Direct Creation**: Create MetricDefine instances directly or via EvaluationConfig
 4. **Validate Early**: Use Pydantic validation in MetricDefine
 5. **Document Examples**: Add examples to docs/ for new features
 6. **Use ASCII Only**: All code, documentation, and comments must use ASCII characters only
