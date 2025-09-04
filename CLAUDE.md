@@ -439,8 +439,14 @@ from polars_eval_metrics import MetricDefine
 - `n_subject`: Number of unique subjects
 - `n_visit`: Number of unique visits
 - `n_sample`: Sample count
+- `n_subject_with_data`: Number of subjects with non-null data
+- `n_visit_with_data`: Number of visits with non-null data
+- `n_sample_with_data`: Number of samples with non-null data
+- `pct_subject_with_data`: Percentage of subjects with non-null data
+- `pct_visit_with_data`: Percentage of visits with non-null data
+- `pct_sample_with_data`: Percentage of samples with non-null data
 
-#### Selectors (Aggregation Functions)
+#### Summaries (Aggregation Functions)
 - Basic statistics: `mean`, `median`, `std`, `min`, `max`, `sum`, `sqrt`
 - Percentiles: `p1`, `p5`, `p25`, `p75`, `p90`, `p95`, `p99`
 

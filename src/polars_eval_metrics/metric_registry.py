@@ -366,6 +366,7 @@ MetricRegistry.register_metric(
 MetricRegistry.register_metric(
     "mape", pl.col("absolute_percent_error").mean().alias("value")
 )
+
 MetricRegistry.register_metric(
     "n_subject", pl.col("subject_id").n_unique().alias("value")
 )
@@ -373,6 +374,38 @@ MetricRegistry.register_metric(
     "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
 )
 MetricRegistry.register_metric("n_sample", pl.len().alias("value"))
+
+# Metrics for subjects with data (non-null ground truth or estimates)
+MetricRegistry.register_metric(
+    "n_subject_with_data", 
+    pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique().alias("value")
+)
+MetricRegistry.register_metric(
+    "pct_subject_with_data",
+    (pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique() / 
+     pl.col("subject_id").n_unique() * 100).alias("value")
+)
+
+# Metrics for visits with data
+MetricRegistry.register_metric(
+    "n_visit_with_data",
+    pl.struct(["subject_id", "visit_id"]).filter(pl.col("error").is_not_null()).n_unique().alias("value")
+)
+MetricRegistry.register_metric(
+    "pct_visit_with_data",
+    (pl.struct(["subject_id", "visit_id"]).filter(pl.col("error").is_not_null()).n_unique() /
+     pl.struct(["subject_id", "visit_id"]).n_unique() * 100).alias("value")
+)
+
+# Metrics for samples with data
+MetricRegistry.register_metric(
+    "n_sample_with_data",
+    pl.col("error").is_not_null().sum().alias("value")
+)
+MetricRegistry.register_metric(
+    "pct_sample_with_data",
+    (pl.col("error").is_not_null().mean() * 100).alias("value")
+)
 
 # Register built-in summaries
 MetricRegistry.register_summary("mean", pl.col("value").mean())
