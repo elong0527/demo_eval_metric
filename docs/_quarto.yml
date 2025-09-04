@@ -16,7 +16,7 @@ website:
         menu:
           - href: metric.qmd
             text: MetricDefine
-      - href: coverage.qmd
+      - href: coverage/index.html
         text: Coverage
     right:
       - icon: github
