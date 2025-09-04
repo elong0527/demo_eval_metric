@@ -33,7 +33,6 @@ demo_eval_metric/
 |       +-- metric_define.py    # MetricDefine class - metric definition
 |       +-- metric_registry.py  # Unified registry for all expressions
 |       +-- metric_helpers.py   # Helper functions for creating metrics
-|       +-- config.py           # EvaluationConfig - full configuration
 |       +-- metric_evaluator.py # MetricEvaluator - executes evaluations
 |       +-- py.typed            # PEP 561 type hint marker
 |
@@ -66,9 +65,8 @@ demo_eval_metric/
 ```mermaid
 graph TD
     A[MetricRegistry] -->|provides expressions to| B[MetricDefine]
-    B -->|used by| C[EvaluationConfig]
-    C -->|configures| D[MetricEvaluator]
-    A -->|provides error columns to| D
+    B -->|used by| C[MetricEvaluator]
+    A -->|provides error columns to| C
 ```
 
 ### 1. **MetricRegistry** (`metric_registry.py`)
@@ -125,24 +123,7 @@ class MetricDefine:
 
 Note: These are distinct from `group_by`/`subgroup_by` which control analysis stratification (e.g., by treatment, age, sex)
 
-### 3. **EvaluationConfig** (`config.py`)
-**Purpose**: Complete evaluation configuration container  
-**Responsibilities**:
-- Hold all evaluation settings
-- Parse YAML configuration files
-- Create MetricDefine instances from configuration
-- Provide configuration override capabilities
-
-**Key Attributes**:
-```python
-ground_truth: str              # Ground truth column
-estimates: list[str]           # Model estimate columns
-group_by: list[str]           # Grouping columns
-metrics: list[MetricDefine]   # Metrics to evaluate
-filter_expr: str | None       # Optional filter
-```
-
-### 4. **MetricEvaluator** (`metric_evaluator.py`)
+### 3. **MetricEvaluator** (`metric_evaluator.py`)
 **Purpose**: Main evaluation engine  
 **Responsibilities**:
 - Execute metric evaluations on data
@@ -285,16 +266,23 @@ metrics:
 
 ### Creating Metrics from Configuration
 ```python
-from polars_eval_metrics import MetricDefine, EvaluationConfig
+from polars_eval_metrics import MetricDefine, MetricType, create_metrics
 
-# Direct metric creation from dict
+# Direct metric creation
 metric = MetricDefine(
     name='mae',
     type=MetricType.ACROSS_SAMPLES
 )
 
-# Full configuration from YAML
-config = EvaluationConfig.from_yaml('evaluation_config.yaml')
+# Create multiple metrics from list
+metrics = create_metrics(['mae', 'rmse', 'bias'])
+
+# Create from configuration dictionaries
+configs = [
+    {'name': 'mae', 'label': 'Mean Absolute Error'},
+    {'name': 'rmse', 'type': 'across_subject'}
+]
+metrics = create_metrics(configs)
 ```
 
 ## Testing Strategy
@@ -307,7 +295,6 @@ config = EvaluationConfig.from_yaml('evaluation_config.yaml')
   - All metric types and scopes
 
 ### Needed Tests
-- [ ] EvaluationConfig tests
 - [ ] MetricEvaluator integration tests
 - [ ] End-to-end workflow tests
 
