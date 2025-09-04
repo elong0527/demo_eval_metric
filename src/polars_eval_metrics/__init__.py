@@ -4,8 +4,11 @@ Polars Eval Metrics - High-performance model evaluation framework.
 Simple, fast, and flexible metric evaluation using Polars lazy evaluation.
 """
 
-from .core import MetricDefine, MetricType, MetricScope, create_metrics, MetricRegistry
-from .evaluation import EvaluationConfig, MetricEvaluator
+from .metric_define import MetricDefine, MetricType, MetricScope
+from .metric_registry import MetricRegistry
+from .metric_helpers import create_metrics
+from .config import EvaluationConfig
+from .metric_evaluator import MetricEvaluator
 
 __version__ = "0.1.0"
 

@@ -8,7 +8,7 @@ This directory contains the documentation for the polars-eval-metrics package.
 - `quickstart.qmd` - Installation and basic concepts
 - `examples/` - Detailed usage examples
   - `basic_usage.qmd` - Common use cases
-  - `metric_factory.qmd` - Creating metrics from configuration
+  - `metric_creation.qmd` - Creating metrics from configuration
   - `advanced_usage.qmd` - Advanced features
 - `data_generator.py` - Sample data generation for examples
 
@@ -43,7 +43,7 @@ python -c "
 import sys, os
 sys.path.insert(0, os.path.abspath('../src'))
 
-from polars_eval_metrics import MetricFactory
+from polars_eval_metrics import MetricDefine, create_metrics
 from data_generator import generate_sample_data
 
 # Your example code here
@@ -66,13 +66,11 @@ The main pattern demonstrated across all examples:
 
 ```python
 # 1. Create metrics from configuration
-config = {
-    'metrics': [
-        {'name': 'mae', 'label': 'Mean Absolute Error'},
-        {'name': 'rmse', 'label': 'Root Mean Squared Error'}
-    ]
-}
-metrics = MetricFactory.from_dict(config)
+config = [
+    {'name': 'mae', 'label': 'Mean Absolute Error'},
+    {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+]
+metrics = create_metrics(config)
 
 # 2. Initialize evaluator with complete context
 evaluator = MetricEvaluator(

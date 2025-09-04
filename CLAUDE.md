@@ -30,14 +30,11 @@ demo_eval_metric/
 +-- src/                         # [PRODUCTION CODE]
 |   +-- polars_eval_metrics/
 |       +-- __init__.py         # Package exports
-|       +-- core/               # Core metric functionality
-|       |   +-- __init__.py
-|       |   +-- metric_define.py     # MetricDefine class - metric definition
-|       |   +-- metric_registry.py   # Unified registry for all expressions
-|       +-- evaluation/         # Evaluation engine
-|       |   +-- __init__.py
-|       |   +-- metric_evaluator.py  # MetricEvaluator - executes evaluations
-|       |   +-- config.py           # EvaluationConfig - full configuration
+|       +-- metric_define.py    # MetricDefine class - metric definition
+|       +-- metric_registry.py  # Unified registry for all expressions
+|       +-- metric_helpers.py   # Helper functions for creating metrics
+|       +-- config.py           # EvaluationConfig - full configuration
+|       +-- metric_evaluator.py # MetricEvaluator - executes evaluations
 |       +-- py.typed            # PEP 561 type hint marker
 |
 +-- docs/                        # [DOCUMENTATION WEBSITE]
@@ -74,7 +71,7 @@ graph TD
     A -->|provides error columns to| D
 ```
 
-### 1. **MetricRegistry** (`core/metric_registry.py`)
+### 1. **MetricRegistry** (`metric_registry.py`)
 **Purpose**: Unified registry for all expression types  
 **Responsibilities**:
 - Manage error expressions (data preparation)
@@ -98,7 +95,7 @@ MetricRegistry.register_selector(name, expr)
 MetricRegistry.get_selector(name)
 ```
 
-### 2. **MetricDefine** (`core/metric_define.py`)
+### 2. **MetricDefine** (`metric_define.py`)
 **Purpose**: Core metric definition class  
 **Responsibilities**:
 - Define metric properties (name, label, type, scope)
@@ -128,7 +125,7 @@ class MetricDefine:
 
 Note: These are distinct from `group_by`/`subgroup_by` which control analysis stratification (e.g., by treatment, age, sex)
 
-### 3. **EvaluationConfig** (`evaluation/config.py`)
+### 3. **EvaluationConfig** (`config.py`)
 **Purpose**: Complete evaluation configuration container  
 **Responsibilities**:
 - Hold all evaluation settings
@@ -145,7 +142,7 @@ metrics: list[MetricDefine]   # Metrics to evaluate
 filter_expr: str | None       # Optional filter
 ```
 
-### 4. **MetricEvaluator** (`evaluation/metric_evaluator.py`)
+### 4. **MetricEvaluator** (`metric_evaluator.py`)
 **Purpose**: Main evaluation engine  
 **Responsibilities**:
 - Execute metric evaluations on data

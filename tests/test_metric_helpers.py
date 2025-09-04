@@ -1,11 +1,12 @@
 """Tests for metric helper functions."""
 
 import pytest
-from polars_eval_metrics.core.metric_helpers import (
-    create_metric_from_dict,
+from polars_eval_metrics import (
     create_metrics,
+    MetricType,
+    MetricScope,
 )
-from polars_eval_metrics.core.metric_define import MetricType, MetricScope
+from polars_eval_metrics.metric_helpers import create_metric_from_dict
 
 
 class TestCreateMetricFromDict:
@@ -37,20 +38,20 @@ class TestCreateMetricFromDict:
         assert metric.name == "global_mae"
         assert metric.scope == MetricScope.GLOBAL
 
-    def test_nested_within_expression(self):
-        """Test metric with nested within expression."""
-        config = {"name": "custom_mae", "within": {"expr": "absolute_error.mean()"}}
+    def test_direct_within_expression(self):
+        """Test metric with direct within expression."""
+        config = {"name": "custom_mae", "within_expr": "absolute_error.mean()"}
         metric = create_metric_from_dict(config)
 
         assert metric.name == "custom_mae"
         assert metric.within_expr == ["absolute_error.mean()"]
 
-    def test_nested_across_expression(self):
-        """Test metric with nested across expression."""
+    def test_direct_across_expression(self):
+        """Test metric with direct across expression."""
         config = {
             "name": "mean_mae",
             "type": "across_subject",
-            "across": {"expr": "value.mean()"},
+            "across_expr": "value.mean()",
         }
         metric = create_metric_from_dict(config)
 
@@ -128,8 +129,8 @@ class TestCreateMetrics:
                 "label": "Complex Metric",
                 "type": "across_subject",
                 "scope": "model",
-                "within": {"expr": "error.mean()"},
-                "across": {"expr": "value.quantile(0.9)"},
+                "within_expr": "error.mean()",
+                "across_expr": "value.quantile(0.9)",
             },
         ]
 

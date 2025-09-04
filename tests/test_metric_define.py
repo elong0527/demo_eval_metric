@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 import numpy as np
 
-from polars_eval_metrics.core.metric_define import MetricDefine, MetricType, MetricScope
+from polars_eval_metrics import MetricDefine, MetricType, MetricScope
 
 
 class TestMetricDefineBasic:

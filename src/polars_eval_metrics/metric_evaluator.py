@@ -6,7 +6,8 @@ using Polars LazyFrames, following the architecture design.
 """
 
 import polars as pl
-from ..core import MetricDefine, MetricType, MetricScope, MetricRegistry
+from .metric_define import MetricDefine, MetricType, MetricScope
+from .metric_registry import MetricRegistry
 
 
 class MetricEvaluator:

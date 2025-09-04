@@ -18,7 +18,7 @@ sys.path.append('../src')
 
 import polars as pl 
 
-from polars_eval_metrics.core.metric_define import MetricDefine
+from polars_eval_metrics import MetricDefine
 ```
 
 ## Getting Started: A Simple MAE Metric

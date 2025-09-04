@@ -8,8 +8,8 @@ import yaml
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, Field
-from ..core import MetricDefine
-from ..core.metric_helpers import create_metrics
+from .metric_define import MetricDefine
+from .metric_helpers import create_metrics
 
 
 class EvaluationConfig(BaseModel):
