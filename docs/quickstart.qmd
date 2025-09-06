@@ -190,20 +190,18 @@ print(race_results)
 You can register custom metrics and use them in evaluation:
 
 ```{python}
-# Create a custom registry
+# Register custom metrics globally
 from polars_eval_metrics import MetricRegistry
-
-custom_registry = MetricRegistry()
 
 # Register a custom error type
 def within_threshold(estimate: str, ground_truth: str, threshold: float = 2.0):
     error = (pl.col(estimate) - pl.col(ground_truth)).abs()
     return (error <= threshold).cast(pl.Int32)
 
-custom_registry.register_error('within_2', within_threshold)
+MetricRegistry.register_error('within_2', within_threshold)
 
 # Register a metric using the custom error
-custom_registry.register_metric(
+MetricRegistry.register_metric(
     'accuracy_within_2',
     (pl.col('within_2').mean() * 100).alias('value')
 )
@@ -217,7 +215,7 @@ evaluator_custom = MetricEvaluator(
     ],
     ground_truth="actual",
     estimates="model1",
-    registry=custom_registry,
+    # Custom metrics are now globally available
     error_params={'within_2': {'threshold': 2.0}}
 )
 

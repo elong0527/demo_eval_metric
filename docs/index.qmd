@@ -42,21 +42,18 @@ results = evaluator.evaluate()
 ## Custom Metrics
 
 ```python
-# Create a custom registry
-registry = MetricRegistry()
-
+# Register custom metrics globally
 # Register custom error and metric
-registry.register_error('within_tolerance', 
+MetricRegistry.register_error('within_tolerance', 
     lambda est, gt: (pl.col(est) - pl.col(gt)).abs() <= 1.0)
     
-registry.register_metric('accuracy',
+MetricRegistry.register_metric('accuracy',
     pl.col('within_tolerance').mean() * 100)
 
-# Use custom registry in evaluation
+# Use custom metrics in evaluation (globally available)
 evaluator = MetricEvaluator(
     df=data,
-    metrics=[MetricDefine(name='accuracy')],
-    registry=registry  # Pass custom registry
+    metrics=[MetricDefine(name='accuracy')]
 )
 ```
 

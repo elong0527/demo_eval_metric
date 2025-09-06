@@ -53,8 +53,8 @@ class MetricEvaluator:
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
 
-        # Use provided registry or create a new one with global defaults
-        self.registry = registry if registry is not None else MetricRegistry()
+        # Store registry parameter for compatibility (not used anymore)
+        self.registry = registry  # Kept for backward compatibility
 
         # Prepare data once with filter
         self.df = self._prepare_base_data()
@@ -67,8 +67,8 @@ class MetricEvaluator:
 
     def _prepare_error_columns(self, df: pl.LazyFrame, estimate: str) -> pl.LazyFrame:
         """Add error columns for a specific estimate using the registry"""
-        # Generate ALL registered error expressions using the instance registry
-        error_expressions = self.registry.generate_error_columns(
+        # Generate ALL registered error expressions using the global registry
+        error_expressions = MetricRegistry.generate_error_columns(
             estimate=estimate,
             ground_truth=self.ground_truth,
             error_types=None,  # None means use ALL registered errors
