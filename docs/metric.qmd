@@ -59,13 +59,12 @@ from polars_eval_metrics import MetricRegistry
 
 pl.Config.set_fmt_str_lengths(200)
 
-# Create a registry instance to access built-in metrics
-registry = MetricRegistry()
+# Access built-in metrics from the global registry
 
 # Create a Polars DataFrame of built-in metrics
 metrics_data = [
-    {"name": name, "expression": str(registry.get_metric(name))} 
-    for name in sorted(registry.list_metrics())
+    {"name": name, "expression": str(MetricRegistry.get_metric(name))} 
+    for name in sorted(MetricRegistry.list_metrics())
 ]
 metrics_df = pl.DataFrame(metrics_data)
 metrics_df
@@ -112,20 +111,20 @@ Notice how the output now shows both aggregation levels:
 
 This two-level pattern is particularly useful in clinical trials, longitudinal studies, or any analysis where you need to respect the hierarchical structure of your data.
 
-## Built-in Selectors
+## Built-in Summaries
 
-Selectors are used in the second level of hierarchical aggregation. They define how to combine the first-level results:
+Summaries are used in the second level of hierarchical aggregation. They define how to combine the first-level results:
 
 ```{python}
 #| code-fold: true
 
-# Use the same registry instance to access built-in selectors
-selectors_data = [
-    {"name": name, "expression": str(registry.get_selector(name))} 
-    for name in sorted(registry.list_selectors())
+# Access built-in summaries from the global registry
+summaries_data = [
+    {"name": name, "expression": str(MetricRegistry.get_summary(name))} 
+    for name in sorted(MetricRegistry.list_summaries())
 ]
-selectors_df = pl.DataFrame(selectors_data)
-selectors_df
+summaries_df = pl.DataFrame(summaries_data)
+summaries_df
 ```
 
 ## Custom Expressions
