@@ -36,7 +36,7 @@ MetricDefine(name="mae")
    - `type=across_samples`: The default aggregation type that computes across all samples
    - `Label: 'mae'`: The display label (automatically derived from the name)
 
-2. **Selection Expression**:
+2. **Summary Expression**:
    - `[mae] col("absolute_error").mean().alias("value")`: The actual Polars expression
    - `[mae]` indicates this uses the built-in MAE formula
    - The expression calculates the mean of the `absolute_error` column
@@ -81,7 +81,7 @@ This two-level aggregation respects the hierarchical structure of your data and 
 ### Using the Colon Convention
 
 For built-in metrics, you can specify two-level aggregation using the colon (`:`) convention:
-- Format: `"metric_name:selector_name"`
+- Format: `"metric_name:summary_name"`
 - Example: `"mae:mean"` calculates MAE per subject, then takes the mean
 
 ### Example: Subject-Level MAE
@@ -97,9 +97,9 @@ Notice how the output now shows both aggregation levels:
    - **First level**: Calculates MAE within each subject group
    - The `[mae]` tag shows this uses the built-in MAE formula
 
-2. **Selection Expression** `[mean] col("value").mean()`:
+2. **Summary Expression** `[mean] col("value").mean()`:
    - **Second level**: Averages the per-subject MAE values
-   - The `[mean]` tag shows this uses the built-in mean selector
+   - The `[mean]` tag shows this uses the built-in mean summary
 
 3. **Polars LazyFrame Chain**:
 

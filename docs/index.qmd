@@ -13,8 +13,7 @@ A high-performance model evaluation framework built on Polars lazy evaluation.
 
 - **Fast**: Leverages Polars lazy evaluation for optimal performance
 - **Flexible**: Support for custom metrics and expressions
-- **Registry-based**: Extensible registry system for errors, metrics, and summaries
-- **Context Isolation**: Create isolated registries for different evaluation contexts
+- **Registry-based**: Global registry system for errors, metrics, and summaries
 - **Type-safe**: Pydantic models with validation
 - **Simple**: Clean API with sensible defaults
 - **Extensible**: Easy to add new metrics and aggregation types
@@ -42,8 +41,10 @@ results = evaluator.evaluate()
 ## Custom Metrics
 
 ```python
+import polars as pl
+from polars_eval_metrics import MetricEvaluator, MetricDefine, MetricRegistry
+
 # Register custom metrics globally
-# Register custom error and metric
 MetricRegistry.register_error('within_tolerance', 
     lambda est, gt: (pl.col(est) - pl.col(gt)).abs() <= 1.0)
     
