@@ -13,7 +13,7 @@ A high-performance model evaluation framework built on Polars lazy evaluation.
 
 - **Fast**: Leverages Polars lazy evaluation for optimal performance
 - **Flexible**: Support for custom metrics and expressions
-- **Registry-based**: Extensible registry system for errors, metrics, and selectors
+- **Registry-based**: Extensible registry system for errors, metrics, and summaries
 - **Context Isolation**: Create isolated registries for different evaluation contexts
 - **Type-safe**: Pydantic models with validation
 - **Simple**: Clean API with sensible defaults

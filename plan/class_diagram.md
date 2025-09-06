@@ -35,7 +35,7 @@ classDiagram
 
     class MetricCompiler {
         +BUILTIN_METRICS: dict
-        +BUILTIN_SELECTORS: dict
+        +BUILTIN_SUMMARIES: dict
         +compile_expressions(name, agg, select) tuple[Expr]
         -_compile_custom_expressions() tuple
         -_compile_builtin_expressions() tuple
@@ -97,7 +97,7 @@ Pure data model for metric definitions with structural validation only. No Polar
 Factory for creating MetricData instances from various sources (YAML, dict). Handles parsing logic and ensures expression completeness.
 
 ### 4. **MetricCompiler** (formerly ExpressionCompiler)
-Converts metric names and string expressions to Polars expressions. Contains all Polars-specific logic including built-in metrics and selectors.
+Converts metric names and string expressions to Polars expressions. Contains all Polars-specific logic including built-in metrics and summaries.
 
 ### 5. **MetricType** (Enum)
 Defines aggregation levels for metrics.
