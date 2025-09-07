@@ -7,6 +7,7 @@ Simple, functional approach to metric creation without factory classes.
 # pyre-strict
 
 from typing import Any
+
 from .metric_define import MetricDefine
 
 

@@ -6,12 +6,14 @@ providing a single class for defining metrics and preparing Polars expressions.
 """
 
 # pyre-strict
+import textwrap 
 
 from enum import Enum
-from pydantic import BaseModel, field_validator, model_validator, ConfigDict
 from typing import Self
+
 import polars as pl
-import textwrap
+from pydantic import BaseModel, field_validator, model_validator, ConfigDict
+
 from .metric_registry import MetricRegistry
 
 
@@ -68,7 +70,7 @@ class MetricDefine(BaseModel):
     across_expr: str | pl.Expr | None = None
     registry: MetricRegistry | None = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         """Initialize with default label if not provided"""
         if "label" not in kwargs or kwargs["label"] is None:
             kwargs["label"] = kwargs.get("name", "Unknown Metric")
@@ -244,7 +246,7 @@ class MetricDefine(BaseModel):
         return self
 
     def compile_expressions(
-        self, registry: MetricRegistry = None
+        self, registry: MetricRegistry | None = None
     ) -> tuple[list[pl.Expr], pl.Expr | None]:
         """
         Compile this metric's expressions to Polars expressions.
@@ -337,7 +339,7 @@ class MetricDefine(BaseModel):
         # No selector: this is likely ACROSS_SAMPLES, return as selection only
         return [], agg_expr
 
-    def get_pl_chain(self, registry: MetricRegistry = None) -> str:
+    def get_pl_chain(self, registry: MetricRegistry | None = None) -> str:
         """
         Get a string representation of the Polars LazyFrame chain for this metric.
 

@@ -26,7 +26,7 @@ class MetricEvaluator:
         subgroup_by: list[str] | None = None,
         filter_expr: pl.Expr | None = None,
         error_params: dict[str, dict] | None = None,
-    ):
+    ) -> None:
         """
         Initialize evaluator with complete evaluation context
 
