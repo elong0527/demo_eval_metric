@@ -9,7 +9,7 @@ This module provides an extensible registry system for all types of expressions:
 Supports both global (class-level) and local (instance-level) registries.
 """
 
-from typing import Callable, Any
+from typing import Any, Callable
 
 # pyre-strict
 
