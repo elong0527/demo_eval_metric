@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Self
 
 import polars as pl
-from pydantic import BaseModel, field_validator, model_validator, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .metric_registry import MetricRegistry
 

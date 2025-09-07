@@ -10,7 +10,7 @@ from typing import Any
 # pyre-strict
 
 import polars as pl
-from .metric_define import MetricDefine, MetricType, MetricScope
+from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_registry import MetricRegistry
 
 

@@ -9,10 +9,11 @@ This module provides an extensible registry system for all types of expressions:
 Supports both global (class-level) and local (instance-level) registries.
 """
 
+from typing import Callable, Any
+
 # pyre-strict
 
 import polars as pl
-from typing import Callable, Any
 
 
 class MetricNotFoundError(ValueError):

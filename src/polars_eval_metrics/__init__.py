@@ -6,10 +6,10 @@ Simple, fast, and flexible metric evaluation using Polars lazy evaluation.
 
 # pyre-strict
 
-from .metric_define import MetricDefine, MetricType, MetricScope
+from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_evaluator import MetricEvaluator
-from .metric_registry import MetricRegistry
 from .metric_helpers import create_metrics
+from .metric_registry import MetricRegistry
 
 
 __all__ = [
