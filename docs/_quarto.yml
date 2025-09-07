@@ -14,7 +14,7 @@ website:
         text: Quick Start
       - text: Examples
         menu:
-          - href: metric_dfine.qmd
+          - href: metric_define.qmd
             text: MetricDefine
           - href: metric_evaluator.qmd
             text: MetricEvaluator
