@@ -63,6 +63,7 @@ class TestMetricEvaluatorBasic:
             "label",
             "value",
             "metric_type",
+            "scope",
         }
         assert set(result["metric"].unique()) == {"mae", "rmse"}
         assert set(result["estimate"].unique()) == {"model_a", "model_b"}

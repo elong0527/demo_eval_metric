@@ -380,6 +380,7 @@ class MetricEvaluator:
             pl.lit(metric.name).alias("metric"),
             pl.lit(metric.label or metric.name).alias("label"),
             pl.lit(metric.type.value).alias("metric_type"),
+            pl.lit(metric.scope.value if metric.scope else None).alias("scope"),
         ]
 
         # Only add estimate column when it's meaningful (single estimate)
@@ -446,7 +447,7 @@ class MetricEvaluator:
         core_columns = []
         if "estimate" in available_columns:
             core_columns.append("estimate")
-        core_columns.extend(["metric", "label", "value", "metric_type"])
+        core_columns.extend(["metric", "label", "value", "metric_type", "scope"])
         column_order.extend(core_columns)
 
         # Sort columns
