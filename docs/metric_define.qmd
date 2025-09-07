@@ -8,7 +8,8 @@ execute:
 
 # MetricDefine
 
-`MetricDefine` is the core class for defining metrics in the polars-eval-metrics framework. This guide shows you how to define both simple and complex metrics for model evaluation.
+`MetricDefine` is the core class for defining metrics in the polars-eval-metrics framework. 
+This guide shows you how to define both simple and complex metrics for model evaluation.
 
 ## Setup
 
