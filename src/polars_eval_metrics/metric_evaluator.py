@@ -111,6 +111,7 @@ class MetricEvaluator:
             # pyre-ignore
             df_prep,
             within_exprs,
+            # pyre-ignore
             across_expr,
             agg_groups,
             select_groups,
@@ -166,7 +167,12 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            df_prep, within_exprs, across_expr, agg_groups, select_groups
+            # pyre-ignore
+            df_prep,
+            within_exprs,
+            across_expr,
+            agg_groups,
+            select_groups,
         )
 
         # Add metadata including subgroup information

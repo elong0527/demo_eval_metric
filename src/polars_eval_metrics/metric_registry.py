@@ -18,7 +18,9 @@ from typing import Callable, Any
 class MetricNotFoundError(ValueError):
     """Exception raised when a requested metric/error/summary is not found."""
 
-    def __init__(self, name: str, available: list[str], expr_type: str = "expression"):
+    def __init__(
+        self, name: str, available: list[str], expr_type: str = "expression"
+    ) -> None:
         self.name = name
         self.available = available
         self.expr_type = expr_type
@@ -62,7 +64,12 @@ class MetricRegistry:
 
     @classmethod
     def get_error(
-        cls, name: str, estimate: str, ground_truth: str, **params
+        # pyre-ignore
+        cls,
+        name: str,
+        estimate: str,
+        ground_truth: str,
+        **params,
     ) -> pl.Expr:
         """
         Get an error expression by name.
