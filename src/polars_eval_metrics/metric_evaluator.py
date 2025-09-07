@@ -5,6 +5,8 @@ This module implements the lazy evaluation pipeline for computing metrics
 using Polars LazyFrames, following the architecture design.
 """
 
+from typing import Any
+
 # pyre-strict
 
 import polars as pl
@@ -25,7 +27,7 @@ class MetricEvaluator:
         group_by: list[str] | None = None,
         subgroup_by: list[str] | None = None,
         filter_expr: pl.Expr | None = None,
-        error_params: dict[str, dict] | None = None,
+        error_params: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """
         Initialize evaluator with complete evaluation context

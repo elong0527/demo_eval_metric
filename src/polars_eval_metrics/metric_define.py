@@ -6,7 +6,7 @@ providing a single class for defining metrics and preparing Polars expressions.
 """
 
 # pyre-strict
-import textwrap 
+import textwrap
 
 from enum import Enum
 from typing import Self
@@ -62,6 +62,7 @@ class MetricDefine(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    # pyre-ignore
     name: str
     label: str | None = None
     type: MetricType = MetricType.ACROSS_SAMPLES
@@ -70,7 +71,7 @@ class MetricDefine(BaseModel):
     across_expr: str | pl.Expr | None = None
     registry: MetricRegistry | None = None
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: object) -> None:
         """Initialize with default label if not provided"""
         if "label" not in kwargs or kwargs["label"] is None:
             kwargs["label"] = kwargs.get("name", "Unknown Metric")
@@ -152,7 +153,7 @@ class MetricDefine(BaseModel):
 
     @field_validator("within_expr", mode="before")
     @classmethod
-    def normalize_within_expr(cls, v):
+    def normalize_within_expr(cls, v) -> object:
         """Convert single string to list before validation"""
         if v is None:
             return None
@@ -367,7 +368,7 @@ class MetricDefine(BaseModel):
             cleaned = cleaned.replace("[(", "(").replace(")]", ")")
             return cleaned
 
-        def format_expr(expr, max_width=70):
+        def format_expr(expr, max_width=70) -> str:
             """Format a single expression with text wrapping"""
             expr_str = clean_expr(str(expr))
 
@@ -385,7 +386,7 @@ class MetricDefine(BaseModel):
             )
 
         # Helper to format multiple expressions with proper indentation
-        def format_exprs(exprs, indent="    "):
+        def format_exprs(exprs, indent="    ") -> str:
             if len(exprs) == 1:
                 return format_expr(exprs[0])
             else:
