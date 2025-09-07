@@ -4,6 +4,8 @@ Helper functions for creating metrics from various sources.
 Simple, functional approach to metric creation without factory classes.
 """
 
+# pyre-strict
+
 from typing import Any
 from .metric_define import MetricDefine
 
@@ -29,7 +31,7 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
             'within_expr': 'mae',  # Single built-in metric name
             'across_expr': 'mean'  # Single selector name
         }
-        
+
         # List of expressions
         config = {
             'name': 'multi_metric',
@@ -37,7 +39,7 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
             'within_expr': ['mae', 'rmse'],  # List of built-in metrics
             'across_expr': 'mean'
         }
-        
+
         metric = create_metric_from_dict(config)
     """
     # Transform nested YAML structure to flat structure
@@ -54,7 +56,7 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     # Handle within_expr
     if "within_expr" in config:
         metric_data["within_expr"] = config["within_expr"]
-    
+
     # Handle across_expr
     if "across_expr" in config:
         metric_data["across_expr"] = config["across_expr"]
@@ -93,4 +95,5 @@ def create_metrics(configs: list[dict[str, Any]] | list[str]) -> list[MetricDefi
         return [MetricDefine(name=name) for name in configs]
     else:
         # Configuration dictionaries
+        # pyre-ignore
         return [create_metric_from_dict(config) for config in configs]

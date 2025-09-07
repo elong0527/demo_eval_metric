@@ -9,13 +9,15 @@ This module provides an extensible registry system for all types of expressions:
 Supports both global (class-level) and local (instance-level) registries.
 """
 
+# pyre-strict
+
 import polars as pl
 from typing import Callable, Any
 
 
 class MetricNotFoundError(ValueError):
     """Exception raised when a requested metric/error/summary is not found."""
-    
+
     def __init__(self, name: str, available: list[str], expr_type: str = "expression"):
         self.name = name
         self.available = available
@@ -29,7 +31,7 @@ class MetricNotFoundError(ValueError):
 class MetricRegistry:
     """
     Unified registry for all expression types used in metric evaluation.
-    
+
     This is a singleton-style class that provides global registration
     and retrieval of error types, metrics, and summary expressions.
     """
@@ -127,9 +129,7 @@ class MetricRegistry:
     # ============ Metric Expression Methods ============
 
     @classmethod
-    def register_metric(
-        cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]
-    ) -> None:
+    def register_metric(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
         """
         Register a custom metric expression.
 
@@ -144,9 +144,7 @@ class MetricRegistry:
         cls._metrics[name] = expr
 
     @classmethod
-    def register_summary(
-        cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]
-    ) -> None:
+    def register_summary(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
         """
         Register a custom summary expression.
 
@@ -279,18 +277,12 @@ MetricRegistry.register_error("absolute_percent_error", _absolute_percent_error)
 # Register built-in metrics
 MetricRegistry.register_metric("me", pl.col("error").mean().alias("value"))
 
-MetricRegistry.register_metric(
-    "mae", pl.col("absolute_error").mean().alias("value")
-)
-MetricRegistry.register_metric(
-    "mse", pl.col("squared_error").mean().alias("value")
-)
+MetricRegistry.register_metric("mae", pl.col("absolute_error").mean().alias("value"))
+MetricRegistry.register_metric("mse", pl.col("squared_error").mean().alias("value"))
 MetricRegistry.register_metric(
     "rmse", pl.col("squared_error").mean().sqrt().alias("value")
 )
-MetricRegistry.register_metric(
-    "mpe", pl.col("percent_error").mean().alias("value")
-)
+MetricRegistry.register_metric("mpe", pl.col("percent_error").mean().alias("value"))
 MetricRegistry.register_metric(
     "mape", pl.col("absolute_percent_error").mean().alias("value")
 )
@@ -305,34 +297,46 @@ MetricRegistry.register_metric("n_sample", pl.len().alias("value"))
 
 # Metrics for subjects with data (non-null ground truth or estimates)
 MetricRegistry.register_metric(
-    "n_subject_with_data", 
-    pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique().alias("value")
+    "n_subject_with_data",
+    pl.col("subject_id")
+    .filter(pl.col("error").is_not_null())
+    .n_unique()
+    .alias("value"),
 )
 MetricRegistry.register_metric(
     "pct_subject_with_data",
-    (pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique() / 
-     pl.col("subject_id").n_unique() * 100).alias("value")
+    (
+        pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique()
+        / pl.col("subject_id").n_unique()
+        * 100
+    ).alias("value"),
 )
 
 # Metrics for visits with data
 MetricRegistry.register_metric(
     "n_visit_with_data",
-    pl.struct(["subject_id", "visit_id"]).filter(pl.col("error").is_not_null()).n_unique().alias("value")
+    pl.struct(["subject_id", "visit_id"])
+    .filter(pl.col("error").is_not_null())
+    .n_unique()
+    .alias("value"),
 )
 MetricRegistry.register_metric(
     "pct_visit_with_data",
-    (pl.struct(["subject_id", "visit_id"]).filter(pl.col("error").is_not_null()).n_unique() /
-     pl.struct(["subject_id", "visit_id"]).n_unique() * 100).alias("value")
+    (
+        pl.struct(["subject_id", "visit_id"])
+        .filter(pl.col("error").is_not_null())
+        .n_unique()
+        / pl.struct(["subject_id", "visit_id"]).n_unique()
+        * 100
+    ).alias("value"),
 )
 
 # Metrics for samples with data
 MetricRegistry.register_metric(
-    "n_sample_with_data",
-    pl.col("error").is_not_null().sum().alias("value")
+    "n_sample_with_data", pl.col("error").is_not_null().sum().alias("value")
 )
 MetricRegistry.register_metric(
-    "pct_sample_with_data",
-    (pl.col("error").is_not_null().mean() * 100).alias("value")
+    "pct_sample_with_data", (pl.col("error").is_not_null().mean() * 100).alias("value")
 )
 
 # Register built-in summaries

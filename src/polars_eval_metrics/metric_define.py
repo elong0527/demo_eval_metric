@@ -5,6 +5,8 @@ This module combines metric configuration with expression compilation,
 providing a single class for defining metrics and preparing Polars expressions.
 """
 
+# pyre-strict
+
 from enum import Enum
 from pydantic import BaseModel, field_validator, model_validator, ConfigDict
 from typing import Self
@@ -38,7 +40,7 @@ class MetricDefine(BaseModel):
     This class defines metrics with support for two-level aggregation patterns:
     - within_expr: Expressions for within-entity aggregation (e.g., within subject/visit)
     - across_expr: Expressions for across-entity aggregation or final metric computation
-    
+
     Attributes:
         name: Metric identifier
         label: Display name for the metric
@@ -51,7 +53,7 @@ class MetricDefine(BaseModel):
                     - For ACROSS_SAMPLES: Applied directly to error columns
                     - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
                     - For WITHIN_SUBJECT/VISIT: Not used (within_expr is final)
-    
+
     Note: within_expr and across_expr are distinct from group_by/subgroup_by which control
           analysis stratification (e.g., by treatment, age, sex) and apply to ALL metric types.
     """
@@ -283,7 +285,9 @@ class MetricDefine(BaseModel):
                         builtin_expr = MetricRegistry.get_metric(item)
                         within_exprs.append(builtin_expr)
                     except ValueError:
-                        raise ValueError(f"Unknown built-in metric in within_expr: {item}")
+                        raise ValueError(
+                            f"Unknown built-in metric in within_expr: {item}"
+                        )
                 else:
                     # Already a Polars expression
                     within_exprs.append(item)

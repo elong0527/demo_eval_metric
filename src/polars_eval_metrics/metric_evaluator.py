@@ -5,6 +5,8 @@ This module implements the lazy evaluation pipeline for computing metrics
 using Polars LazyFrames, following the architecture design.
 """
 
+# pyre-strict
+
 import polars as pl
 from .metric_define import MetricDefine, MetricType, MetricScope
 from .metric_registry import MetricRegistry
@@ -18,12 +20,12 @@ class MetricEvaluator:
         df: pl.DataFrame | pl.LazyFrame,
         metrics: MetricDefine | list[MetricDefine],
         ground_truth: str = "actual",
-        estimates: str | list[str] = None,
-        registry: MetricRegistry = None,
-        group_by: list[str] = None,
-        subgroup_by: list[str] = None,
-        filter_expr: pl.Expr = None,
-        error_params: dict[str, dict] = None,
+        estimates: str | list[str] | None = None,
+        registry: MetricRegistry | None = None,
+        group_by: list[str] | None = None,
+        subgroup_by: list[str] | None = None,
+        filter_expr: pl.Expr | None = None,
+        error_params: dict[str, dict] | None = None,
     ):
         """
         Initialize evaluator with complete evaluation context
@@ -104,7 +106,12 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            df_prep, within_exprs, across_expr, agg_groups, select_groups
+            # pyre-ignore
+            df_prep,
+            within_exprs,
+            across_expr,
+            agg_groups,
+            select_groups,
         )
 
         # Add metadata
@@ -146,7 +153,10 @@ class MetricEvaluator:
         try:
             self.group_by = self.group_by + [subgroup_var]
             agg_groups, select_groups = self._get_grouping_columns(
-                metric.type, metric.scope, estimate
+                # pyre-ignore
+                metric.type,
+                metric.scope,
+                estimate,
             )
         finally:
             # Restore original group_by

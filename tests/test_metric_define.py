@@ -243,66 +243,64 @@ class TestMetricDefineRepresentation:
         """Test __str__ output for simple MAE metric."""
         metric = MetricDefine(name="mae")
         str_output = str(metric)
-        
+
         # Check the header format (uses single quotes in actual output)
         assert str_output.startswith("MetricDefine(name='mae'")
-        
+
         # Since this is a simple metric without custom expressions,
         # we check for the basic structure
-        lines = str_output.strip().split('\n')
+        lines = str_output.strip().split("\n")
         assert len(lines) >= 1
         assert "MetricDefine(name='mae'" in lines[0]
-    
+
     def test_str_metric_with_details(self):
         """Test __str__ output for metric with type and label."""
         metric = MetricDefine(
-            name="mae", 
-            type=MetricType.ACROSS_SAMPLES,
-            label="Mean Absolute Error"
+            name="mae", type=MetricType.ACROSS_SAMPLES, label="Mean Absolute Error"
         )
         str_output = str(metric)
-        
+
         # Check that it shows the basic metric info
-        assert 'MetricDefine(name=' in str_output
-        assert 'mae' in str_output
-        assert 'type=across_samples' in str_output
-        
+        assert "MetricDefine(name=" in str_output
+        assert "mae" in str_output
+        assert "type=across_samples" in str_output
+
         # Check for label
-        assert 'Label:' in str_output
-        assert 'Mean Absolute Error' in str_output
-        
+        assert "Label:" in str_output
+        assert "Mean Absolute Error" in str_output
+
         # Check for across-entity expression section
-        assert 'Across-entity expression:' in str_output
-        
+        assert "Across-entity expression:" in str_output
+
         # Check for the LazyFrame section
-        assert '(' in str_output
-        assert 'pl.LazyFrame' in str_output
-        assert '.select(' in str_output
+        assert "(" in str_output
+        assert "pl.LazyFrame" in str_output
+        assert ".select(" in str_output
         assert 'col("absolute_error")' in str_output
-        assert '.mean()' in str_output
+        assert ".mean()" in str_output
         assert '.alias("value")' in str_output
-        assert ')' in str_output
-    
+        assert ")" in str_output
+
     def test_str_metric_with_custom_expression(self):
         """Test __str__ output for metric with custom select expression."""
         metric = MetricDefine(
             name="pct_within_1",
             label="% Within +/- 1",
             type=MetricType.ACROSS_SAMPLES,
-            across_expr=(pl.col("absolute_error") < 1).mean() * 100
+            across_expr=(pl.col("absolute_error") < 1).mean() * 100,
         )
         str_output = str(metric)
-        
+
         # Check basic structure (uses single quotes in actual output)
         assert "MetricDefine(name='pct_within_1'" in str_output
-        assert 'type=across_samples' in str_output
-        assert 'Label:' in str_output
-        assert '% Within +/- 1' in str_output
-        
+        assert "type=across_samples" in str_output
+        assert "Label:" in str_output
+        assert "% Within +/- 1" in str_output
+
         # Check that custom expression is shown
-        assert 'Across-entity expression:' in str_output
+        assert "Across-entity expression:" in str_output
         # The actual expression representation will be there
-        assert '[custom]' in str_output or 'col("absolute_error")' in str_output
+        assert "[custom]" in str_output or 'col("absolute_error")' in str_output
 
     def test_pl_expr_method(self):
         """Test that pl_expr method works if it exists."""
