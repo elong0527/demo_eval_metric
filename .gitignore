@@ -68,3 +68,4 @@ venv.bak/
 docs/_site/
 _freeze/
 */_freeze/
+.pyre/*.stderr
