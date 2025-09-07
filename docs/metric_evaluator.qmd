@@ -1,0 +1,750 @@
+---
+title: "MetricEvaluator: Evaluation Pipeline"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+---
+
+# MetricEvaluator
+
+The `MetricEvaluator` class is the main evaluation engine that executes metric computations on your data. 
+It handles hierarchical aggregations, grouping, filtering, and manages the entire evaluation pipeline using Polars' lazy evaluation for optimal performance.
+
+# Example Data
+
+```{python}
+import polars as pl
+from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricType
+
+# Create sample data
+data = pl.DataFrame({
+    "subject_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+    "visit_id": [1, 2, 3, 1, 2, 3, 1, 2, 3],
+    "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
+    "model_a": [8, 22, 28, 18, 24, 38, 15, 19, 35],
+    "model_b": [12, 18, 32, 13, 27, 33, 14, 25, 29],   
+})
+
+data
+```
+
+# Simple Metrics
+```{python}
+# Define metrics
+metrics = [
+    MetricDefine(name="mae", label="Mean Absolute Error"),
+    MetricDefine(name="rmse", label="Root Mean Squared Error"),
+]
+
+# Create evaluator and run evaluation
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+# Subject-level Metrics
+
+## Within Subject Metrics
+
+```{python}
+within_subject_metrics = MetricDefine(
+        name="mae_per_subject",
+        type="within_subject",
+        within_expr=pl.col("absolute_error").mean().alias("value"),
+        label="MAE per Subject"
+    )
+
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=within_subject_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+
+## Across subject metrics
+
+```{python}
+across_subject_metrics = MetricDefine(
+        name="mae:mean", 
+        type="across_subject",
+        label="Mean of Subject MAEs"
+    )
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=across_subject_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+## Combining within and between subject metrics 
+
+```{python}
+# Combine the metric lists using list concatenation or unpacking
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[
+        within_subject_metrics,
+        across_subject_metrics
+    ],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+# Visit-level Metrics
+
+## Within Visit Metrics
+
+```{python}
+within_visit_metrics = MetricDefine(
+        name="mae_per_visit",
+        type="within_visit",
+        within_expr=pl.col("absolute_error").mean().alias("value"),
+        label="MAE per Visit"
+    )
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=within_visit_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+## Across Visit Metrics
+
+```{python}
+across_visit_metrics = MetricDefine(
+        name="mae_across_visits", 
+        type=MetricType.ACROSS_VISIT,
+        within_expr=pl.col("absolute_error").mean().alias("value"),  # Per visit first
+        across_expr=pl.col("value").mean(),  # Then mean across visits
+        label="Mean of Visit MAEs"
+    )
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=across_visit_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+## Combining within and between visit metrics 
+
+```{python}
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[
+        within_visit_metrics,
+        across_visit_metrics,
+    ],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+evaluator.evaluate()
+```
+
+# Scope 
+
+## Global Scope 
+
+Global scope metrics compute a single value across the entire dataset, ignoring model and group distinctions.
+
+```{python}
+global_scope_metrics = MetricDefine(
+    name = "n_subject", 
+    scope = "global"
+)
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[
+        global_scope_metrics,
+    ],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+result = evaluator.evaluate()
+print("Global scope result:")
+print(result)
+print(f"Number of rows: {len(result)} (single row regardless of number of estimates)")
+```
+
+## Model Scope
+
+Model scope metrics compute one value per model, ignoring group distinctions.
+
+```{python}
+# Add treatment group to demonstrate scope behavior
+data_grouped = data.with_columns(
+    pl.when(pl.col("subject_id") <= 2)
+    .then(pl.lit("treatment"))
+    .otherwise(pl.lit("control"))
+    .alias("treatment_group")
+)
+
+model_scope_metrics = MetricDefine(
+    name = "mae", 
+    scope = "model"
+)
+
+evaluator = MetricEvaluator(
+    df=data_grouped,
+    metrics=[model_scope_metrics],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment_group"],  # This is ignored for model scope
+)
+
+result = evaluator.evaluate()
+print("Model scope result:")
+print(result)
+print(f"Number of rows: {len(result)} (one per model, groups ignored)")
+```
+
+## Group Scope
+
+Group scope metrics compute one value per group, aggregating across all models.
+
+```{python}
+group_scope_metrics = MetricDefine(
+    name = "mae", 
+    scope = "group"
+)
+
+evaluator = MetricEvaluator(
+    df=data_grouped,
+    metrics=[group_scope_metrics],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],  # Both models aggregated together
+    group_by=["treatment_group"],
+)
+
+result = evaluator.evaluate()
+print("Group scope result:")
+print(result)
+print(f"Number of rows: {len(result)} (one per group, models aggregated)")
+```
+
+## Grouping and Stratification
+
+### Group-By Analysis
+
+```{python}
+# Add treatment group to data
+data_grouped = data.with_columns(
+    pl.when(pl.col("subject_id") <= 2)
+    .then(pl.lit("treatment"))
+    .otherwise(pl.lit("control"))
+    .alias("treatment_group")
+)
+
+# Evaluate metrics by treatment group
+evaluator = MetricEvaluator(
+    df=data_grouped,
+    metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment_group"],
+)
+
+results = evaluator.evaluate()
+print("\nMetrics by treatment group:")
+print(results)
+```
+
+### Subgroup Analysis
+
+```{python}
+# Add demographic subgroups
+data_subgroups = data_grouped.with_columns([
+    pl.when(pl.col("subject_id") == 1).then(pl.lit("young"))
+    .when(pl.col("subject_id") == 2).then(pl.lit("middle"))
+    .otherwise(pl.lit("senior"))
+    .alias("age_group"),
+    
+    pl.when(pl.col("subject_id").is_in([1, 3]))
+    .then(pl.lit("M"))
+    .otherwise(pl.lit("F"))
+    .alias("sex"),
+])
+
+# Evaluate with subgroup stratification
+evaluator = MetricEvaluator(
+    df=data_subgroups,
+    metrics=[MetricDefine(name="mae")],
+    ground_truth="actual",
+    estimates=["model_a"],
+    group_by=["treatment_group"],
+    subgroup_by=["age_group", "sex"],
+)
+
+results = evaluator.evaluate()
+print("\nMetrics with subgroup analysis:")
+print(results.select(["treatment_group", "subgroup_name", "subgroup_value", "metric", "value"]))
+```
+
+## Filtering Data
+
+### Pre-evaluation Filtering
+
+```{python}
+# Filter to only include certain visits
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[MetricDefine(name="mae")],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    filter_expr=pl.col("visit_id") >= 2,  # Only visits 2 and 3
+)
+
+results = evaluator.evaluate()
+print("\nFiltered evaluation (visits >= 2):")
+print(results)
+```
+
+### Complex Filter Expressions
+
+```{python}
+# Complex filtering with multiple conditions
+data_complex = data.with_columns(
+    pl.when(pl.col("actual") > 20).then(pl.lit(1)).otherwise(pl.lit(0)).alias("high_value")
+)
+
+evaluator = MetricEvaluator(
+    df=data_complex,
+    metrics=[MetricDefine(name="mae"), MetricDefine(name="mape")],
+    ground_truth="actual",
+    estimates=["model_a"],
+    filter_expr=(pl.col("high_value") == 1) & (pl.col("subject_id").is_in([1, 2])),
+)
+
+results = evaluator.evaluate()
+print("\nComplex filtered evaluation:")
+print(results)
+```
+
+## Custom Error Types
+
+### Using Custom Error Parameters
+
+```{python}
+from polars_eval_metrics import MetricRegistry
+
+# Register a custom error type with parameters
+def threshold_error(estimate: str, ground_truth: str, threshold: float = 5.0) -> pl.Expr:
+    """Binary error: 1 if within threshold, 0 otherwise"""
+    return (pl.col(estimate) - pl.col(ground_truth)).abs() <= threshold
+
+MetricRegistry.register_error("threshold_error", threshold_error)
+
+# Register metric using the custom error
+MetricRegistry.register_metric(
+    "accuracy_5",
+    (pl.col("threshold_error").mean() * 100).alias("value")
+)
+
+# Use custom error with parameters
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[
+        MetricDefine(name="accuracy_5", label="% Within 5 units"),
+    ],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    error_params={"threshold_error": {"threshold": 5.0}},
+)
+
+results = evaluator.evaluate()
+print("\nCustom error type results:")
+print(results)
+```
+
+## Lazy vs Eager Evaluation
+
+### Lazy Evaluation (Default: collect=False)
+
+```{python}
+# Create evaluator
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[MetricDefine(name="mae")],
+    ground_truth="actual",
+    estimates=["model_a"],
+)
+
+# Get LazyFrame (not computed yet)
+lazy_results = evaluator.evaluate(collect=False)
+print("LazyFrame (not computed):")
+print(type(lazy_results))
+
+# Apply additional operations before collecting
+final_results = (
+    lazy_results
+    .filter(pl.col("value") < 2.0)
+    .with_columns(pl.col("value").round(2).alias("rounded_value"))
+    .collect()
+)
+print("\nComputed results with additional operations:")
+print(final_results)
+```
+
+## Partial Evaluation
+
+### Evaluate Subset of Metrics
+
+```{python}
+# Define multiple metrics
+all_metrics = [
+    MetricDefine(name="mae", label="MAE"),
+    MetricDefine(name="rmse", label="RMSE"),
+    MetricDefine(name="me", label="Mean Error"),
+    MetricDefine(name="mape", label="MAPE"),
+]
+
+# Create evaluator with all metrics
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=all_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+# Evaluate only specific metrics
+subset_results = evaluator.evaluate(
+    metrics=[all_metrics[0], all_metrics[1]],  # Only MAE and RMSE
+    estimates=["model_a"],  # Only model_a
+)
+print("Subset evaluation:")
+print(subset_results)
+```
+
+## Advanced Patterns
+
+### Two-Level Aggregation with Custom Selectors
+
+```{python}
+# Register custom percentile selectors
+MetricRegistry.register_summary("p10", pl.col("value").quantile(0.10))
+MetricRegistry.register_summary("p50", pl.col("value").quantile(0.50))
+
+# Create metric with custom two-level aggregation
+custom_metric = MetricDefine(
+    name="mae_p50_by_subject",
+    type=MetricType.ACROSS_SUBJECT,
+    within_expr="mae",  # First level: MAE per subject
+    across_expr="p50",   # Second level: Median of subject MAEs
+    label="Median Subject MAE"
+)
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[custom_metric],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+results = evaluator.evaluate()
+print("\nTwo-level aggregation with custom selector:")
+print(results)
+```
+
+### Multiple Within-Expressions
+
+```{python}
+# Metric with multiple within-expressions
+weighted_metric = MetricDefine(
+    name="weighted_mae",
+    type=MetricType.ACROSS_SUBJECT,
+    within_expr=[
+        "mae",  # MAE per subject
+        pl.len().alias("n_obs"),  # Count per subject
+    ],
+    across_expr=(  # Weighted average
+        (pl.col("value") * pl.col("n_obs")).sum() / pl.col("n_obs").sum()
+    ),
+    label="Weighted MAE"
+)
+
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[weighted_metric],
+    ground_truth="actual",
+    estimates=["model_a"],
+)
+
+results = evaluator.evaluate()
+print("\nWeighted metric result:")
+print(results)
+```
+
+### Combining with MetricScope
+
+```{python}
+from polars_eval_metrics import MetricScope
+
+# Add model comparison data
+data_scoped = data_grouped.select([
+    "subject_id", "visit_id", "treatment_group", "actual", "model_a", "model_b"
+])
+
+# Define metrics with different scopes
+scoped_metrics = [
+    MetricDefine(
+        name="mae_global",
+        label="MAE (Global)",
+        scope=MetricScope.GLOBAL,  # One value across everything
+    ),
+    MetricDefine(
+        name="mae_by_model",
+        label="MAE (By Model)",
+        scope=MetricScope.MODEL,  # Per model only
+    ),
+    MetricDefine(
+        name="mae_by_group",
+        label="MAE (By Group)",
+        scope=MetricScope.GROUP,  # Per group only
+    ),
+]
+
+evaluator = MetricEvaluator(
+    df=data_scoped,
+    metrics=scoped_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment_group"],
+)
+
+results = evaluator.evaluate()
+print("\nMetrics with different scopes:")
+for scope in ["Global", "By Model", "By Group"]:
+    print(f"\n{scope}:")
+    print(results.filter(pl.col("label").str.contains(scope)))
+```
+
+## Performance Considerations
+
+### Working with Large Datasets
+
+```{python}
+# Create larger dataset
+import numpy as np
+np.random.seed(42)
+
+n_subjects = 100
+n_visits = 10
+n_rows = n_subjects * n_visits
+
+large_data = pl.DataFrame({
+    "subject_id": np.repeat(range(1, n_subjects + 1), n_visits),
+    "visit_id": np.tile(range(1, n_visits + 1), n_subjects),
+    "actual": np.random.normal(100, 15, n_rows),
+    "model_a": np.random.normal(100, 15, n_rows) + np.random.normal(0, 5, n_rows),
+    "model_b": np.random.normal(100, 15, n_rows) + np.random.normal(0, 7, n_rows),
+    "site": np.random.choice(["Site_A", "Site_B", "Site_C"], n_rows),
+})
+
+# Efficient evaluation with lazy execution
+evaluator = MetricEvaluator(
+    df=large_data.lazy(),  # Pass as LazyFrame
+    metrics=[
+        MetricDefine(name="mae", type=MetricType.ACROSS_SAMPLES),
+        MetricDefine(name="rmse", type=MetricType.ACROSS_SUBJECT),
+    ],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["site"],
+)
+
+# The computation is deferred until collect
+results = evaluator.evaluate()
+print(f"\nEvaluated {len(large_data)} rows")
+print(f"Results shape: {results.shape}")
+print("\nSample results:")
+print(results.head())
+```
+
+## Best Practices
+
+### 1. Use LazyFrames for Large Data
+
+```{python}
+# Good: Pass LazyFrame for large datasets
+evaluator = MetricEvaluator(
+    df=pl.scan_csv("large_file.csv"),  # Returns LazyFrame
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model_a"],
+)
+```
+
+### 2. Define Reusable Metrics
+
+```{python}
+# Define once, use many times
+standard_metrics = [
+    MetricDefine(name="mae", label="Mean Absolute Error"),
+    MetricDefine(name="rmse", label="Root Mean Squared Error"),
+    MetricDefine(name="mape", label="Mean Absolute Percentage Error"),
+]
+
+# Use across different evaluations
+for model in ["model_a", "model_b"]:
+    evaluator = MetricEvaluator(
+        df=data,
+        metrics=standard_metrics,
+        ground_truth="actual",
+        estimates=[model],
+    )
+    results = evaluator.evaluate()
+    print(f"\nResults for {model}:")
+    print(results.select(["metric", "value"]))
+```
+
+### 3. Leverage Filter Expressions
+
+```{python}
+# Efficient filtering at evaluation time
+evaluator = MetricEvaluator(
+    df=large_data,
+    metrics=[MetricDefine(name="mae")],
+    ground_truth="actual",
+    estimates=["model_a"],
+    filter_expr=(
+        (pl.col("actual").is_not_null()) &
+        (pl.col("model_a").is_not_null()) &
+        (pl.col("actual") > 0)  # Domain-specific validation
+    ),
+)
+```
+
+## Error Handling
+
+### Handling Missing Data
+
+```{python}
+# Data with missing values
+data_missing = pl.DataFrame({
+    "subject_id": [1, 1, 2, 2, 3, 3],
+    "visit_id": [1, 2, 1, 2, 1, 2],
+    "actual": [10, None, 20, 25, None, 30],
+    "model_a": [11, 18, None, 24, 12, 31],
+})
+
+# Metrics handle missing data gracefully
+evaluator = MetricEvaluator(
+    df=data_missing,
+    metrics=[
+        MetricDefine(name="mae"),
+        MetricDefine(name="n_sample_with_data", label="Valid Samples"),
+    ],
+    ground_truth="actual",
+    estimates=["model_a"],
+)
+
+results = evaluator.evaluate()
+print("\nResults with missing data:")
+print(results)
+```
+
+### Validation Errors
+
+```{python}
+# Example of validation
+try:
+    evaluator = MetricEvaluator(
+        df=data,
+        metrics=[MetricDefine(name="invalid_metric")],
+        ground_truth="actual",
+        estimates=["model_a"],
+    )
+    results = evaluator.evaluate()
+except ValueError as e:
+    print(f"Validation error: {e}")
+```
+
+## Integration with Other Tools
+
+### Export Results
+
+```{python}
+# Evaluate metrics
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+)
+
+results = evaluator.evaluate()
+
+# Export to various formats
+results.write_csv("evaluation_results.csv")
+results.write_parquet("evaluation_results.parquet")
+results.write_json("evaluation_results.json")
+
+print("Results exported to multiple formats")
+```
+
+### Visualization Ready
+
+```{python}
+import matplotlib.pyplot as plt
+
+# Prepare data for visualization
+viz_data = results.select(["estimate", "metric", "value"]).to_pandas()
+
+# Create comparison plot
+fig, ax = plt.subplots(figsize=(8, 5))
+for metric in viz_data["metric"].unique():
+    metric_data = viz_data[viz_data["metric"] == metric]
+    ax.bar(metric_data["estimate"], metric_data["value"], label=metric, alpha=0.7)
+
+ax.set_xlabel("Model")
+ax.set_ylabel("Metric Value")
+ax.set_title("Model Comparison")
+ax.legend()
+plt.show()
+```
+
+## Summary
+
+The `MetricEvaluator` class provides:
+
+1. **Flexible Evaluation**: Support for various aggregation levels and grouping strategies
+2. **Performance**: Leverages Polars' lazy evaluation for efficient computation
+3. **Extensibility**: Works seamlessly with custom metrics and error types
+4. **Integration**: Easy to integrate with existing data pipelines and visualization tools
+
+Key features:
+- Hierarchical aggregations (sample, subject, visit levels)
+- Group-by and subgroup analysis
+- Lazy evaluation for large datasets
+- Custom error types with parameters
+- Partial evaluation of metrics/models
+- Missing data handling

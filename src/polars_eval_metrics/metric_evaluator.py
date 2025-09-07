@@ -276,7 +276,7 @@ class MetricEvaluator:
                     df = df.select(sorted(all_columns))
                     standardized_dfs.append(df)
 
-                combined_results = pl.concat([df.lazy() for df in standardized_dfs])
+                combined_results = pl.concat([df.lazy() for df in standardized_dfs], how="diagonal")
             else:
                 raise ValueError("No results generated")
         else:
@@ -288,7 +288,7 @@ class MetricEvaluator:
                     results.append(result)
 
             # Combine all lazy frames
-            combined_results = pl.concat(results)
+            combined_results = pl.concat(results, how="diagonal")
 
         # Use a safer approach to determine available columns
         try:
@@ -314,12 +314,18 @@ class MetricEvaluator:
         # Sort by available grouping columns, then metric, then estimate
         sorted_results = combined_results.sort(sort_cols)
 
-        # Arrange columns in logical order - dynamically determine grouping columns
+        # Arrange columns in logical order - dynamically determine all columns
         column_order = []
 
-        # First: add grouping columns that exist in the result
-        for col in potential_group_cols:
+        # First: add ID columns that might exist from hierarchical metrics
+        id_columns = ["subject_id", "visit_id"]
+        for col in id_columns:
             if col in available_columns:
+                column_order.append(col)
+
+        # Then: add user-defined grouping columns that exist in the result
+        for col in potential_group_cols:
+            if col in available_columns and col not in column_order:
                 column_order.append(col)
 
         # Add subgroup columns if they exist
