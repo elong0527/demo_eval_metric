@@ -58,9 +58,8 @@ evaluator.evaluate()
 
 ```{python}
 within_subject_metrics = MetricDefine(
-        name="mae_per_subject",
+        name="mae",
         type="within_subject",
-        within_expr=pl.col("absolute_error").mean().alias("value"),
         label="MAE per Subject"
     )
 
@@ -118,9 +117,8 @@ evaluator.evaluate()
 
 ```{python}
 within_visit_metrics = MetricDefine(
-        name="mae_per_visit",
+        name="mae",
         type="within_visit",
-        within_expr=pl.col("absolute_error").mean().alias("value"),
         label="MAE per Visit"
     )
 
@@ -138,10 +136,8 @@ evaluator.evaluate()
 
 ```{python}
 across_visit_metrics = MetricDefine(
-        name="mae_across_visits", 
+        name="mae:mean", 
         type=MetricType.ACROSS_VISIT,
-        within_expr=pl.col("absolute_error").mean().alias("value"),  # Per visit first
-        across_expr=pl.col("value").mean(),  # Then mean across visits
         label="Mean of Visit MAEs"
     )
 

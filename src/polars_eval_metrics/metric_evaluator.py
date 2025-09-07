@@ -226,11 +226,11 @@ class MetricEvaluator:
             return [{}]  # Single empty combination
 
         combinations = []
-        
+
         # For marginal analysis, generate one combination per subgroup variable per value
         for subgroup_col in self.subgroup_by:
             unique_values = self.df.select(subgroup_col).unique().collect()
-            
+
             for row in unique_values.iter_rows(named=True):
                 # Create combination with only this subgroup variable
                 combinations.append({subgroup_col: row[subgroup_col]})
@@ -381,7 +381,7 @@ class MetricEvaluator:
             pl.lit(metric.label or metric.name).alias("label"),
             pl.lit(metric.type.value).alias("metric_type"),
         ]
-        
+
         # Only add estimate column when it's meaningful (single estimate)
         if estimate_label is not None:
             metadata.insert(1, pl.lit(estimate_label).alias("estimate"))
@@ -454,7 +454,7 @@ class MetricEvaluator:
         potential_sort_cols = self.group_by + ["subgroup_name", "metric"]
         if "estimate" in available_columns:
             potential_sort_cols.append("estimate")
-        
+
         for col in potential_sort_cols:
             if col in available_columns:
                 sort_cols.append(col)
