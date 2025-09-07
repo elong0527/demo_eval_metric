@@ -26,14 +26,17 @@ data = pl.DataFrame({
     "age_group": ["young", "young", "young", "middle", "middle", "middle", "senior", "senior", "senior"],
     "sex": ["M", "M", "M", "F", "F", "F", "M", "M", "M"],
     "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
-    "model_a": [8, 22, 28, 18, 24, 38, None, 19, 35],
-    "model_b": [12, None, None, 13, 27, 33, 14, 25, 29],
+    "model_1": [8, 22, 28, 18, 24, 38, None, 19, 35],
+    "model_2": [12, None, None, 13, 27, 33, 14, 25, 29],
 })
 
 data
 ```
 
-# Simple Metrics
+# Examples 
+
+## Simple Example 
+
 ```{python}
 # Define metrics
 metrics = [
@@ -46,10 +49,42 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=metrics,
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
+```
+
+## Real Example 
+
+```{python}
+# Define metrics
+metrics = [
+    MetricDefine(name="n_subject", label="Number of Subjects", scope = "global"),
+    MetricDefine(name="n_sample", label = "Number of Samples", scope = "model"), 
+    MetricDefine(name="pct_sample_with_data", label = "Percent of Samples with Data", scope = "model"),
+    MetricDefine(name="mae", label="MAE"),
+    MetricDefine(name="rmse", label="RMSE"),
+]
+
+# Create evaluator and run evaluation
+evaluator = MetricEvaluator(
+    df=data,
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model_1", "model_2"],
+    group_by=["treatment"]
+)
+
+res = evaluator.evaluate()
+res
+```
+
+```{python}
+res.pivot( 
+    on = ["estimate", "label"], 
+    index = "treatment",
+    values = "value")
 ```
 
 # Subject-level Metrics
@@ -68,7 +103,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=within_subject_metrics,
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -88,7 +123,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=across_subject_metrics,
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -105,7 +140,7 @@ evaluator = MetricEvaluator(
         across_subject_metrics
     ],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -126,7 +161,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=within_visit_metrics,
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -145,7 +180,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=across_visit_metrics,
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -161,7 +196,7 @@ evaluator = MetricEvaluator(
         across_visit_metrics,
     ],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -185,7 +220,7 @@ evaluator = MetricEvaluator(
         global_scope_metrics,
     ],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
 )
 
 evaluator.evaluate()
@@ -205,7 +240,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[group_scope_metrics],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
     group_by=["treatment"],
 )
 
@@ -226,16 +261,16 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[model_scope_metrics],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
     group_by=["treatment"],
 )
 
 evaluator.evaluate()
 ```
 
-## Grouping and Stratification
+# Grouping and Stratification
 
-### Group-By Analysis
+## Group-By Analysis
 
 ```{python}
 # Evaluate metrics by treatment group
@@ -243,14 +278,14 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
     ground_truth="actual",
-    estimates=["model_a", "model_b"],
+    estimates=["model_1", "model_2"],
     group_by=["treatment"],
 )
 
 evaluator.evaluate()
 ```
 
-### Subgroup Analysis
+## Subgroup Analysis
 
 ```{python}
 # Evaluate with subgroup stratification (age_group and sex already in data)
@@ -258,7 +293,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[MetricDefine(name="mae")],
     ground_truth="actual",
-    estimates=["model_a"],
+    estimates=["model_1"],
     group_by=["treatment"],
     subgroup_by=["age_group", "sex"],
 )
