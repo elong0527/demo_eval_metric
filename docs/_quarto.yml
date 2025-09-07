@@ -14,8 +14,10 @@ website:
         text: Quick Start
       - text: Examples
         menu:
-          - href: metric.qmd
+          - href: metric_dfine.qmd
             text: MetricDefine
+          - href: metric_evaluator.qmd
+            text: MetricEvaluator
       - href: coverage/index.html
         text: Coverage
     right:
