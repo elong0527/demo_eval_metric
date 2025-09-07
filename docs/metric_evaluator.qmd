@@ -60,9 +60,8 @@ evaluator.evaluate()
 ```{python}
 # Define metrics
 metrics = [
-    MetricDefine(name="n_subject", label="Number of Subjects", scope = "global"),
-    MetricDefine(name="n_sample", label = "Number of Samples", scope = "model"), 
-    MetricDefine(name="pct_sample_with_data", label = "Percent of Samples with Data", scope = "model"),
+    MetricDefine(name="n_sample", label = "Number of Samples", scope = "group"), 
+    # MetricDefine(name="pct_sample_with_data", label = "Percent of Samples with Data", scope = "group"),
     MetricDefine(name="mae", label="MAE"),
     MetricDefine(name="rmse", label="RMSE"),
 ]
