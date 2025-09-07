@@ -44,7 +44,7 @@ classDiagram
 
     class MetricType {
         <<enum>>
-        ACROSS_SAMPLES
+        ACROSS_SAMPLE
         WITHIN_SUBJECT
         ACROSS_SUBJECT
         WITHIN_VISIT

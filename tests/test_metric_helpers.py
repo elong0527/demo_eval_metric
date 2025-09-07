@@ -19,7 +19,7 @@ class TestCreateMetricFromDict:
 
         assert metric.name == "mae"
         assert metric.label == "Mean Absolute Error"
-        assert metric.type == MetricType.ACROSS_SAMPLES
+        assert metric.type == MetricType.ACROSS_SAMPLE
         assert metric.scope is None
 
     def test_metric_with_type(self):
@@ -83,7 +83,7 @@ class TestCreateMetrics:
         configs = [
             {"name": "mae", "label": "Mean Absolute Error"},
             {"name": "rmse", "label": "Root Mean Squared Error"},
-            {"name": "me", "type": "across_samples"},
+            {"name": "me", "type": "across_sample"},
         ]
 
         metrics = create_metrics(configs)
@@ -94,7 +94,7 @@ class TestCreateMetrics:
         assert metrics[1].name == "rmse"
         assert metrics[1].label == "Root Mean Squared Error"
         assert metrics[2].name == "me"
-        assert metrics[2].type == MetricType.ACROSS_SAMPLES
+        assert metrics[2].type == MetricType.ACROSS_SAMPLE
 
     def test_simple_names(self):
         """Test creating metrics from names."""
@@ -111,7 +111,7 @@ class TestCreateMetrics:
 
         # All should have default settings
         for metric in metrics:
-            assert metric.type == MetricType.ACROSS_SAMPLES
+            assert metric.type == MetricType.ACROSS_SAMPLE
             assert metric.scope is None
 
     def test_empty_list(self):

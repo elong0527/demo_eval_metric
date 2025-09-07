@@ -117,7 +117,7 @@ class MetricDefine:
   - Used in WITHIN_SUBJECT, ACROSS_SUBJECT, WITHIN_VISIT, ACROSS_VISIT
   - Aggregates data within each entity (subject or visit)
 - `across_expr`: Expressions for across-entity aggregation or final computation
-  - For ACROSS_SAMPLES: Applied directly to error columns
+  - For ACROSS_SAMPLE: Applied directly to error columns
   - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
   - For WITHIN_SUBJECT/VISIT: Not used (within_expr provides final result)
 
@@ -137,7 +137,7 @@ Note: These are distinct from `group_by`/`subgroup_by` which control analysis st
 ### MetricType Enum
 | Type | Description | LazyFrame Pattern |
 |------|-------------|-------------------|
-| `ACROSS_SAMPLES` | Aggregate across all samples | `.select(expr)` |
+| `ACROSS_SAMPLE` | Aggregate across all samples | `.select(expr)` |
 | `WITHIN_SUBJECT` | Aggregate within each subject | `.group_by('subject_id').agg(expr)` |
 | `ACROSS_SUBJECT` | Two-level: within then across subjects | `.group_by('subject_id').agg(expr).select(selector)` |
 | `WITHIN_VISIT` | Aggregate within each visit | `.group_by(['subject_id', 'visit_id']).agg(expr)` |
@@ -234,7 +234,7 @@ mae = MetricDefine(name="mae")
 pct_accurate = MetricDefine(
     name="pct_within_1",
     label="% Within +/- 1",
-    type=MetricType.ACROSS_SAMPLES,
+    type=MetricType.ACROSS_SAMPLE,
     across_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
 ```
@@ -271,7 +271,7 @@ from polars_eval_metrics import MetricDefine, MetricType, create_metrics
 # Direct metric creation
 metric = MetricDefine(
     name='mae',
-    type=MetricType.ACROSS_SAMPLES
+    type=MetricType.ACROSS_SAMPLE
 )
 
 # Create multiple metrics from list

@@ -20,7 +20,7 @@ from .metric_registry import MetricRegistry
 class MetricType(Enum):
     """Metric aggregation types"""
 
-    ACROSS_SAMPLES = "across_samples"
+    ACROSS_SAMPLE = "across_sample"
     ACROSS_SUBJECT = "across_subject"
     WITHIN_SUBJECT = "within_subject"
     ACROSS_VISIT = "across_visit"
@@ -46,13 +46,13 @@ class MetricDefine(BaseModel):
     Attributes:
         name: Metric identifier
         label: Display name for the metric
-        type: Aggregation type (ACROSS_SAMPLES, WITHIN_SUBJECT, ACROSS_SUBJECT, etc.)
+        type: Aggregation type (ACROSS_SAMPLE, WITHIN_SUBJECT, ACROSS_SUBJECT, etc.)
         scope: Calculation scope (GLOBAL, MODEL, GROUP) - orthogonal to aggregation type
         within_expr: Expression(s) for within-entity aggregation:
                     - Used in WITHIN_SUBJECT, ACROSS_SUBJECT, WITHIN_VISIT, ACROSS_VISIT
-                    - Not used in ACROSS_SAMPLES (which operates directly on samples)
+                    - Not used in ACROSS_SAMPLE (which operates directly on samples)
         across_expr: Expression for across-entity aggregation or final computation:
-                    - For ACROSS_SAMPLES: Applied directly to error columns
+                    - For ACROSS_SAMPLE: Applied directly to error columns
                     - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
                     - For WITHIN_SUBJECT/VISIT: Not used (within_expr is final)
 
@@ -64,7 +64,7 @@ class MetricDefine(BaseModel):
 
     name: str = Field(..., description="Metric identifier")
     label: str | None = None
-    type: MetricType = MetricType.ACROSS_SAMPLES
+    type: MetricType = MetricType.ACROSS_SAMPLE
     scope: MetricScope | None = None
     within_expr: list[str | pl.Expr] | None = None
     across_expr: str | pl.Expr | None = None
@@ -255,11 +255,11 @@ class MetricDefine(BaseModel):
             # Handle built-in metrics
             result = self._compile_builtin_expressions()
 
-        # For ACROSS_SAMPLES, move single expression to selection
-        if self.type == MetricType.ACROSS_SAMPLES:
+        # For ACROSS_SAMPLE, move single expression to selection
+        if self.type == MetricType.ACROSS_SAMPLE:
             agg_exprs, sel_expr = result
             if agg_exprs and sel_expr is None:
-                # Move aggregation to selection for ACROSS_SAMPLES
+                # Move aggregation to selection for ACROSS_SAMPLE
                 return [], agg_exprs[0] if len(agg_exprs) == 1 else agg_exprs[0]
 
         return result
@@ -327,7 +327,7 @@ class MetricDefine(BaseModel):
             # If there's a selector, return as aggregation + selection
             return [agg_expr], select_expr
 
-        # No selector: this is likely ACROSS_SAMPLES, return as selection only
+        # No selector: this is likely ACROSS_SAMPLE, return as selection only
         return [], agg_expr
 
     def get_pl_chain(self) -> str:
@@ -401,7 +401,7 @@ class MetricDefine(BaseModel):
                 return "\n".join(lines)
 
         # Determine the chain based on metric type
-        if self.type == MetricType.ACROSS_SAMPLES:
+        if self.type == MetricType.ACROSS_SAMPLE:
             # Simple aggregation across all samples
             if select_expr is not None:
                 chain_lines.append(f"  .select({format_expr(select_expr)})")

@@ -11,7 +11,7 @@ The `type` field in metrics determines the aggregation hierarchy and grouping st
 
 | Type | Scenario |
 |------|----------|
-| `across_samples` | Sample-wide statistics |
+| `across_sample` | Sample-wide statistics |
 | `across_subject` | Per-subject statistics |
 | `within_subject` | Subject-specific metrics |
 | `across_visit` | Per-visit statistics |
@@ -20,13 +20,13 @@ The `type` field in metrics determines the aggregation hierarchy and grouping st
 
 ### Core Metric Types
 
-#### 1. `across_samples` (No Grouping)
+#### 1. `across_sample` (No Grouping)
 **Question:** What is the metric across all data points?
 
 ```yaml
 metrics:
   - name: "mae"
-    type: across_samples
+    type: across_sample
 ```
 
 **Processing:**
@@ -110,7 +110,7 @@ metrics:
 ```yaml
 metrics:
   - name: "n_subject"
-    type: across_samples
+    type: across_sample
     shared_by: model
 ```
 
@@ -125,7 +125,7 @@ metrics:
   # Simple select expression (direct aggregation)
   - name: "ae:pct_threshold"
     label: "Percent of samples with absolute error < 1"
-    type: across_samples
+    type: across_sample
     select:
       expr: (pl.col("absolute_error") < 1).mean() * 100
   
@@ -199,7 +199,7 @@ df.group_by("subject_id").agg(mae)  # First level
 ```yaml
 metrics:
   - name: "total_samples"
-    type: across_samples    # No grouping
+    type: across_sample    # No grouping
 ```
 
 **Processing Flow:**

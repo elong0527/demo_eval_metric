@@ -43,7 +43,7 @@ plan/
 ## Key Implementation Details
 
 ### Metric Types
-- `across_samples`: Aggregate across all samples
+- `across_sample`: Aggregate across all samples
 - `within_subject`: Per-subject metrics
 - `across_subject`: Two-level aggregation (within then across subjects)
 - `within_visit`: Per-visit metrics

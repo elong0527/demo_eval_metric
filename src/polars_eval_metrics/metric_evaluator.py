@@ -300,7 +300,7 @@ class MetricEvaluator:
         result_groups = list(combo.groups.keys()) + list(combo.subgroups.keys())
 
         # Aggregation grouping rules based on metric type
-        if metric_type == MetricType.ACROSS_SAMPLES:
+        if metric_type == MetricType.ACROSS_SAMPLE:
             return (None, result_groups if result_groups else None)
 
         elif metric_type == MetricType.WITHIN_SUBJECT:

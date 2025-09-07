@@ -28,7 +28,7 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
         config = {
             'name': 'mae',
             'label': 'Mean Absolute Error',
-            'type': 'across_samples',
+            'type': 'across_sample',
             'within_expr': 'mae',  # Single built-in metric name
             'across_expr': 'mean'  # Single selector name
         }
@@ -47,7 +47,7 @@ def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     metric_data = {
         "name": config["name"],
         "label": config.get("label", config["name"]),
-        "type": config.get("type", "across_samples"),
+        "type": config.get("type", "across_sample"),
     }
 
     # Handle scope

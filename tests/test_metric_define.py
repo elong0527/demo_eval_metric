@@ -16,7 +16,7 @@ class TestMetricDefineBasic:
 
         assert metric.name == "mae"
         assert metric.label == "mae"  # Auto-generated from name
-        assert metric.type == MetricType.ACROSS_SAMPLES
+        assert metric.type == MetricType.ACROSS_SAMPLE
         assert metric.scope is None
         assert metric.within_expr is None
         assert metric.across_expr is None
@@ -46,13 +46,13 @@ class TestMetricDefineCustomExpressions:
         metric = MetricDefine(
             name="pct_within_1",
             label="% Predictions Within +/- 1",
-            type=MetricType.ACROSS_SAMPLES,
+            type=MetricType.ACROSS_SAMPLE,
             across_expr=(pl.col("absolute_error") < 1).mean() * 100,
         )
 
         assert metric.name == "pct_within_1"
         assert metric.label == "% Predictions Within +/- 1"
-        assert metric.type == MetricType.ACROSS_SAMPLES
+        assert metric.type == MetricType.ACROSS_SAMPLE
         assert metric.across_expr is not None
         assert isinstance(metric.across_expr, pl.Expr)
 
@@ -135,7 +135,7 @@ class TestMetricDefineTypes:
     def test_all_metric_types(self):
         """Test all available metric types."""
         types_to_test = [
-            MetricType.ACROSS_SAMPLES,
+            MetricType.ACROSS_SAMPLE,
             MetricType.ACROSS_SUBJECT,
             MetricType.WITHIN_SUBJECT,
             MetricType.ACROSS_VISIT,
@@ -158,8 +158,8 @@ class TestMetricDefineTypes:
         """Test that string inputs are converted to proper enum types."""
 
         # Test MetricType string conversion
-        m1 = MetricDefine(name="test", type="across_samples")
-        assert m1.type == MetricType.ACROSS_SAMPLES
+        m1 = MetricDefine(name="test", type="across_sample")
+        assert m1.type == MetricType.ACROSS_SAMPLE
 
         m2 = MetricDefine(name="test", type="WITHIN_SUBJECT")  # Different case
         assert m2.type == MetricType.WITHIN_SUBJECT
@@ -235,8 +235,8 @@ class TestMetricDefineRepresentation:
         # Check that key information is in the representation
         assert "name='mae'" in repr_str
         assert (
-            "type=across_samples" in repr_str.lower()
-            or "type=MetricType.ACROSS_SAMPLES" in repr_str
+            "type=across_sample" in repr_str.lower()
+            or "type=MetricType.ACROSS_SAMPLE" in repr_str
         )
 
     def test_str_simple_metric(self):
@@ -256,14 +256,14 @@ class TestMetricDefineRepresentation:
     def test_str_metric_with_details(self):
         """Test __str__ output for metric with type and label."""
         metric = MetricDefine(
-            name="mae", type=MetricType.ACROSS_SAMPLES, label="Mean Absolute Error"
+            name="mae", type=MetricType.ACROSS_SAMPLE, label="Mean Absolute Error"
         )
         str_output = str(metric)
 
         # Check that it shows the basic metric info
         assert "MetricDefine(name=" in str_output
         assert "mae" in str_output
-        assert "type=across_samples" in str_output
+        assert "type=across_sample" in str_output
 
         # Check for label
         assert "Label:" in str_output
@@ -286,14 +286,14 @@ class TestMetricDefineRepresentation:
         metric = MetricDefine(
             name="pct_within_1",
             label="% Within +/- 1",
-            type=MetricType.ACROSS_SAMPLES,
+            type=MetricType.ACROSS_SAMPLE,
             across_expr=(pl.col("absolute_error") < 1).mean() * 100,
         )
         str_output = str(metric)
 
         # Check basic structure (uses single quotes in actual output)
         assert "MetricDefine(name='pct_within_1'" in str_output
-        assert "type=across_samples" in str_output
+        assert "type=across_sample" in str_output
         assert "Label:" in str_output
         assert "% Within +/- 1" in str_output
 

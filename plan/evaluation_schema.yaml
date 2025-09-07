@@ -31,22 +31,22 @@ metrics:
 
   - name: "total_subject"         
     label: "Total Number of Subjects"
-    type: across_samples
+    type: across_sample
     shared_by: all              # Same value used for all models / group / subgroup.
     
   - name: "n_subject"
     label: "Number of Subjects"
-    type: across_samples
+    type: across_sample
     shared_by: model            # Same value used for all models
   
   - name: "n_visit"
     label: "Number of Visits"
-    type: across_samples
+    type: across_sample
     shared_by: model                
 
   - name: "n_sample"
     label: "Number of Samples"
-    type: across_samples
+    type: across_sample
     shared_by: model
 
   - name: "mae:mean"
@@ -74,7 +74,7 @@ metrics:
   
   - name: "ae:pct_threshold" 
     label: "Percent of samples with absolute error < 1"
-    type: across_samples
+    type: across_sample
     select:
       expr: ((pl.col("absolute_error") < 1).mean() * 100).alias('value')
   

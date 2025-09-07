@@ -34,7 +34,7 @@ MetricDefine(name="mae")
 
 1. **Basic Information**:
    - `name='mae'`: The metric identifier used to reference this metric
-   - `type=across_samples`: The default aggregation type that computes across all samples
+   - `type=across_sample`: The default aggregation type that computes across all samples
    - `Label: 'mae'`: The display label (automatically derived from the name)
 
 2. **Summary Expression**:
@@ -44,7 +44,7 @@ MetricDefine(name="mae")
 
 3. **Polars LazyFrame Chain**:
    - Shows the exact operations that will be executed
-   - For `across_samples` metrics, it's a simple `.select()` operation
+   - For `across_sample` metrics, it's a simple `.select()` operation
    - This enables efficient lazy evaluation
 
 ## Available Built-in Metrics
@@ -141,7 +141,7 @@ Let's create a custom metric that calculates the percentage of samples where the
 MetricDefine(
     name="pct_within_1",
     label="% Predictions Within +/- 1",
-    type="across_samples",
+    type="across_sample",
     across_expr=(pl.col('absolute_error') < 1).mean() * 100
 )
 ```

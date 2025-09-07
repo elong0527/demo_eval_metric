@@ -49,9 +49,9 @@ The new API stores all evaluation context at initialization:
 config = {
     'columns': {},
     'metrics': [
-        {'name': 'mae', 'type': 'across_samples', 'label': 'Mean Absolute Error'},
-        {'name': 'mse', 'type': 'across_samples', 'label': 'Mean Squared Error'},
-        {'name': 'bias', 'type': 'across_samples', 'label': 'Bias'}
+        {'name': 'mae', 'type': 'across_sample', 'label': 'Mean Absolute Error'},
+        {'name': 'mse', 'type': 'across_sample', 'label': 'Mean Squared Error'},
+        {'name': 'bias', 'type': 'across_sample', 'label': 'Bias'}
     ]
 }
 
