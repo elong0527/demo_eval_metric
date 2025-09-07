@@ -1,0 +1,22 @@
+{
+  "source_directories": [
+    "src"
+  ],
+  "search_path": [
+    {
+      "site-package": "polars"
+    },
+    {
+      "site-package": "pydantic"
+    }
+  ],
+  "strict": true,
+  "exclude": [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "tests",
+    "docs"
+  ]
+}

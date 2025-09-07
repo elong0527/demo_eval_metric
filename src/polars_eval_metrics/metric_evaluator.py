@@ -17,13 +17,23 @@ from .metric_registry import MetricRegistry
 class MetricEvaluator:
     """Metric evaluation pipeline with complete context at initialization"""
 
+    # Instance attributes with type annotations
+    df_raw: pl.LazyFrame
+    metrics: list[MetricDefine]
+    ground_truth: str
+    estimates: list[str]
+    group_by: list[str]
+    subgroup_by: list[str]
+    filter_expr: pl.Expr | None
+    error_params: dict[str, dict[str, Any]]
+    df: pl.LazyFrame
+
     def __init__(
         self,
         df: pl.DataFrame | pl.LazyFrame,
         metrics: MetricDefine | list[MetricDefine],
         ground_truth: str = "actual",
         estimates: str | list[str] | None = None,
-        registry: MetricRegistry | None = None,
         group_by: list[str] | None = None,
         subgroup_by: list[str] | None = None,
         filter_expr: pl.Expr | None = None,
@@ -37,7 +47,6 @@ class MetricEvaluator:
             metrics: Single metric or list of metrics to evaluate
             ground_truth: Name of ground truth column
             estimates: Single estimate column or list of estimate columns
-            registry: MetricRegistry instance to use. If None, uses default global registry
             group_by: Grouping columns for analysis
             subgroup_by: Additional subgrouping columns (combined with group_by)
             filter_expr: Optional filter expression
@@ -56,9 +65,6 @@ class MetricEvaluator:
         self.subgroup_by = subgroup_by or []
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
-
-        # Store registry parameter for compatibility (not used anymore)
-        self.registry = registry  # Kept for backward compatibility
 
         # Prepare data once with filter
         self.df = self._prepare_base_data()
@@ -98,8 +104,8 @@ class MetricEvaluator:
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
 
-        # Get metric expressions using the evaluator's registry
-        within_exprs, across_expr = metric.compile_expressions(self.registry)
+        # Get metric expressions
+        within_exprs, across_expr = metric.compile_expressions()
 
         # Determine grouping based on metric type and scope
         agg_groups, select_groups = self._get_grouping_columns(
@@ -108,10 +114,8 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            # pyre-ignore
             df_prep,
             within_exprs,
-            # pyre-ignore
             across_expr,
             agg_groups,
             select_groups,
@@ -147,8 +151,8 @@ class MetricEvaluator:
         # Prepare data with error columns
         df_prep = self._prepare_error_columns(self.df, estimate)
 
-        # Get metric expressions using the evaluator's registry
-        within_exprs, across_expr = metric.compile_expressions(self.registry)
+        # Get metric expressions
+        within_exprs, across_expr = metric.compile_expressions()
 
         # Determine grouping based on metric type and scope, but with the subgroup
         # Temporarily modify group_by to include the subgroup for this calculation
@@ -156,7 +160,6 @@ class MetricEvaluator:
         try:
             self.group_by = self.group_by + [subgroup_var]
             agg_groups, select_groups = self._get_grouping_columns(
-                # pyre-ignore
                 metric.type,
                 metric.scope,
                 estimate,
@@ -167,7 +170,6 @@ class MetricEvaluator:
 
         # Build pipeline
         pipeline = self._build_pipeline(
-            # pyre-ignore
             df_prep,
             within_exprs,
             across_expr,
@@ -339,7 +341,7 @@ class MetricEvaluator:
         self,
         df: pl.LazyFrame,
         within_exprs: list[pl.Expr],
-        across_expr: pl.Expr,
+        across_expr: pl.Expr | None,
         agg_groups: list[str] | None,
         select_groups: list[str] | None,
     ) -> pl.LazyFrame:

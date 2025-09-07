@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Self
 
 import polars as pl
-from pydantic import BaseModel, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, field_validator, model_validator, ConfigDict, Field
 
 from .metric_registry import MetricRegistry
 
@@ -62,26 +62,21 @@ class MetricDefine(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # pyre-ignore
-    name: str
+    name: str = Field(..., description="Metric identifier")
     label: str | None = None
     type: MetricType = MetricType.ACROSS_SAMPLES
     scope: MetricScope | None = None
     within_expr: list[str | pl.Expr] | None = None
     across_expr: str | pl.Expr | None = None
-    registry: MetricRegistry | None = None
 
     def __init__(self, **kwargs: object) -> None:
         """Initialize with default label if not provided"""
         if "label" not in kwargs or kwargs["label"] is None:
             kwargs["label"] = kwargs.get("name", "Unknown Metric")
-        # Extract registry if provided, but don't store in model
-        registry = kwargs.pop("registry", None)
+        kwargs.pop("registry", None)
         super().__init__(**kwargs)
-        # Set _registry after Pydantic initialization
-        self._registry = registry
 
-    @field_validator("name")
+    @field_validator("name")  # pyre-ignore[56]
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate metric name is not empty"""
@@ -89,7 +84,7 @@ class MetricDefine(BaseModel):
             raise ValueError("Metric name cannot be empty")
         return v.strip()
 
-    @field_validator("label")
+    @field_validator("label")  # pyre-ignore[56]
     @classmethod
     def validate_label(cls, v: str | None) -> str | None:
         """Validate label is not empty"""
@@ -99,9 +94,9 @@ class MetricDefine(BaseModel):
             raise ValueError("Metric label cannot be empty")
         return v.strip()
 
-    @field_validator("type", mode="before")
+    @field_validator("type", mode="before")  # pyre-ignore[56]
     @classmethod
-    def validate_type(cls, v) -> MetricType:
+    def validate_type(cls, v: object) -> MetricType:
         """Convert string to MetricType enum if needed"""
         if isinstance(v, MetricType):
             return v
@@ -123,9 +118,9 @@ class MetricDefine(BaseModel):
                 )
         raise ValueError(f"type must be a MetricType enum or string, got {type(v)}")
 
-    @field_validator("scope", mode="before")
+    @field_validator("scope", mode="before")  # pyre-ignore[56]
     @classmethod
-    def validate_scope(cls, v) -> MetricScope | None:
+    def validate_scope(cls, v: object) -> MetricScope | None:
         """Convert string to MetricScope enum if needed"""
         if v is None:
             return None
@@ -151,9 +146,9 @@ class MetricDefine(BaseModel):
             f"scope must be a MetricScope enum, string, or None, got {type(v)}"
         )
 
-    @field_validator("within_expr", mode="before")
+    @field_validator("within_expr", mode="before")  # pyre-ignore[56]
     @classmethod
-    def normalize_within_expr(cls, v) -> object:
+    def normalize_within_expr(cls, v: object) -> object:
         """Convert single string to list before validation"""
         if v is None:
             return None
@@ -163,7 +158,7 @@ class MetricDefine(BaseModel):
             return [v]  # Convert single expression to list
         return v  # Already a list or something else
 
-    @field_validator("within_expr")
+    @field_validator("within_expr")  # pyre-ignore[56]
     @classmethod
     def validate_within_expr(
         cls, v: list[str | pl.Expr] | None
@@ -193,7 +188,7 @@ class MetricDefine(BaseModel):
 
         return v
 
-    @field_validator("across_expr")
+    @field_validator("across_expr")  # pyre-ignore[56]
     @classmethod
     def validate_across_expr(cls, v: str | pl.Expr | None) -> str | pl.Expr | None:
         """Validate across-entity expression - can be built-in selector name or Polars expression"""
@@ -213,7 +208,7 @@ class MetricDefine(BaseModel):
             )
         return v
 
-    @model_validator(mode="after")
+    @model_validator(mode="after")  # pyre-ignore[56]
     def validate_expressions(self) -> Self:
         """Validate expression combinations"""
         is_custom = self.within_expr is not None or self.across_expr is not None
@@ -246,14 +241,9 @@ class MetricDefine(BaseModel):
 
         return self
 
-    def compile_expressions(
-        self, registry: MetricRegistry | None = None
-    ) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def compile_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
         """
         Compile this metric's expressions to Polars expressions.
-
-        Args:
-            registry: Optional, kept for backward compatibility (not used).
 
         Returns:
             Tuple of (aggregation_expressions, selection_expression)
@@ -281,7 +271,7 @@ class MetricDefine(BaseModel):
         # Handle within_expr - always a list after normalization
         if self.within_expr is not None:
             # List - resolve each item
-            for item in self.within_expr:
+            for item in self.within_expr or []:
                 if isinstance(item, str):
                     # Built-in metric name
                     try:
@@ -340,17 +330,14 @@ class MetricDefine(BaseModel):
         # No selector: this is likely ACROSS_SAMPLES, return as selection only
         return [], agg_expr
 
-    def get_pl_chain(self, registry: MetricRegistry | None = None) -> str:
+    def get_pl_chain(self) -> str:
         """
         Get a string representation of the Polars LazyFrame chain for this metric.
-
-        Args:
-            registry: Optional registry to use for resolving expressions.
 
         Returns:
             String showing the LazyFrame operations that would be executed
         """
-        agg_exprs, select_expr = self.compile_expressions(registry)
+        agg_exprs, select_expr = self.compile_expressions()
 
         chain_lines = ["(", "  pl.LazyFrame"]
 
@@ -368,7 +355,7 @@ class MetricDefine(BaseModel):
             cleaned = cleaned.replace("[(", "(").replace(")]", ")")
             return cleaned
 
-        def format_expr(expr, max_width=70) -> str:
+        def format_expr(expr: object, max_width: int = 70) -> str:
             """Format a single expression with text wrapping"""
             expr_str = clean_expr(str(expr))
 
@@ -386,16 +373,19 @@ class MetricDefine(BaseModel):
             )
 
         # Helper to format multiple expressions with proper indentation
-        def format_exprs(exprs, indent="    ") -> str:
-            if len(exprs) == 1:
-                return format_expr(exprs[0])
+        def format_exprs(exprs: object, indent: str = "    ") -> str:
+            if not isinstance(exprs, list):
+                return str(exprs)
+            exprs_list: list[pl.Expr] = exprs
+            if len(exprs_list) == 1:
+                return format_expr(exprs_list[0])
             else:
                 # Format as multi-line list for readability
                 lines = ["["]
-                for i, expr in enumerate(exprs):
+                for i, expr in enumerate(exprs_list):
                     formatted = format_expr(expr)
                     # Add comma except for last item
-                    comma = "," if i < len(exprs) - 1 else ""
+                    comma = "," if i < len(exprs_list) - 1 else ""
 
                     # Handle multi-line expressions
                     expr_lines = formatted.split("\n")

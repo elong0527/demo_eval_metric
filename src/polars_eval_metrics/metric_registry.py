@@ -64,12 +64,11 @@ class MetricRegistry:
 
     @classmethod
     def get_error(
-        # pyre-ignore
         cls,
         name: str,
         estimate: str,
         ground_truth: str,
-        **params,
+        **params: Any,
     ) -> pl.Expr:
         """
         Get an error expression by name.
