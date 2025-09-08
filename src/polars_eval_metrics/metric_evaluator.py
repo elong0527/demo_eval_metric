@@ -342,6 +342,7 @@ class MetricEvaluator:
 
         # Second-level aggregation or final selection
         if select_groups is not None:
+            # True two-level aggregation case
             if across_expr is not None:
                 value_expr = across_expr.alias("value").cast(pl.Float64)
             elif within_exprs:
@@ -355,8 +356,14 @@ class MetricEvaluator:
                 pipeline = pipeline.select(value_expr)
 
         elif across_expr is not None:
-            # Direct application of across expression
-            if agg_groups:
+            # Apply across expression
+            # For two-level metrics (when within_exprs were already applied),
+            # don't group by agg_groups again - aggregate across all
+            if within_exprs:
+                # Two-level case: first level already applied, now aggregate across
+                pipeline = pipeline.select(across_expr.alias("value").cast(pl.Float64))
+            elif agg_groups:
+                # Single-level case: apply expression with grouping
                 pipeline = pipeline.group_by(agg_groups).agg(
                     across_expr.alias("value").cast(pl.Float64)
                 )

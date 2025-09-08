@@ -240,8 +240,8 @@ class TestMetricEvaluatorTypes:
 
     def test_across_subject(self, hierarchical_data):
         """Test ACROSS_SUBJECT - within subjects then across"""
-        # Use simple mae metric name which gives per-subject aggregation
-        metric = MetricDefine(name="mae", type="across_subject")
+        # Use proper hierarchical metric that does within-subject then across-subject aggregation
+        metric = MetricDefine(name="mae:mean", type="across_subject")
 
         evaluator = MetricEvaluator(
             df=hierarchical_data,
@@ -251,9 +251,10 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 3  # Per subject results
-        assert set(result["subject_id"].unique()) == {1, 2, 3}
+        assert len(result) == 1  # Single aggregated result across subjects
+        assert "subject_id" not in result.columns  # No per-subject breakdown
         assert all(result["metric_type"] == "across_subject")
+        assert result["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_within_visit(self, hierarchical_data):
         """Test WITHIN_VISIT - per visit aggregation"""
@@ -273,8 +274,8 @@ class TestMetricEvaluatorTypes:
 
     def test_across_visit(self, hierarchical_data):
         """Test ACROSS_VISIT - within visits then across"""
-        # Use simple mae metric name which gives per-visit results
-        metric = MetricDefine(name="mae", type="across_visit")
+        # Use proper hierarchical metric that does within-visit then across-visit aggregation
+        metric = MetricDefine(name="mae:mean", type="across_visit")
 
         evaluator = MetricEvaluator(
             df=hierarchical_data,
@@ -284,10 +285,11 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 9  # Per visit results (3 subjects × 3 visits)
-        assert set(result["subject_id"].unique()) == {1, 2, 3}
-        assert set(result["visit_id"].unique()) == {1, 2, 3}
+        assert len(result) == 1  # Single aggregated result across visits
+        assert "subject_id" not in result.columns  # No per-subject breakdown
+        assert "visit_id" not in result.columns  # No per-visit breakdown
         assert all(result["metric_type"] == "across_visit")
+        assert result["value"][0] > 0  # Should be a reasonable MAE value
 
 
 class TestMetricEvaluatorGrouping:
