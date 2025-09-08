@@ -5,7 +5,6 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
-
 from typing import Any
 
 # pyre-strict
@@ -132,37 +131,47 @@ class MetricEvaluator:
         self, metrics: list[MetricDefine], estimates: list[str]
     ) -> pl.LazyFrame:
         """Vectorized evaluation using single Polars group_by operations"""
-        
+
         # Step 1: Prepare data in long format with all estimates
         df_long = self._prepare_long_format_data(estimates)
-        
+
         # Step 2: Generate all error columns for the melted data
         df_with_errors = self._add_error_columns_vectorized(df_long)
-        
+
         # Step 3: Handle marginal subgroup analysis if needed
         if self.subgroup_by:
-            return self._evaluate_with_marginal_subgroups(df_with_errors, metrics, estimates)
+            return self._evaluate_with_marginal_subgroups(
+                df_with_errors, metrics, estimates
+            )
         else:
             return self._evaluate_without_subgroups(df_with_errors, metrics, estimates)
 
     def _evaluate_without_subgroups(
-        self, df_with_errors: pl.LazyFrame, metrics: list[MetricDefine], estimates: list[str]
+        self,
+        df_with_errors: pl.LazyFrame,
+        metrics: list[MetricDefine],
+        estimates: list[str],
     ) -> pl.LazyFrame:
         """Evaluate metrics without subgroup analysis"""
         results = []
         for metric in metrics:
-            metric_result = self._evaluate_metric_vectorized(df_with_errors, metric, estimates)
+            metric_result = self._evaluate_metric_vectorized(
+                df_with_errors, metric, estimates
+            )
             results.append(metric_result)
-        
+
         # Combine all metric results
         return pl.concat(results, how="diagonal")
 
     def _evaluate_with_marginal_subgroups(
-        self, df_with_errors: pl.LazyFrame, metrics: list[MetricDefine], estimates: list[str]
+        self,
+        df_with_errors: pl.LazyFrame,
+        metrics: list[MetricDefine],
+        estimates: list[str],
     ) -> pl.LazyFrame:
         """Evaluate metrics with marginal subgroup analysis"""
         results = []
-        
+
         # For each metric, evaluate across all marginal subgroup combinations
         for metric in metrics:
             # For each subgroup variable, create separate analyses
@@ -170,54 +179,60 @@ class MetricEvaluator:
                 # Temporarily set subgroup_by to single column for this analysis
                 original_subgroup_by = self.subgroup_by
                 self.subgroup_by = [subgroup_col]
-                
+
                 try:
                     # Evaluate metric for this single subgroup
-                    metric_result = self._evaluate_metric_vectorized(df_with_errors, metric, estimates)
-                    
+                    metric_result = self._evaluate_metric_vectorized(
+                        df_with_errors, metric, estimates
+                    )
+
                     # Add subgroup metadata columns
-                    metric_result = metric_result.with_columns([
-                        pl.lit(subgroup_col).alias("subgroup_name"),
-                        pl.col(subgroup_col).cast(pl.Utf8).alias("subgroup_value")
-                    ])
-                    
+                    metric_result = metric_result.with_columns(
+                        [
+                            pl.lit(subgroup_col).alias("subgroup_name"),
+                            pl.col(subgroup_col).cast(pl.Utf8).alias("subgroup_value"),
+                        ]
+                    )
+
                     # Remove the original subgroup column to avoid duplication
                     available_cols = metric_result.collect_schema().names()
                     if subgroup_col in available_cols:
-                        cols_to_keep = [col for col in available_cols if col != subgroup_col]
+                        cols_to_keep = [
+                            col for col in available_cols if col != subgroup_col
+                        ]
                         metric_result = metric_result.select(cols_to_keep)
-                    
+
                     results.append(metric_result)
-                    
+
                 finally:
                     # Restore original subgroup_by
                     self.subgroup_by = original_subgroup_by
-        
+
         # Combine all results
         return pl.concat(results, how="diagonal")
 
     def _prepare_long_format_data(self, estimates: list[str]) -> pl.LazyFrame:
         """Reshape data from wide to long format for vectorized processing"""
-        
+
         # Get all columns except estimates to preserve in melt
         id_vars = []
         for col in self.df.collect_schema().names():
             if col not in estimates:
                 id_vars.append(col)
-        
+
         # Unpivot estimates into long format
         df_long = self.df.unpivot(
             index=id_vars,
-            on=estimates, 
+            on=estimates,
             variable_name="estimate_name",
-            value_name="estimate_value"
+            value_name="estimate_value",
         )
-        
+
         return df_long
 
     def _add_error_columns_vectorized(self, df_long: pl.LazyFrame) -> pl.LazyFrame:
         """Add error columns for the long-format data"""
-        
+
         # Generate error expressions for the vectorized format
         # Use 'estimate_value' as the estimate column and ground_truth as before
         error_expressions = MetricRegistry.generate_error_columns(
@@ -226,39 +241,41 @@ class MetricEvaluator:
             error_types=None,
             error_params=self.error_params,
         )
-        
+
         return df_long.with_columns(error_expressions)
 
     def _evaluate_metric_vectorized(
         self, df_with_errors: pl.LazyFrame, metric: MetricDefine, estimates: list[str]
     ) -> pl.LazyFrame:
         """Evaluate a single metric using vectorized operations"""
-        
+
         # Determine grouping columns based on metric scope
         group_cols = self._get_vectorized_grouping_columns(metric)
-        
+
         # Compile metric expressions
         within_exprs, across_expr = metric.compile_expressions()
-        
+
         # Apply metric-specific filtering if needed
         df_filtered = self._apply_metric_scope_filter(df_with_errors, metric, estimates)
-        
+
         # Perform the evaluation with appropriate grouping
         if metric.type == MetricType.ACROSS_SAMPLE:
             if across_expr is None:
-                raise ValueError(f"ACROSS_SAMPLE metric {metric.name} requires across_expr")
-                
+                raise ValueError(
+                    f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
+                )
+
             if group_cols:
                 result = df_filtered.group_by(group_cols).agg(
                     across_expr.alias("value").cast(pl.Float64)
                 )
             else:
                 result = df_filtered.select(across_expr.alias("value").cast(pl.Float64))
-        
+
         elif metric.type in [MetricType.WITHIN_SUBJECT, MetricType.WITHIN_VISIT]:
             # Within-entity aggregation
             entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-            
+
             # Use the appropriate expression for within-entity aggregation
             if within_exprs:
                 agg_expr = within_exprs[0].alias("value").cast(pl.Float64)
@@ -266,70 +283,76 @@ class MetricEvaluator:
                 agg_expr = across_expr.alias("value").cast(pl.Float64)
             else:
                 raise ValueError(f"No valid expression for metric {metric.name}")
-                
+
             result = df_filtered.group_by(entity_groups).agg(agg_expr)
-        
+
         elif metric.type in [MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT]:
             # Two-level aggregation: within entities, then across
             entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-            
+
             # First level: within entities
             if within_exprs:
                 first_level_expr = within_exprs[0].alias("intermediate_value")
             elif across_expr is not None:
-                first_level_expr = across_expr.alias("intermediate_value") 
+                first_level_expr = across_expr.alias("intermediate_value")
             else:
-                raise ValueError(f"No valid expression for first level of metric {metric.name}")
-                
+                raise ValueError(
+                    f"No valid expression for first level of metric {metric.name}"
+                )
+
             intermediate = df_filtered.group_by(entity_groups).agg(first_level_expr)
-            
-            # Second level: across entities  
+
+            # Second level: across entities
             if across_expr is not None and within_exprs:
                 # True two-level case - substitute 'value' with 'intermediate_value' in the expression
                 # For now, use the across expression directly but this may need column name mapping
                 # TODO: More sophisticated expression rewriting to handle column references
-                second_level_expr = pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
+                second_level_expr = (
+                    pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
+                )
             else:
                 # Default aggregation across entities
-                second_level_expr = pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
-            
+                second_level_expr = (
+                    pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
+                )
+
             if group_cols:
                 result = intermediate.group_by(group_cols).agg(second_level_expr)
             else:
                 result = intermediate.select(second_level_expr)
-        
+
         else:
             raise ValueError(f"Unknown metric type: {metric.type}")
-        
+
         # Add metadata columns
         return self._add_metadata_vectorized(result, metric)
 
     def _get_vectorized_grouping_columns(self, metric: MetricDefine) -> list[str]:
         """Get grouping columns for vectorized evaluation based on metric scope"""
-        
+
         group_cols = []
-        
+
         # Handle scope-based grouping
         if metric.scope == MetricScope.GLOBAL:
             # Global: only subgroups
             group_cols.extend(self.subgroup_by)
-        
+
         elif metric.scope == MetricScope.MODEL:
-            # Model: estimate + subgroups  
+            # Model: estimate + subgroups
             group_cols.append("estimate_name")
             group_cols.extend(self.subgroup_by)
-        
+
         elif metric.scope == MetricScope.GROUP:
             # Group: groups + subgroups (no estimate separation)
             group_cols.extend(self.group_by)
             group_cols.extend(self.subgroup_by)
-        
+
         else:
             # Default: estimate + groups + subgroups
             group_cols.append("estimate_name")
-            group_cols.extend(self.group_by) 
+            group_cols.extend(self.group_by)
             group_cols.extend(self.subgroup_by)
-        
+
         return group_cols
 
     def _apply_metric_scope_filter(
@@ -350,24 +373,28 @@ class MetricEvaluator:
         else:
             return []
 
-    def _add_metadata_vectorized(self, result: pl.LazyFrame, metric: MetricDefine) -> pl.LazyFrame:
+    def _add_metadata_vectorized(
+        self, result: pl.LazyFrame, metric: MetricDefine
+    ) -> pl.LazyFrame:
         """Add metadata columns to vectorized result"""
-        
+
         metadata = [
             pl.lit(metric.name).alias("metric"),
-            pl.lit(metric.label or metric.name).alias("label"), 
+            pl.lit(metric.label or metric.name).alias("label"),
             pl.lit(metric.type.value).alias("metric_type"),
             pl.lit(metric.scope.value if metric.scope else None).alias("scope"),
         ]
-        
+
         # Rename estimate_name to estimate for compatibility
         result_with_metadata = result.with_columns(metadata)
-        
+
         # Check if estimate_name column exists and rename it
         schema = result_with_metadata.collect_schema()
         if "estimate_name" in schema.names():
-            result_with_metadata = result_with_metadata.rename({"estimate_name": "estimate"})
-        
+            result_with_metadata = result_with_metadata.rename(
+                {"estimate_name": "estimate"}
+            )
+
         return result_with_metadata
 
     def _format_result(self, combined: pl.LazyFrame) -> pl.LazyFrame:
