@@ -8,6 +8,8 @@ using Polars LazyFrames with comprehensive support for scopes, groups, and subgr
 from typing import Any
 from dataclasses import dataclass
 
+# pyre-strict
+
 import polars as pl
 
 from .metric_define import MetricDefine, MetricScope, MetricType
@@ -211,8 +213,11 @@ class MetricEvaluator:
         if not self.group_by:
             return [{}]  # Single empty combination
 
-        # Get unique combinations of group values
-        unique_groups = self.df.select(self.group_by).unique().collect()
+        # Get unique combinations of group values - keep lazy until needed
+        unique_groups_lazy = self.df.select(self.group_by).unique()
+
+        # Only collect when we need to iterate (unavoidable for combination generation)
+        unique_groups = unique_groups_lazy.collect()
 
         combinations = []
         for row in unique_groups.iter_rows(named=True):
@@ -229,7 +234,11 @@ class MetricEvaluator:
 
         # For marginal analysis, generate one combination per subgroup variable per value
         for subgroup_col in self.subgroup_by:
-            unique_values = self.df.select(subgroup_col).unique().collect()
+            # Keep lazy until we need to iterate
+            unique_values_lazy = self.df.select(subgroup_col).unique()
+
+            # Only collect when we need to iterate (unavoidable for combination generation)
+            unique_values = unique_values_lazy.collect()
 
             for row in unique_values.iter_rows(named=True):
                 # Create combination with only this subgroup variable
