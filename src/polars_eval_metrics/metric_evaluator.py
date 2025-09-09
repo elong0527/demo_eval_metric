@@ -130,22 +130,36 @@ class MetricEvaluator:
         if group_data.is_empty():
             return result
 
-        # Create group combination column
+        # Pivot group data to get JSON-like column names
+        # Add a dummy index column for pivoting
+        group_data_with_index = group_data.with_columns(pl.lit(1).alias("_dummy_index"))
+        
         if self.group_by:
-            group_expr = pl.concat_str(
-                [pl.col(col).cast(pl.Utf8) for col in self.group_by], separator="_"
+            # Use the group_by columns plus label for pivot
+            pivot_cols = self.group_by + ["label"]
+            group_pivoted = group_data_with_index.pivot(
+                on=pivot_cols,
+                values="value",
+                index=["_dummy_index"],
+                aggregate_function="first"  # Take first value if duplicates
             )
-            group_data = group_data.with_columns(group_expr.alias("group_combination"))
         else:
-            group_data = group_data.with_columns(
-                pl.lit("ALL").alias("group_combination")
+            # Pivot by label only when no group_by
+            group_pivoted = group_data_with_index.pivot(
+                on="label",
+                values="value",
+                index=["_dummy_index"],
+                aggregate_function="first"
             )
+        
+        # Remove the dummy index column
+        group_pivoted = group_pivoted.drop("_dummy_index")
 
-        # Add group x metric combinations
-        for row in group_data.iter_rows(named=True):
-            col_name = f"{row['group_combination']}_{row['label']}"
-            value = row["value"]
-            result = result.with_columns(pl.lit(value).alias(col_name))
+        # Broadcast the pivoted columns to all rows in result
+        for col in group_pivoted.columns:
+            result = result.with_columns(
+                pl.lit(group_pivoted[col][0]).alias(col)
+            )
 
         return result
 
@@ -269,17 +283,14 @@ class MetricEvaluator:
 
         # 1. Default scope: model x metric columns
         if not default_data.is_empty():
-            pivot_col = (
-                pl.col("estimate").cast(pl.Utf8) + "_" + pl.col("label").cast(pl.Utf8)
-            ).alias("pivot_col")
-            default_pivot = default_data.with_columns(pivot_col)
+            # Use multiple columns directly in pivot
             if index_cols:
-                default_result = default_pivot.pivot(
-                    on="pivot_col", values="value", index=index_cols
+                default_result = default_data.pivot(
+                    on=["estimate", "label"], values="value", index=index_cols
                 )
             else:
-                default_result = default_pivot.pivot(
-                    on="pivot_col", values="value", index=pl.lit(1).alias("_row")
+                default_result = default_data.pivot(
+                    on=["estimate", "label"], values="value", index=pl.lit(1).alias("_row")
                 )
                 if "_row" in default_result.columns:
                     default_result = default_result.drop("_row")
@@ -367,19 +378,19 @@ class MetricEvaluator:
 
         # Create pivot result from model/default data
         if not model_default_data.is_empty():
-            # Create group x metric columns
+            # Use multiple columns directly in pivot
             if self.group_by:
-                group_combo = pl.concat_str(
-                    [pl.col(col).cast(pl.Utf8) for col in self.group_by], separator="_"
-                )
+                pivot_on_cols = self.group_by + ["metric"]
             else:
-                group_combo = pl.lit("ALL")
-
-            pivot_col = (group_combo + "_" + pl.col("metric").cast(pl.Utf8)).alias(
-                "pivot_col"
+                # Add a constant column for pivoting when no group_by
+                model_default_data = model_default_data.with_columns(
+                    pl.lit("ALL").alias("_group")
+                )
+                pivot_on_cols = ["_group", "metric"]
+            
+            result = model_default_data.pivot(
+                on=pivot_on_cols, values="value", index=index_cols
             )
-            pivot_df = model_default_data.with_columns(pivot_col)
-            result = pivot_df.pivot(on="pivot_col", values="value", index=index_cols)
         else:
             # Create empty result with index columns
             result = pl.DataFrame().with_columns(
