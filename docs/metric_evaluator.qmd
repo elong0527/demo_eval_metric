@@ -17,18 +17,10 @@ It handles hierarchical aggregations, grouping, filtering, and manages the entir
 ```{python}
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricType
+from data_generator import create_clinical_trial_data
 
-# Create sample data
-data = pl.DataFrame({
-    "subject_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-    "visit_id": [1, 2, 3, 1, 2, 3, 1, 2, 3],
-    "treatment": ["A", "A", "A", "A", "A", "A", "B", "B", "B"],
-    "age_group": ["young", "young", "young", "middle", "middle", "middle", "senior", "senior", "senior"],
-    "sex": ["M", "M", "M", "F", "F", "F", "M", "M", "M"],
-    "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
-    "model_1": [8, 22, 28, 18, 24, 38, None, 19, 35],
-    "model_2": [12, None, None, 13, 27, 33, 14, 25, 29],
-})
+# Create sample data using shared generator
+data = create_clinical_trial_data()
 
 data
 ```
