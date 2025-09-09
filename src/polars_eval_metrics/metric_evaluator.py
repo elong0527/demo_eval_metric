@@ -380,7 +380,7 @@ class MetricEvaluator:
 
         metadata = [
             pl.lit(metric.name).alias("metric"),
-            pl.lit(metric.label or metric.name).alias("label"),
+            pl.lit(metric.label).alias("label"),
             pl.lit(metric.type.value).alias("metric_type"),
             pl.lit(metric.scope.value if metric.scope else None).alias("scope"),
         ]
@@ -405,6 +405,37 @@ class MetricEvaluator:
             available_columns = combined.collect_schema().names()
         except Exception:
             available_columns = combined.limit(1).collect().columns
+
+        # Extract ordered values for enum columns from definitions
+        ordered_metrics = []
+        ordered_labels = []
+        for metric in self.metrics:
+            if metric.name not in ordered_metrics:
+                ordered_metrics.append(metric.name)
+            label = metric.label
+            if label not in ordered_labels:
+                ordered_labels.append(label)
+        
+        # Convert metric column to enum with definition-based ordering
+        if "metric" in available_columns and ordered_metrics:
+            metric_enum = pl.Enum(ordered_metrics)
+            combined = combined.with_columns(
+                pl.col("metric").cast(metric_enum)
+            )
+        
+        # Convert label column to enum with definition-based ordering
+        if "label" in available_columns and ordered_labels:
+            label_enum = pl.Enum(ordered_labels)
+            combined = combined.with_columns(
+                pl.col("label").cast(label_enum)
+            )
+        
+        # Convert estimate column to enum with input-based ordering
+        if "estimate" in available_columns and self.estimates:
+            estimate_enum = pl.Enum(self.estimates)
+            combined = combined.with_columns(
+                pl.col("estimate").cast(estimate_enum)
+            )
 
         # Define column order
         column_order = []
@@ -432,7 +463,7 @@ class MetricEvaluator:
 
         # Sort columns
         sort_cols = []
-        potential_sort_cols = self.group_by + ["subgroup_name", "metric"]
+        potential_sort_cols = self.group_by + ["subgroup_name", "label"]
         if "estimate" in available_columns:
             potential_sort_cols.append("estimate")
 
