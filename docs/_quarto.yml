@@ -18,6 +18,8 @@ website:
             text: MetricDefine
           - href: metric_evaluator.qmd
             text: MetricEvaluator
+          - href: metric_pivot.qmd
+            text: MetricPivot
       - href: coverage/index.html
         text: Coverage
     right:

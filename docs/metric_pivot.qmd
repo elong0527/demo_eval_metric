@@ -1,0 +1,148 @@
+---
+title: "Metric Pivot Functionality"
+description: "Transform long-format evaluation results to wide-format tables"
+---
+
+# Metric Pivot Functionality
+
+The `MetricEvaluator.pivot()` method transforms long-format evaluation results into wide-format tables, making them suitable for reporting, analysis, and visualization. This guide demonstrates the pivot functionality across different scenarios.
+
+## Overview
+
+The pivot method supports:
+- **Multiple scope types**: GLOBAL, MODEL, GROUP, DEFAULT
+- **Flexible column naming**: Descriptive or compact formats
+- **Subgroup compatibility**: Works with single and multiple subgroup variables
+- **Custom indexing**: Add additional columns to the pivot index
+
+## Basic Setup
+
+```{python}
+import polars as pl
+from polars_eval_metrics import MetricDefine, MetricEvaluator
+
+# Create sample dataset with varied prediction patterns
+df = pl.DataFrame({
+    "subject_id": list(range(1, 21)) * 2,
+    "treatment": (["A"] * 10 + ["B"] * 10) * 2,
+    "region": (["North"] * 5 + ["South"] * 5 + ["North"] * 5 + ["South"] * 5) * 2,
+    "age_group": (["Young", "Old"] * 10) * 2,
+    "sex": (["M", "F"] * 20),
+    "actual": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55] * 4,
+    # Model A: Generally accurate with small errors
+    "model_a": [10.5, 14.8, 19.2, 25.3, 29.7, 35.1, 39.9, 44.6, 50.4, 54.2] * 4,
+    # Model B: Less accurate with some larger errors, especially for higher values  
+    "model_b": [9.2, 16.1, 22.5, 23.8, 32.4, 37.8, 38.1, 48.2, 47.5, 58.9] * 4,
+})
+
+df
+```
+
+## Case 1: Pivot by Group (without subgroups)
+
+When pivoting by groups, we get one column per group combination for each metric.
+
+```{python}
+# Define GROUP scope metrics
+group_metrics = [
+    MetricDefine(name="n_subject", label="Total Enrolled Subjects", scope="global"),
+    MetricDefine(name="n_subject", label="Number of Subjects", scope="group"),
+    MetricDefine(name="mae", label="MAE"),
+    MetricDefine(name="rmse", label="RMSE")
+]
+
+# Create evaluator with group_by
+evaluator_group = MetricEvaluator(
+    df=df,
+    metrics=group_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment", "region"]
+)
+
+# Get long format results
+evaluator_group.evaluate()
+```
+
+```{python}
+# Pivot to wide format with group combinations as rows
+evaluator_group.pivot_by_group()
+```
+
+## Case 2: Pivot by Group (with subgroups)
+
+Adding subgroups creates separate analyses for each subgroup variable, with multiple rows in the wide format.
+
+```{python}
+# Same GROUP scope metrics with subgroups
+evaluator_group_sub = MetricEvaluator(
+    df=df,
+    metrics=group_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment", "region"],
+    subgroup_by=["age_group"]
+)
+
+evaluator_group_sub.pivot_by_group()
+```
+
+## Case 3: Pivot by Model (without subgroups)
+
+MODEL scope creates one column per model for each metric.
+
+```{python}
+evaluator_model = MetricEvaluator(
+    df=df,
+    metrics=group_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment", "region"]
+)
+
+evaluator_model.evaluate()
+```
+
+```{python}
+# Pivot to wide format for model comparison
+evaluator_model.pivot_by_model()
+```
+
+## Case 4: Pivot by Model (with subgroups)
+
+Adding subgroups to MODEL scope creates the same model-based columns but with separate rows for each subgroup.
+
+```{python}
+# Same MODEL scope metrics with subgroups
+evaluator_model_sub = MetricEvaluator(
+    df=df,
+    metrics=group_metrics,
+    ground_truth="actual",
+    estimates=["model_a", "model_b"],
+    group_by=["treatment", "region"],
+    subgroup_by=["age_group"]
+)
+
+# Pivot to wide format for model comparison with subgroups
+evaluator_model_sub.pivot_by_model()
+```
+
+## Key Points
+
+The pivot functionality transforms long-format results to wide-format tables:
+
+- **GROUP scope with `index_cols`**: Creates rows for each group combination, columns for metrics
+- **MODEL scope with `index_cols`**: Creates rows for each group combination, columns for models × metrics  
+- **Subgroups**: Add `subgroup_by` to stratify analysis by demographic variables
+- **Clean column names**: Uses simple metric/model names when using default Polars pivot conventions
+
+## Summary
+
+The pivot functionality provides a clean way to transform evaluation results:
+
+- **GROUP scope**: Metrics as columns, group combinations as rows
+- **MODEL scope**: Model×metric combinations as columns, group combinations as rows
+- **Subgroup support**: Separate analysis for each demographic subgroup
+- **Clean output**: Simple column names using default Polars conventions
+
+Perfect for creating summary tables, analysis reports, and data ready for visualization or export.
