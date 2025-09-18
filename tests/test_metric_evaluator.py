@@ -291,6 +291,116 @@ class TestMetricEvaluatorTypes:
         assert all(result["metric_type"] == "across_visit")
         assert result["value"][0] > 0  # Should be a reasonable MAE value
 
+    def test_across_visit_custom_across_expr(self, hierarchical_data):
+        """Test ACROSS_VISIT with custom across_expr (count, min, max, etc.)"""
+        metrics = [
+            MetricDefine(
+                name="mae_count",
+                label="Count of Visit MAEs",
+                type="across_visit",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").count()
+            ),
+            MetricDefine(
+                name="mae_min",
+                label="Min Visit MAE",
+                type="across_visit",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").min()
+            ),
+            MetricDefine(
+                name="mae_max",
+                label="Max Visit MAE",
+                type="across_visit",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").max()
+            ),
+            MetricDefine(
+                name="mae_sum",
+                label="Sum of Visit MAEs",
+                type="across_visit",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").sum()
+            ),
+        ]
+
+        evaluator = MetricEvaluator(
+            df=hierarchical_data,
+            metrics=metrics,
+            ground_truth="actual",
+            estimates=["model_a"],
+        )
+
+        result = evaluator.evaluate()
+
+        # Check we have all metrics
+        assert len(result) == 4
+        assert set(result["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
+
+        # Check count equals number of visits (9 = 3 subjects × 3 visits)
+        count_result = result.filter(pl.col("metric") == "mae_count")
+        assert count_result["value"][0] == 9.0
+
+        # Check min < max
+        min_result = result.filter(pl.col("metric") == "mae_min")
+        max_result = result.filter(pl.col("metric") == "mae_max")
+        assert min_result["value"][0] < max_result["value"][0]
+
+        # Check sum is positive
+        sum_result = result.filter(pl.col("metric") == "mae_sum")
+        assert sum_result["value"][0] > 0
+
+    def test_across_subject_custom_across_expr(self, hierarchical_data):
+        """Test ACROSS_SUBJECT with custom across_expr (count, median, std, etc.)"""
+        metrics = [
+            MetricDefine(
+                name="mae_count_subj",
+                label="Count of Subject MAEs",
+                type="across_subject",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").count()
+            ),
+            MetricDefine(
+                name="mae_median_subj",
+                label="Median Subject MAE",
+                type="across_subject",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").median()
+            ),
+            MetricDefine(
+                name="mae_std_subj",
+                label="Std Dev of Subject MAEs",
+                type="across_subject",
+                within_expr=pl.col("absolute_error").mean(),
+                across_expr=pl.col("value").std()
+            ),
+        ]
+
+        evaluator = MetricEvaluator(
+            df=hierarchical_data,
+            metrics=metrics,
+            ground_truth="actual",
+            estimates=["model_a"],
+        )
+
+        result = evaluator.evaluate()
+
+        # Check we have all metrics
+        assert len(result) == 3
+        assert set(result["metric"]) == {"mae_count_subj", "mae_median_subj", "mae_std_subj"}
+
+        # Check count equals number of subjects (3)
+        count_result = result.filter(pl.col("metric") == "mae_count_subj")
+        assert count_result["value"][0] == 3.0
+
+        # Check median is reasonable (should be positive)
+        median_result = result.filter(pl.col("metric") == "mae_median_subj")
+        assert median_result["value"][0] > 0
+
+        # Check std is non-negative
+        std_result = result.filter(pl.col("metric") == "mae_std_subj")
+        assert std_result["value"][0] >= 0
+
 
 class TestMetricEvaluatorGrouping:
     """Test grouping and subgrouping functionality"""
