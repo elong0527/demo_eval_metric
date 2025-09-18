@@ -299,28 +299,28 @@ class TestMetricEvaluatorTypes:
                 label="Count of Visit MAEs",
                 type="across_visit",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").count()
+                across_expr=pl.col("value").count(),
             ),
             MetricDefine(
                 name="mae_min",
                 label="Min Visit MAE",
                 type="across_visit",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").min()
+                across_expr=pl.col("value").min(),
             ),
             MetricDefine(
                 name="mae_max",
                 label="Max Visit MAE",
                 type="across_visit",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").max()
+                across_expr=pl.col("value").max(),
             ),
             MetricDefine(
                 name="mae_sum",
                 label="Sum of Visit MAEs",
                 type="across_visit",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").sum()
+                across_expr=pl.col("value").sum(),
             ),
         ]
 
@@ -358,21 +358,21 @@ class TestMetricEvaluatorTypes:
                 label="Count of Subject MAEs",
                 type="across_subject",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").count()
+                across_expr=pl.col("value").count(),
             ),
             MetricDefine(
                 name="mae_median_subj",
                 label="Median Subject MAE",
                 type="across_subject",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").median()
+                across_expr=pl.col("value").median(),
             ),
             MetricDefine(
                 name="mae_std_subj",
                 label="Std Dev of Subject MAEs",
                 type="across_subject",
                 within_expr=pl.col("absolute_error").mean(),
-                across_expr=pl.col("value").std()
+                across_expr=pl.col("value").std(),
             ),
         ]
 
@@ -387,7 +387,11 @@ class TestMetricEvaluatorTypes:
 
         # Check we have all metrics
         assert len(result) == 3
-        assert set(result["metric"]) == {"mae_count_subj", "mae_median_subj", "mae_std_subj"}
+        assert set(result["metric"]) == {
+            "mae_count_subj",
+            "mae_median_subj",
+            "mae_std_subj",
+        }
 
         # Check count equals number of subjects (3)
         count_result = result.filter(pl.col("metric") == "mae_count_subj")

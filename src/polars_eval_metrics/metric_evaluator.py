@@ -133,7 +133,7 @@ class MetricEvaluator:
         # Pivot group data to get JSON-like column names
         # Add a dummy index column for pivoting
         group_data_with_index = group_data.with_columns(pl.lit(1).alias("_dummy_index"))
-        
+
         if self.group_by:
             # Use the group_by columns plus label for pivot
             pivot_cols = self.group_by + ["label"]
@@ -141,7 +141,7 @@ class MetricEvaluator:
                 on=pivot_cols,
                 values="value",
                 index=["_dummy_index"],
-                aggregate_function="first"  # Take first value if duplicates
+                aggregate_function="first",  # Take first value if duplicates
             )
         else:
             # Pivot by label only when no group_by
@@ -149,17 +149,15 @@ class MetricEvaluator:
                 on="label",
                 values="value",
                 index=["_dummy_index"],
-                aggregate_function="first"
+                aggregate_function="first",
             )
-        
+
         # Remove the dummy index column
         group_pivoted = group_pivoted.drop("_dummy_index")
 
         # Broadcast the pivoted columns to all rows in result
         for col in group_pivoted.columns:
-            result = result.with_columns(
-                pl.lit(group_pivoted[col][0]).alias(col)
-            )
+            result = result.with_columns(pl.lit(group_pivoted[col][0]).alias(col))
 
         return result
 
@@ -290,7 +288,9 @@ class MetricEvaluator:
                 )
             else:
                 default_result = default_data.pivot(
-                    on=["estimate", "label"], values="value", index=pl.lit(1).alias("_row")
+                    on=["estimate", "label"],
+                    values="value",
+                    index=pl.lit(1).alias("_row"),
                 )
                 if "_row" in default_result.columns:
                     default_result = default_result.drop("_row")
@@ -387,7 +387,7 @@ class MetricEvaluator:
                     pl.lit("ALL").alias("_group")
                 )
                 pivot_on_cols = ["_group", "metric"]
-            
+
             result = model_default_data.pivot(
                 on=pivot_on_cols, values="value", index=index_cols
             )

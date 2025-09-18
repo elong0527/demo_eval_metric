@@ -79,10 +79,7 @@ class TestPivotByMethods:
         assert len(group_cols) == 1
 
         # Should have default scope columns (model x metric) - Polars uses JSON-like names
-        default_cols = [
-            col for col in result.columns 
-            if col.startswith('{"model_')
-        ]
+        default_cols = [col for col in result.columns if col.startswith('{"model_')]
         assert len(default_cols) == 4  # 2 models x 2 metrics (MAE, RMSE)
 
         print("✓ Case 1: Pivot by Group (without subgroups) passed")
@@ -155,13 +152,19 @@ class TestPivotByMethods:
         assert len(global_cols) == 1
 
         # Should have group scope columns (now using JSON format like {"A","North","Number of Subjects"})
-        group_cols = [col for col in result.columns if col.startswith('{"') and "Number of Subjects" in col]
+        group_cols = [
+            col
+            for col in result.columns
+            if col.startswith('{"') and "Number of Subjects" in col
+        ]
         assert len(group_cols) == 4  # 4 group combinations
 
         # Should have default scope columns (group x metric) - Polars uses JSON-like names
         default_cols = [
-            col for col in result.columns
-            if col.startswith('{"') and col.endswith('"}')
+            col
+            for col in result.columns
+            if col.startswith('{"')
+            and col.endswith('"}')
             and any(grp in col for grp in ['"A"', '"B"'])
             and any(met in col for met in ['"mae"', '"rmse"'])
         ]
@@ -251,7 +254,8 @@ class TestPivotByMethods:
             default_indices = [
                 i
                 for i, col in enumerate(cols_model)
-                if col.startswith('{"') and col.endswith('"}')
+                if col.startswith('{"')
+                and col.endswith('"}')
                 and any(grp in col for grp in ['"A"', '"B"'])
                 and any(met in col for met in ['"mae"', '"rmse"'])
             ]
