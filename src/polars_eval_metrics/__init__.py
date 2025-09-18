@@ -27,5 +27,5 @@ __all__ = [
     "CompiledMetric",
     "MetricEvaluator",
     # Table formatting
-    "format_pivot_table",
+    "pivot_to_gt",
 ]
