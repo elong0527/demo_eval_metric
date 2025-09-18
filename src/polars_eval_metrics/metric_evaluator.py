@@ -578,15 +578,16 @@ class MetricEvaluator:
 
         # Create pivot result from model/default data
         if not model_default_data.is_empty():
+            # Use metric labels instead of metric names for pivot column headers
             # Use multiple columns directly in pivot
             if self.group_by:
-                pivot_on_cols = list(self.group_by.keys()) + ["metric"]
+                pivot_on_cols = list(self.group_by.keys()) + ["label"]
             else:
                 # Add a constant column for pivoting when no group_by
                 model_default_data = model_default_data.with_columns(
                     pl.lit("ALL").alias("_group")
                 )
-                pivot_on_cols = ["_group", "metric"]
+                pivot_on_cols = ["_group", "label"]
 
             result = model_default_data.pivot(
                 on=pivot_on_cols, values="value", index=index_cols
@@ -638,7 +639,7 @@ class MetricEvaluator:
         target_metrics = self._resolve_metrics(metrics)
 
         # Extract names and labels for ordering
-        # Use names for column matching (since columns contain metric names)
+        # Use labels for column matching (since columns now contain metric labels)
         # Use labels for scope detection (since scope data contains metric labels)
         metric_names = [m.name for m in target_metrics]
         metric_labels = [m.label or m.name for m in target_metrics]
@@ -698,8 +699,7 @@ class MetricEvaluator:
 
         if order_by == "metrics":
             # Order by metric first, then groups: metric1_group1, metric1_group2, metric2_group1, ...
-            for i, metric_name in enumerate(metric_names):
-                metric_label = metric_labels[i]
+            for i, metric_label in enumerate(metric_labels):
 
                 # First add global scope metrics (they don't vary by group)
                 if (
@@ -719,11 +719,11 @@ class MetricEvaluator:
 
                 # Then add group-specific metrics (model/default scope) for this metric across all groups
                 for group_combo in group_combinations:
-                    # Check for different column name formats
+                    # Check for different column name formats using metric labels
                     possible_col_names = [
-                        f'{{"{group_combo}","{metric_name}"}}',  # JSON format with metric name
-                        f"{group_combo}_{metric_name}",  # Simple format with metric name
-                        f"{metric_name}_{group_combo}",  # Alternative format with metric name
+                        f'{{"{group_combo}","{metric_label}"}}',  # JSON format with metric label
+                        f"{group_combo}_{metric_label}",  # Simple format with metric label
+                        f"{metric_label}_{group_combo}",  # Alternative format with metric label
                     ]
 
                     for col_name in possible_col_names:
@@ -736,18 +736,17 @@ class MetricEvaluator:
         else:  # order_by == "groups"
             # Order by groups first, then metric: group1_metric1, group1_metric2, group2_metric1, ...
             for group_combo in group_combinations:
-                for i, metric_name in enumerate(metric_names):
-                    metric_label = metric_labels[i]
+                for i, metric_label in enumerate(metric_labels):
 
                     # Skip global and group scope metrics in this loop - they'll be added at the end
                     if metric_label in global_cols or metric_label in group_cols:
                         continue
 
-                    # Check for different column name formats
+                    # Check for different column name formats using metric labels
                     possible_col_names = [
-                        f'{{"{group_combo}","{metric_name}"}}',  # JSON format with metric name
-                        f"{group_combo}_{metric_name}",  # Simple format with metric name
-                        f"{metric_name}_{group_combo}",  # Alternative format with metric name
+                        f'{{"{group_combo}","{metric_label}"}}',  # JSON format with metric label
+                        f"{group_combo}_{metric_label}",  # Simple format with metric label
+                        f"{metric_label}_{group_combo}",  # Alternative format with metric label
                     ]
 
                     for col_name in possible_col_names:
@@ -1160,17 +1159,30 @@ class MetricEvaluator:
         core_columns.extend(["metric", "label", "value", "metric_type", "scope"])
         column_order.extend(core_columns)
 
-        # Sort columns
+        # Sort columns - prioritize subgroup_value first, then other columns
         sort_cols = []
-        potential_sort_cols = list(self.group_by.keys()) + ["subgroup_name", "label"]
-        if "estimate" in available_columns:
-            potential_sort_cols.append("estimate")
 
-        for col in potential_sort_cols:
-            if col in available_columns:
+        # Build sort order: subgroup_value first (when present), then others
+        if "subgroup_value" in available_columns:
+            sort_cols.append("subgroup_value")
+        if "subgroup_name" in available_columns:
+            sort_cols.append("subgroup_name")
+
+        # Add group columns
+        for col in self.group_by.keys():
+            if col in available_columns and col not in sort_cols:
                 sort_cols.append(col)
 
-        # Apply formatting
+        # Add other columns
+        other_cols = ["label"]
+        if "estimate" in available_columns:
+            other_cols.append("estimate")
+
+        for col in other_cols:
+            if col in available_columns and col not in sort_cols:
+                sort_cols.append(col)
+
+        # Apply sorting - subgroup_value first priority
         result = combined
         if sort_cols:
             result = result.sort(sort_cols)

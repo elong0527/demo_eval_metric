@@ -6,6 +6,7 @@ for publication-ready output with proper column spanners and formatting.
 """
 
 import polars as pl
+from polars import selectors as cs
 from great_tables import GT, loc, style
 
 
@@ -87,39 +88,10 @@ def pivot_to_gt(
     if column_renames:
         gt_table = gt_table.cols_label(**column_renames)
 
-    # Format numeric columns
-    numeric_columns = [col for col in json_columns if col in df.columns]
-    if numeric_columns:
-        gt_table = gt_table.fmt_number(
-            columns=numeric_columns,
-            decimals=decimals
-        )
-
-    # Style the table
-    gt_table = (
-        gt_table
-        .tab_style(
-            style=style.text(weight="bold"),
-            locations=loc.column_labels()
-        )
-        .tab_style(
-            style=style.borders(sides="top", weight="2px"),
-            locations=loc.body(rows=0)
-        )
+    # Format and center-align all numeric columns
+    gt_table = (gt_table
+        .fmt_number(columns=cs.numeric(), decimals=decimals)
+        .cols_align(align="center", columns=cs.numeric())
     )
-
-    # Style spanners only if they exist
-    if metrics_sorted:
-        gt_table = gt_table.tab_style(
-            style=style.text(weight="bold"),
-            locations=loc.spanner_labels(ids=metrics_sorted)
-        )
-
-    # Style row groups if subgroups are present
-    if has_subgroups:
-        gt_table = gt_table.tab_style(
-            style=style.text(weight="bold"),
-            locations=loc.row_groups()
-        )
 
     return gt_table

@@ -60,7 +60,7 @@ evaluator_group.pivot_by_group()
 
 ```{python}
 evaluator_group.pivot_by_group().\
-    pipe(format_pivot_table)
+    pipe(pivot_to_gt)
 ```
 
 ## Case 2: Pivot by Group (with subgroups)
@@ -84,7 +84,7 @@ evaluator_group_sub.pivot_by_group()
 
 ```{python}
 evaluator_group_sub.pivot_by_group().\
-    pipe(format_pivot_table)
+    pipe(pivot_to_gt)
 ```
 
 ## Case 3: Pivot by Model (without subgroups)
@@ -99,7 +99,7 @@ evaluator_model.pivot_by_model()
 
 ```{python}
 evaluator_model.pivot_by_model().\
-    pipe(format_pivot_table)
+    pipe(pivot_to_gt)
 ```
 
 ## Case 4: Pivot by Model (with subgroups)
@@ -110,6 +110,11 @@ evaluator_model_sub = evaluator_group_sub
 
 # Pivot to wide format for model comparison with subgroups
 evaluator_model_sub.pivot_by_model()
+```
+
+```{python}
+evaluator_model_sub.pivot_by_model().\
+    pipe(pivot_to_gt)
 ```
 
 ## Key Points
