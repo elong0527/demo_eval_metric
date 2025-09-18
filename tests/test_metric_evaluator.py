@@ -56,7 +56,7 @@ class TestMetricEvaluatorBasic:
         result = evaluator.evaluate()
 
         # Check structure
-        assert len(result) == 4  # 2 metrics × 2 models
+        assert len(result) == 4  # 2 metrics x 2 models
         assert set(result.columns) == {
             "estimate",
             "metric",
@@ -186,8 +186,8 @@ class TestMetricEvaluatorScopes:
 
         result = evaluator.evaluate()
 
-        # Default scope: estimate × group combinations
-        assert len(result) == 4  # 2 models × 2 groups
+        # Default scope: estimate x group combinations
+        assert len(result) == 4  # 2 models x 2 groups
         assert set(result["estimate"].unique()) == {"model_a", "model_b"}
         assert set(result["treatment"].unique()) == {"A", "B"}
 
@@ -337,7 +337,7 @@ class TestMetricEvaluatorTypes:
         assert len(result) == 4
         assert set(result["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
 
-        # Check count equals number of visits (9 = 3 subjects × 3 visits)
+        # Check count equals number of visits (9 = 3 subjects x 3 visits)
         count_result = result.filter(pl.col("metric") == "mae_count")
         assert count_result["value"][0] == 9.0
 
@@ -470,7 +470,7 @@ class TestMetricEvaluatorGrouping:
 
         result = evaluator.evaluate()
 
-        # Should have group × subgroup combinations
+        # Should have group x subgroup combinations
         assert "treatment" in result.columns
         assert "subgroup_name" in result.columns
         assert "subgroup_value" in result.columns

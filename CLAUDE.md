@@ -416,9 +416,9 @@ from polars_eval_metrics import MetricDefine
 5. **Expression composition**: Build complex metrics from simpler ones
 
 ### Completed Features
-- ✅ **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
-- ✅ **Custom Expression Support**: Easy registration of custom expressions
-- ✅ **Clean Architecture**: Separation of concerns between definition and evaluation
+- [PASS] **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
+- [PASS] **Custom Expression Support**: Easy registration of custom expressions
+- [PASS] **Clean Architecture**: Separation of concerns between definition and evaluation
 
 ### Built-in Expressions
 

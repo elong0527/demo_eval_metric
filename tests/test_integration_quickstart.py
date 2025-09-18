@@ -15,7 +15,7 @@ class TestQuickstartIntegration:
         df = generate_sample_data(n_subjects=3, n_visits=2, n_groups=2)
 
         # Verify data structure
-        assert df.shape == (6, 9)  # 3 subjects × 2 visits = 6 rows, 9 columns
+        assert df.shape == (6, 9)  # 3 subjects x 2 visits = 6 rows, 9 columns
         expected_columns = [
             "subject_id",
             "visit_id",
@@ -92,7 +92,7 @@ class TestQuickstartIntegration:
         # From quickstart.qmd line 115
         result = evaluator.evaluate()
 
-        # Verify structure: 2 treatments × 2 models × 2 metrics = 8 rows
+        # Verify structure: 2 treatments x 2 models x 2 metrics = 8 rows
         assert result.shape[0] == 8
         assert set(result["treatment"]) == {"A", "B"}
         assert set(result["estimate"]) == {"model1", "model2"}
@@ -221,7 +221,7 @@ class TestQuickstartIntegration:
         assert shape == (
             6,
             9,
-        )  # Expected shape from example (3 subjects × 2 visits = 6 rows)
+        )  # Expected shape from example (3 subjects x 2 visits = 6 rows)
         assert "subject_id" in columns
         assert "visit_id" in columns
         assert "treatment" in columns

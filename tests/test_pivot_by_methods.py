@@ -82,7 +82,7 @@ class TestPivotByMethods:
         default_cols = [col for col in result.columns if col.startswith('{"model_')]
         assert len(default_cols) == 4  # 2 models x 2 metrics (MAE, RMSE)
 
-        print("✓ Case 1: Pivot by Group (without subgroups) passed")
+        print("✔ Case 1: Pivot by Group (without subgroups) passed")
 
     def test_case2_pivot_by_group_with_subgroups(self, sample_data, group_metrics):
         """Test Case 2: Pivot by Group (with subgroups)"""
@@ -119,7 +119,7 @@ class TestPivotByMethods:
         assert "Young" in subgroup_values
         assert "Old" in subgroup_values
 
-        print("✓ Case 2: Pivot by Group (with subgroups) passed")
+        print("✔ Case 2: Pivot by Group (with subgroups) passed")
 
     def test_case3_pivot_by_model_without_subgroups(self, sample_data, group_metrics):
         """Test Case 3: Pivot by Model (without subgroups)"""
@@ -170,7 +170,7 @@ class TestPivotByMethods:
         ]
         assert len(default_cols) == 8  # 4 groups x 2 metrics
 
-        print("✓ Case 3: Pivot by Model (without subgroups) passed")
+        print("✔ Case 3: Pivot by Model (without subgroups) passed")
 
     def test_case4_pivot_by_model_with_subgroups(self, sample_data, group_metrics):
         """Test Case 4: Pivot by Model (with subgroups)"""
@@ -209,7 +209,7 @@ class TestPivotByMethods:
         assert "Young" in subgroup_values
         assert "Old" in subgroup_values
 
-        print("✓ Case 4: Pivot by Model (with subgroups) passed")
+        print("✔ Case 4: Pivot by Model (with subgroups) passed")
 
     def test_column_ordering(self, sample_data, group_metrics):
         """Test that column ordering follows index -> global -> group -> default pattern"""
@@ -262,7 +262,7 @@ class TestPivotByMethods:
             if default_indices:
                 assert global_idx < min(default_indices)
 
-        print("✓ Column ordering test passed")
+        print("✔ Column ordering test passed")
 
     def test_mixed_scopes_compatibility(self, sample_data):
         """Test that different scope combinations work correctly"""
@@ -316,7 +316,7 @@ class TestPivotByMethods:
         assert not result_default_group.is_empty()
         assert not result_default_model.is_empty()
 
-        print("✓ Mixed scopes compatibility test passed")
+        print("✔ Mixed scopes compatibility test passed")
 
     def test_caching_efficiency(self, sample_data, group_metrics):
         """Test that both pivot methods use cached evaluation results"""
@@ -345,7 +345,7 @@ class TestPivotByMethods:
         assert not result1.is_empty()
         assert not result2.is_empty()
 
-        print("✓ Caching efficiency test passed")
+        print("✔ Caching efficiency test passed")
 
 
 if __name__ == "__main__":
@@ -387,4 +387,4 @@ if __name__ == "__main__":
     test_instance.test_mixed_scopes_compatibility(sample_data)
     test_instance.test_caching_efficiency(sample_data, group_metrics)
 
-    print("\n✅ All pivot_by_* method tests passed!")
+    print("\n[PASS] All pivot_by_* method tests passed!")

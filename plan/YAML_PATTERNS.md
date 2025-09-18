@@ -186,7 +186,7 @@ result = first_agg.group_by(second_group).agg(
 ```yaml
 metrics:
   - name: "mae:mean"
-    type: across_subject    # subject → population
+    type: across_subject    # subject -> population
 ```
 
 **Processing Flow:**
@@ -254,7 +254,7 @@ metrics:
 ```
 
 **Processing Strategy:**
-- Calculate for each estimate × group combination
+- Calculate for each estimate x group combination
 - No optimization possible
 - Standard processing pipeline
 
