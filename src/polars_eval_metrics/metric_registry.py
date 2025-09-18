@@ -6,10 +6,13 @@ This module provides an extensible registry system for all types of expressions:
 - Metric expressions (for aggregation)
 - Summary expressions (for second-level aggregation)
 
-Supports both global (class-level) and local (instance-level) registries.
+Supports both scoped, injectable registries and the legacy singleton interface.
 """
 
-from typing import Any, Callable
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Mapping
 
 # pyre-strict
 
@@ -31,23 +34,19 @@ class MetricNotFoundError(ValueError):
         )
 
 
-class MetricRegistry:
-    """
-    Unified registry for all expression types used in metric evaluation.
+@dataclass(slots=True)
+class ExpressionRegistry:
+    """Instance-based registry for metric, error, and summary expressions."""
 
-    This is a singleton-style class that provides global registration
-    and retrieval of error types, metrics, and summary expressions.
-    """
+    _errors: dict[str, Callable[..., pl.Expr]] = field(default_factory=dict)
+    _metrics: dict[str, pl.Expr | Callable[[], pl.Expr]] = field(default_factory=dict)
+    _summaries: dict[str, pl.Expr | Callable[[], pl.Expr]] = field(default_factory=dict)
 
-    # Class-level registries
-    _errors: dict[str, Callable[..., pl.Expr]] = {}
-    _metrics: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
-    _summaries: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
+    # ---------------------------- Error Expressions ----------------------------
 
     # ============ Error Expression Methods ============
 
-    @classmethod
-    def register_error(cls, name: str, func: Callable[..., pl.Expr]) -> None:
+    def register_error(self, name: str, func: Callable[..., pl.Expr]) -> None:
         """
         Register a custom error expression function.
 
@@ -61,11 +60,10 @@ class MetricRegistry:
 
             MetricRegistry.register_error('buffer_error', buffer_error)
         """
-        cls._errors[name] = func
+        self._errors[name] = func
 
-    @classmethod
     def get_error(
-        cls,
+        self,
         name: str,
         estimate: str,
         ground_truth: str,
@@ -83,15 +81,14 @@ class MetricRegistry:
         Returns:
             Polars expression that computes the error
         """
-        if name not in cls._errors:
-            raise MetricNotFoundError(name, list(cls._errors.keys()), "error")
+        if name not in self._errors:
+            raise MetricNotFoundError(name, list(self._errors.keys()), "error")
 
-        func = cls._errors[name]
+        func = self._errors[name]
         return func(estimate, ground_truth, **params)
 
-    @classmethod
     def generate_error_columns(
-        cls,
+        self,
         estimate: str,
         ground_truth: str,
         error_types: list[str] | None = None,
@@ -111,32 +108,29 @@ class MetricRegistry:
         """
         if error_types is None:
             # Use all registered error types
-            error_types = list(cls._errors.keys())
+            error_types = list(self._errors.keys())
 
         error_params = error_params or {}
         expressions = []
 
         for error_type in error_types:
             params = error_params.get(error_type, {})
-            expr = cls.get_error(error_type, estimate, ground_truth, **params)
+            expr = self.get_error(error_type, estimate, ground_truth, **params)
             expressions.append(expr.alias(error_type))
 
         return expressions
 
-    @classmethod
-    def list_errors(cls) -> list[str]:
+    def list_errors(self) -> list[str]:
         """List all available error types."""
-        return list(cls._errors.keys())
+        return list(self._errors.keys())
 
-    @classmethod
-    def has_error(cls, name: str) -> bool:
+    def has_error(self, name: str) -> bool:
         """Check if an error type is registered."""
-        return name in cls._errors
+        return name in self._errors
 
     # ============ Metric Expression Methods ============
 
-    @classmethod
-    def register_metric(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+    def register_metric(self, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
         """
         Register a custom metric expression.
 
@@ -148,10 +142,9 @@ class MetricRegistry:
         Example:
             MetricRegistry.register_metric('mae', pl.col('absolute_error').mean().alias('value'))
         """
-        cls._metrics[name] = expr
+        self._metrics[name] = expr
 
-    @classmethod
-    def register_summary(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+    def register_summary(self, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
         """
         Register a custom summary expression.
 
@@ -163,10 +156,9 @@ class MetricRegistry:
         Example:
             MetricRegistry.register_summary('p90', pl.col('value').quantile(0.9, interpolation="linear"))
         """
-        cls._summaries[name] = expr
+        self._summaries[name] = expr
 
-    @classmethod
-    def get_metric(cls, name: str) -> pl.Expr:
+    def get_metric(self, name: str) -> pl.Expr:
         """
         Get a metric expression by name.
 
@@ -179,17 +171,16 @@ class MetricRegistry:
         Raises:
             ValueError: If the metric is not registered
         """
-        if name not in cls._metrics:
-            raise MetricNotFoundError(name, list(cls._metrics.keys()), "metric")
+        if name not in self._metrics:
+            raise MetricNotFoundError(name, list(self._metrics.keys()), "metric")
 
-        expr = cls._metrics[name]
+        expr = self._metrics[name]
         # If it's a callable, call it to get the expression
         if callable(expr):
             return expr()
         return expr
 
-    @classmethod
-    def get_summary(cls, name: str) -> pl.Expr:
+    def get_summary(self, name: str) -> pl.Expr:
         """
         Get a summary expression by name.
 
@@ -202,34 +193,140 @@ class MetricRegistry:
         Raises:
             ValueError: If the summary is not registered
         """
-        if name not in cls._summaries:
-            raise MetricNotFoundError(name, list(cls._summaries.keys()), "summary")
+        if name not in self._summaries:
+            raise MetricNotFoundError(name, list(self._summaries.keys()), "summary")
 
-        expr = cls._summaries[name]
+        expr = self._summaries[name]
         # If it's a callable, call it to get the expression
         if callable(expr):
             return expr()
         return expr
 
+    def list_metrics(self) -> list[str]:
+        """List all available metrics."""
+        return list(self._metrics.keys())
+
+    def list_summaries(self) -> list[str]:
+        """List all available summaries."""
+        return list(self._summaries.keys())
+
+    def has_metric(self, name: str) -> bool:
+        """Check if a metric is registered."""
+        return name in self._metrics
+
+    def has_summary(self, name: str) -> bool:
+        """Check if a summary is registered."""
+        return name in self._summaries
+
+    # -------------------------- Registry Introspection -------------------------
+
+    def snapshot(self) -> "ExpressionRegistry":
+        """Create a shallow copy of the registry for safe mutation."""
+        clone = ExpressionRegistry()
+        clone._errors.update(self._errors)
+        clone._metrics.update(self._metrics)
+        clone._summaries.update(self._summaries)
+        return clone
+
+    def as_readonly(self) -> Mapping[str, Callable[..., pl.Expr]]:
+        """Provide read-only access to error registry."""
+        return dict(self._errors)
+
+    def iter_metrics(self) -> Iterable[str]:
+        """Iterate through registered metric names."""
+        return self._metrics.keys()
+
+
+class MetricRegistry:
+    """Legacy singleton wrapper around an :class:`ExpressionRegistry`."""
+
+    _registry: ExpressionRegistry = ExpressionRegistry()
+
+    @classmethod
+    def configure(cls, registry: ExpressionRegistry, *, copy: bool = False) -> None:
+        """Configure the global registry used by legacy class methods."""
+
+        cls._registry = registry.snapshot() if copy else registry
+
+    @classmethod
+    def get_registry(cls) -> ExpressionRegistry:
+        """Return the currently configured registry instance."""
+
+        return cls._registry
+
+    @classmethod
+    def reset_defaults(cls) -> None:
+        """Restore the registry to the bundled built-in expressions."""
+
+        cls._registry = create_builtin_registry()
+
+    # Delegated API -----------------------------------------------------------
+
+    @classmethod
+    def register_error(cls, name: str, func: Callable[..., pl.Expr]) -> None:
+        cls._registry.register_error(name, func)
+
+    @classmethod
+    def get_error(
+        cls,
+        name: str,
+        estimate: str,
+        ground_truth: str,
+        **params: Any,
+    ) -> pl.Expr:
+        return cls._registry.get_error(name, estimate, ground_truth, **params)
+
+    @classmethod
+    def generate_error_columns(
+        cls,
+        estimate: str,
+        ground_truth: str,
+        error_types: list[str] | None = None,
+        error_params: dict[str, dict[str, Any]] | None = None,
+    ) -> list[pl.Expr]:
+        return cls._registry.generate_error_columns(
+            estimate, ground_truth, error_types, error_params
+        )
+
+    @classmethod
+    def list_errors(cls) -> list[str]:
+        return cls._registry.list_errors()
+
+    @classmethod
+    def has_error(cls, name: str) -> bool:
+        return cls._registry.has_error(name)
+
+    @classmethod
+    def register_metric(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+        cls._registry.register_metric(name, expr)
+
+    @classmethod
+    def register_summary(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+        cls._registry.register_summary(name, expr)
+
+    @classmethod
+    def get_metric(cls, name: str) -> pl.Expr:
+        return cls._registry.get_metric(name)
+
+    @classmethod
+    def get_summary(cls, name: str) -> pl.Expr:
+        return cls._registry.get_summary(name)
+
     @classmethod
     def list_metrics(cls) -> list[str]:
-        """List all available metrics."""
-        return list(cls._metrics.keys())
+        return cls._registry.list_metrics()
 
     @classmethod
     def list_summaries(cls) -> list[str]:
-        """List all available summaries."""
-        return list(cls._summaries.keys())
+        return cls._registry.list_summaries()
 
     @classmethod
     def has_metric(cls, name: str) -> bool:
-        """Check if a metric is registered."""
-        return name in cls._metrics
+        return cls._registry.has_metric(name)
 
     @classmethod
     def has_summary(cls, name: str) -> bool:
-        """Check if a summary is registered."""
-        return name in cls._summaries
+        return cls._registry.has_summary(name)
 
 
 # ============ Built-in Error Expression Functions ============
@@ -272,95 +369,110 @@ def _absolute_percent_error(estimate: str, ground_truth: str) -> pl.Expr:
     )
 
 
-# ============ Register All Built-in Expressions Globally ============
+def _register_builtin_errors(registry: ExpressionRegistry) -> None:
+    registry.register_error("error", _error)
+    registry.register_error("absolute_error", _absolute_error)
+    registry.register_error("squared_error", _squared_error)
+    registry.register_error("percent_error", _percent_error)
+    registry.register_error("absolute_percent_error", _absolute_percent_error)
 
-# Register built-in error types
-MetricRegistry.register_error("error", _error)
-MetricRegistry.register_error("absolute_error", _absolute_error)
-MetricRegistry.register_error("squared_error", _squared_error)
-MetricRegistry.register_error("percent_error", _percent_error)
-MetricRegistry.register_error("absolute_percent_error", _absolute_percent_error)
 
-# Register built-in metrics
-MetricRegistry.register_metric("me", pl.col("error").mean().alias("value"))
+def _register_builtin_metrics(registry: ExpressionRegistry) -> None:
+    registry.register_metric("me", pl.col("error").mean().alias("value"))
 
-MetricRegistry.register_metric("mae", pl.col("absolute_error").mean().alias("value"))
-MetricRegistry.register_metric("mse", pl.col("squared_error").mean().alias("value"))
-MetricRegistry.register_metric(
-    "rmse", pl.col("squared_error").mean().sqrt().alias("value")
-)
-MetricRegistry.register_metric("mpe", pl.col("percent_error").mean().alias("value"))
-MetricRegistry.register_metric(
-    "mape", pl.col("absolute_percent_error").mean().alias("value")
-)
+    registry.register_metric("mae", pl.col("absolute_error").mean().alias("value"))
+    registry.register_metric("mse", pl.col("squared_error").mean().alias("value"))
+    registry.register_metric(
+        "rmse", pl.col("squared_error").mean().sqrt().alias("value")
+    )
+    registry.register_metric("mpe", pl.col("percent_error").mean().alias("value"))
+    registry.register_metric(
+        "mape", pl.col("absolute_percent_error").mean().alias("value")
+    )
 
-MetricRegistry.register_metric(
-    "n_subject", pl.col("subject_id").n_unique().alias("value")
-)
-MetricRegistry.register_metric(
-    "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
-)
-MetricRegistry.register_metric(
-    "n_sample",
-    pl.col("sample_index").n_unique().alias("value"),
-)
+    registry.register_metric(
+        "n_subject", pl.col("subject_id").n_unique().alias("value")
+    )
+    registry.register_metric(
+        "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
+    )
+    registry.register_metric(
+        "n_sample",
+        pl.col("sample_index").n_unique().alias("value"),
+    )
 
-# Metrics for subjects with data (non-null ground truth or estimates)
-MetricRegistry.register_metric(
-    "n_subject_with_data",
-    pl.col("subject_id")
-    .filter(pl.col("error").is_not_null())
-    .n_unique()
-    .alias("value"),
-)
-MetricRegistry.register_metric(
-    "pct_subject_with_data",
-    (
-        pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique()
-        / pl.col("subject_id").n_unique()
-        * 100
-    ).alias("value"),
-)
+    # Metrics for subjects with data (non-null ground truth or estimates)
+    registry.register_metric(
+        "n_subject_with_data",
+        pl.col("subject_id")
+        .filter(pl.col("error").is_not_null())
+        .n_unique()
+        .alias("value"),
+    )
+    registry.register_metric(
+        "pct_subject_with_data",
+        (
+            pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique()
+            / pl.col("subject_id").n_unique()
+            * 100
+        ).alias("value"),
+    )
 
-# Metrics for visits with data
-MetricRegistry.register_metric(
-    "n_visit_with_data",
-    pl.struct(["subject_id", "visit_id"])
-    .filter(pl.col("error").is_not_null())
-    .n_unique()
-    .alias("value"),
-)
-MetricRegistry.register_metric(
-    "pct_visit_with_data",
-    (
+    # Metrics for visits with data
+    registry.register_metric(
+        "n_visit_with_data",
         pl.struct(["subject_id", "visit_id"])
         .filter(pl.col("error").is_not_null())
         .n_unique()
-        / pl.struct(["subject_id", "visit_id"]).n_unique()
-        * 100
-    ).alias("value"),
-)
-
-# Metrics for samples with data
-MetricRegistry.register_metric(
-    "n_sample_with_data", pl.col("error").is_not_null().sum().alias("value")
-)
-MetricRegistry.register_metric(
-    "pct_sample_with_data", (pl.col("error").is_not_null().mean() * 100).alias("value")
-)
-
-# Register built-in summaries
-MetricRegistry.register_summary("mean", pl.col("value").mean())
-MetricRegistry.register_summary("median", pl.col("value").median())
-MetricRegistry.register_summary("std", pl.col("value").std())
-MetricRegistry.register_summary("min", pl.col("value").min())
-MetricRegistry.register_summary("max", pl.col("value").max())
-MetricRegistry.register_summary("sum", pl.col("value").sum())
-MetricRegistry.register_summary("sqrt", pl.col("value").sqrt())
-
-# Register percentile summaries
-percentiles = [1, 5, 25, 75, 90, 95, 99]
-for p in percentiles:
-    MetricRegistry.register_summary(
-        f"p{p}", pl.col("value").quantile(p / 100, interpolation="linear")
+        .alias("value"),
     )
+    registry.register_metric(
+        "pct_visit_with_data",
+        (
+            pl.struct(["subject_id", "visit_id"])
+            .filter(pl.col("error").is_not_null())
+            .n_unique()
+            / pl.struct(["subject_id", "visit_id"]).n_unique()
+            * 100
+        ).alias("value"),
+    )
+
+    # Metrics for samples with data
+    registry.register_metric(
+        "n_sample_with_data", pl.col("error").is_not_null().sum().alias("value")
+    )
+    registry.register_metric(
+        "pct_sample_with_data",
+        (pl.col("error").is_not_null().mean() * 100).alias("value"),
+    )
+
+
+def _register_builtin_summaries(registry: ExpressionRegistry) -> None:
+    registry.register_summary("mean", pl.col("value").mean())
+    registry.register_summary("median", pl.col("value").median())
+    registry.register_summary("std", pl.col("value").std())
+    registry.register_summary("min", pl.col("value").min())
+    registry.register_summary("max", pl.col("value").max())
+    registry.register_summary("sum", pl.col("value").sum())
+    registry.register_summary("sqrt", pl.col("value").sqrt())
+
+    # Register percentile summaries
+    percentiles = [1, 5, 25, 75, 90, 95, 99]
+    for p in percentiles:
+        registry.register_summary(
+            f"p{p}", pl.col("value").quantile(p / 100, interpolation="linear")
+        )
+
+
+def create_builtin_registry() -> ExpressionRegistry:
+    """Create a registry populated with built-in errors, metrics, and summaries."""
+
+    registry = ExpressionRegistry()
+    _register_builtin_errors(registry)
+    _register_builtin_metrics(registry)
+    _register_builtin_summaries(registry)
+    return registry
+
+
+# Initialize global registry with built-in expressions for backward compatibility
+MetricRegistry.reset_defaults()

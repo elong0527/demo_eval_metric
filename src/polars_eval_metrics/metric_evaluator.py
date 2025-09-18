@@ -12,7 +12,7 @@ from typing import Any
 import polars as pl
 
 from .metric_define import MetricDefine, MetricScope, MetricType
-from .metric_registry import MetricRegistry
+from .metric_registry import ExpressionRegistry, MetricRegistry
 
 
 class MetricEvaluator:
@@ -27,6 +27,7 @@ class MetricEvaluator:
     subgroup_by: dict[str, str]  # Maps subgroup column names to display labels
     filter_expr: pl.Expr | None
     error_params: dict[str, dict[str, Any]]
+    registry: ExpressionRegistry
     df: pl.LazyFrame
     _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], pl.DataFrame]
 
@@ -40,6 +41,7 @@ class MetricEvaluator:
         subgroup_by: list[str] | dict[str, str] | None = None,
         filter_expr: pl.Expr | None = None,
         error_params: dict[str, dict[str, Any]] | None = None,
+        registry: ExpressionRegistry | None = None,
     ) -> None:
         """Initialize evaluator with complete evaluation context
 
@@ -93,6 +95,7 @@ class MetricEvaluator:
             self.subgroup_by = {}
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
+        self.registry = registry or MetricRegistry.get_registry()
 
         # Apply base filter once
         self.df = self._apply_base_filter()
@@ -944,7 +947,7 @@ class MetricEvaluator:
 
         # Generate error expressions for the vectorized format
         # Use 'estimate_value' as the estimate column and 'ground_truth' as the renamed ground truth column
-        error_expressions = MetricRegistry.generate_error_columns(
+        error_expressions = self.registry.generate_error_columns(
             estimate="estimate_value",
             ground_truth="ground_truth",
             error_types=None,
@@ -962,7 +965,7 @@ class MetricEvaluator:
         group_cols = self._get_vectorized_grouping_columns(metric)
 
         # Compile metric expressions
-        within_exprs, across_expr = metric.compile_expressions()
+        within_exprs, across_expr = metric.compile_expressions(self.registry)
 
         # Apply metric-specific filtering if needed
         df_filtered = self._apply_metric_scope_filter(df_with_errors, metric, estimates)

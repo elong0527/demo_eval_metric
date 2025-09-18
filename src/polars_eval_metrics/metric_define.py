@@ -14,7 +14,7 @@ from typing import Self
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .metric_registry import MetricRegistry
+from .metric_registry import ExpressionRegistry, MetricRegistry
 
 
 class MetricType(Enum):
@@ -241,19 +241,23 @@ class MetricDefine(BaseModel):
 
         return self
 
-    def compile_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def compile_expressions(
+        self, registry: ExpressionRegistry | None = None
+    ) -> tuple[list[pl.Expr], pl.Expr | None]:
         """
         Compile this metric's expressions to Polars expressions.
 
         Returns:
             Tuple of (aggregation_expressions, selection_expression)
         """
+        target_registry = registry or MetricRegistry.get_registry()
+
         # Handle custom expressions
         if self.within_expr is not None or self.across_expr is not None:
-            result = self._compile_custom_expressions()
+            result = self._compile_custom_expressions(target_registry)
         else:
             # Handle built-in metrics
-            result = self._compile_builtin_expressions()
+            result = self._compile_builtin_expressions(target_registry)
 
         # For ACROSS_SAMPLE, move single expression to selection
         if self.type == MetricType.ACROSS_SAMPLE:
@@ -264,7 +268,9 @@ class MetricDefine(BaseModel):
 
         return result
 
-    def _compile_custom_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_custom_expressions(
+        self, registry: ExpressionRegistry
+    ) -> tuple[list[pl.Expr], pl.Expr | None]:
         """Return custom metric expressions - handle built-in names and Polars expressions in list"""
         within_exprs = []
 
@@ -275,7 +281,7 @@ class MetricDefine(BaseModel):
                 if isinstance(item, str):
                     # Built-in metric name
                     try:
-                        builtin_expr = MetricRegistry.get_metric(item)
+                        builtin_expr = registry.get_metric(item)
                         within_exprs.append(builtin_expr)
                     except ValueError:
                         raise ValueError(
@@ -291,7 +297,7 @@ class MetricDefine(BaseModel):
             if isinstance(self.across_expr, str):
                 # Built-in selector name
                 try:
-                    across_pl_expr = MetricRegistry.get_summary(self.across_expr)
+                    across_pl_expr = registry.get_summary(self.across_expr)
                 except ValueError:
                     raise ValueError(
                         f"Unknown built-in selector in across_expr: {self.across_expr}"
@@ -306,14 +312,16 @@ class MetricDefine(BaseModel):
 
         return within_exprs, across_pl_expr
 
-    def _compile_builtin_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_builtin_expressions(
+        self, registry: ExpressionRegistry
+    ) -> tuple[list[pl.Expr], pl.Expr | None]:
         """Compile built-in metric expressions"""
         parts = (self.name + ":").split(":")[:2]
         agg_name, select_name = parts[0], parts[1] if parts[1] else None
 
         # Get built-in aggregation expression (already a Polars expression)
         try:
-            agg_expr = MetricRegistry.get_metric(agg_name)
+            agg_expr = registry.get_metric(agg_name)
         except ValueError:
             raise ValueError(f"Unknown built-in metric: {agg_name}")
 
@@ -321,7 +329,7 @@ class MetricDefine(BaseModel):
         select_expr = None
         if select_name:
             try:
-                select_expr = MetricRegistry.get_summary(select_name)
+                select_expr = registry.get_summary(select_name)
             except ValueError:
                 raise ValueError(f"Unknown built-in selector: {select_name}")
             # If there's a selector, return as aggregation + selection
