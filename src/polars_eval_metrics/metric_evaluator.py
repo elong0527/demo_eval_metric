@@ -530,14 +530,18 @@ class MetricEvaluator:
     def _prepare_long_format_data(self, estimates: list[str]) -> pl.LazyFrame:
         """Reshape data from wide to long format for vectorized processing"""
 
-        # Get all columns except estimates to preserve in melt
+        # Add a row index to the original data to uniquely identify each sample
+        # This must be done BEFORE unpivoting to avoid double counting
+        df_with_index = self.df.with_row_index("sample_index")
+
+        # Get all columns except estimates to preserve in melt (including the new index)
         id_vars = []
-        for col in self.df.collect_schema().names():
+        for col in df_with_index.collect_schema().names():
             if col not in estimates:
                 id_vars.append(col)
 
         # Unpivot estimates into long format
-        df_long = self.df.unpivot(
+        df_long = df_with_index.unpivot(
             index=id_vars,
             on=estimates,
             variable_name="estimate_name",
