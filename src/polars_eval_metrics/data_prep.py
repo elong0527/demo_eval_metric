@@ -69,3 +69,22 @@ class DataPreparation:
             df_long = df_long.rename({self.context.ground_truth: "ground_truth"})
 
         return df_long
+
+    def iter_marginal_frames(
+        self, df: pl.LazyFrame
+    ) -> Iterable[tuple[str, pl.LazyFrame]]:
+        """Yield LazyFrames for marginal subgroup analysis."""
+
+        for subgroup_col, label in self.context.subgroup_by.items():
+            frame = df.with_columns(
+                [
+                    pl.lit(label).alias("subgroup_name"),
+                    pl.col(subgroup_col).cast(pl.Utf8).alias("subgroup_value"),
+                ]
+            )
+
+            available = frame.collect_schema().names()
+            if subgroup_col in available:
+                frame = frame.drop(subgroup_col)
+
+            yield subgroup_col, frame
