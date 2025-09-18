@@ -161,7 +161,7 @@ class MetricRegistry:
                   The expression should typically operate on 'value' column
 
         Example:
-            MetricRegistry.register_summary('p90', pl.col('value').quantile(0.9))
+            MetricRegistry.register_summary('p90', pl.col('value').quantile(0.9, interpolation="linear"))
         """
         cls._summaries[name] = expr
 
@@ -358,4 +358,4 @@ MetricRegistry.register_summary("sqrt", pl.col("value").sqrt())
 # Register percentile summaries
 percentiles = [1, 5, 25, 75, 90, 95, 99]
 for p in percentiles:
-    MetricRegistry.register_summary(f"p{p}", pl.col("value").quantile(p / 100))
+    MetricRegistry.register_summary(f"p{p}", pl.col("value").quantile(p / 100, interpolation="linear"))

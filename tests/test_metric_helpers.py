@@ -130,7 +130,7 @@ class TestCreateMetrics:
                 "type": "across_subject",
                 "scope": "model",
                 "within_expr": "error.mean()",
-                "across_expr": "value.quantile(0.9)",
+                "across_expr": "value.quantile(0.9, interpolation='linear')",
             },
         ]
 
@@ -141,7 +141,7 @@ class TestCreateMetrics:
         assert metrics[1].type == MetricType.WITHIN_SUBJECT
         assert metrics[2].scope == MetricScope.MODEL
         assert metrics[2].within_expr == ["error.mean()"]
-        assert metrics[2].across_expr == "value.quantile(0.9)"
+        assert metrics[2].across_expr == "value.quantile(0.9, interpolation='linear')"
 
     def test_single_name(self):
         """Test creating metrics from single name."""

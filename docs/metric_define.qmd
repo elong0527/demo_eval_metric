@@ -157,7 +157,7 @@ MetricDefine(
     label="90th Percentile of Subject MAEs",
     type="across_subject",
     within_expr="mae",
-    across_expr=pl.col('value').quantile(0.9)
+    across_expr=pl.col('value').quantile(0.9, interpolation="linear")
 )
 ```
 

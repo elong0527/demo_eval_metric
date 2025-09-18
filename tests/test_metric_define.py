@@ -63,7 +63,7 @@ class TestMetricDefineCustomExpressions:
             label="90th Percentile of Subject MAEs",
             type=MetricType.ACROSS_SUBJECT,
             within_expr="mae",
-            across_expr=pl.col("value").quantile(0.9),
+            across_expr=pl.col("value").quantile(0.9, interpolation="linear"),
         )
 
         assert metric.name == "mae_p90_by_subject"

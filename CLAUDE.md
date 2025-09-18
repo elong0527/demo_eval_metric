@@ -215,7 +215,7 @@ MetricRegistry.register_metric('accuracy',
     pl.col('within_threshold').mean() * 100)
 
 # Register custom selector
-MetricRegistry.register_selector('p90', pl.col('value').quantile(0.9))
+MetricRegistry.register_selector('p90', pl.col('value').quantile(0.9, interpolation="linear"))
 
 # List available expressions
 print(MetricRegistry.list_errors())    # All error types
@@ -373,7 +373,7 @@ metric = MetricDefine(
     name="mae_p90",
     type=MetricType.ACROSS_SUBJECT,
     within_expr="mae",  # From registry
-    across_expr=pl.col("value").quantile(0.9)  # Custom
+    across_expr=pl.col("value").quantile(0.9, interpolation="linear")  # Custom
 )
 
 # Pattern 3: Multiple aggregations
