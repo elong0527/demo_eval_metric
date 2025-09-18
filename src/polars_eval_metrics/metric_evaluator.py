@@ -255,6 +255,7 @@ class MetricEvaluator:
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
+        order_by: str = "metrics",
     ) -> pl.DataFrame:
         """
         Pivot results with groups as rows and model x metric as columns.
@@ -262,6 +263,9 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
+            order_by: Column ordering strategy ("metrics" or "estimates"). Default: "metrics"
+                     - "metrics": Order columns by metric first, then estimate (metric1_model1, metric1_model2, metric2_model1, ...)
+                     - "estimates": Order columns by estimate first, then metric (model1_metric1, model1_metric2, model2_metric1, ...)
 
         Returns:
             DataFrame with group combinations as rows
@@ -345,7 +349,135 @@ class MetricEvaluator:
 
         # Add global columns and reorder
         result = self._add_global_columns(result, global_data)
-        result = self._reorder_columns(result, index_cols, global_data, group_data)
+        result = self._reorder_columns_pivot_by_group(
+            result, index_cols, global_data, group_data,
+            metrics, estimates, order_by
+        )
+
+        return result
+
+    def _reorder_columns_pivot_by_group(
+        self,
+        result: pl.DataFrame,
+        index_cols: list[str],
+        global_data: pl.DataFrame,
+        group_data: pl.DataFrame,
+        metrics: MetricDefine | list[MetricDefine] | None,
+        estimates: str | list[str] | None,
+        order_by: str,
+    ) -> pl.DataFrame:
+        """Reorder columns for pivot_by_group with proper metric/estimate ordering"""
+        if result.is_empty():
+            return result
+
+        # Validate order_by parameter
+        if order_by not in ["metrics", "estimates"]:
+            raise ValueError(f"order_by must be 'metrics' or 'estimates', got '{order_by}'")
+
+        # Get the ordered metrics and estimates based on original configuration
+        target_metrics = self._resolve_metrics(metrics)
+        target_estimates = self._resolve_estimates(estimates)
+
+        # Extract labels in order
+        metric_labels = [m.label or m.name for m in target_metrics]
+        estimate_names = target_estimates
+
+        all_cols = result.columns
+        global_cols = []
+        group_cols = []
+        default_cols = []
+
+        # Get scope information from the original data
+        global_labels = []
+        if not global_data.is_empty():
+            global_labels = global_data.select("label").unique().to_series().to_list()
+
+        group_labels = []
+        if not group_data.is_empty():
+            group_labels = group_data.select("label").unique().to_series().to_list()
+
+        # Separate columns by scope
+        for col in all_cols:
+            if col in index_cols:
+                continue
+            # Check if this column contains a global metric label
+            elif any(label in col for label in global_labels):
+                global_cols.append(col)
+            # Check if this column contains a group metric label
+            elif any(label in col for label in group_labels):
+                group_cols.append(col)
+            else:
+                default_cols.append(col)
+
+        # Order ALL value columns (default, global, group) based on metric definition order
+        # Note: Polars pivot creates column names in JSON format: '{"estimate","label"}'
+        ordered_value_cols = []
+
+        # Combine all value columns (non-index columns)
+        all_value_cols = global_cols + group_cols + default_cols
+
+        if order_by == "metrics":
+            # Order by metric first, then estimate: metric1_model1, metric1_model2, metric2_model1, ...
+            for metric_label in metric_labels:
+                # First add global scope metrics (they don't vary by estimate)
+                if metric_label in global_cols and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+                    continue
+
+                # Then add group scope metrics (they also don't vary by estimate)
+                if metric_label in group_cols and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+                    continue
+
+                # Then add estimate-specific metrics (model/default scope)
+                for estimate_name in estimate_names:
+                    # Check for different column name formats
+                    possible_col_names = [
+                        f'{{"{estimate_name}","{metric_label}"}}',  # JSON format
+                        f"{estimate_name}_{metric_label}",          # Simple format
+                        f"{metric_label}_{estimate_name}",          # Alternative format
+                    ]
+
+                    for col_name in possible_col_names:
+                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                            ordered_value_cols.append(col_name)
+                            break
+        else:  # order_by == "estimates"
+            # Order by estimate first, then metric: model1_metric1, model1_metric2, model2_metric1, ...
+            for estimate_name in estimate_names:
+                for metric_label in metric_labels:
+                    # Skip global and group scope metrics in this loop - they'll be added at the end
+                    if metric_label in global_cols or metric_label in group_cols:
+                        continue
+
+                    # Check for different column name formats
+                    possible_col_names = [
+                        f'{{"{estimate_name}","{metric_label}"}}',  # JSON format
+                        f"{estimate_name}_{metric_label}",          # Simple format
+                        f"{metric_label}_{estimate_name}",          # Alternative format
+                    ]
+
+                    for col_name in possible_col_names:
+                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                            ordered_value_cols.append(col_name)
+                            break
+
+            # Add global and group scope metrics at the end (they don't vary by estimate)
+            for metric_label in metric_labels:
+                if (metric_label in global_cols or metric_label in group_cols) and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+
+        # Add any remaining value columns that weren't matched (fallback)
+        for col in all_value_cols:
+            if col not in ordered_value_cols:
+                ordered_value_cols.append(col)
+
+        # Build final column order: index -> ordered value columns
+        ordered_cols = index_cols + ordered_value_cols
+
+        # Only reorder if we have all columns (safety check)
+        if len(ordered_cols) == len(all_cols):
+            result = result.select(ordered_cols)
 
         return result
 
@@ -353,6 +485,7 @@ class MetricEvaluator:
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
+        order_by: str = "metrics",
     ) -> pl.DataFrame:
         """
         Pivot results with models as rows and group x metric as columns.
@@ -360,6 +493,9 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
+            order_by: Column ordering strategy - "metrics" (default) or "groups"
+                     "metrics": Order by metric definition order first, then groups
+                     "groups": Order by group combinations first, then metrics
 
         Returns:
             DataFrame with models as rows
@@ -400,7 +536,158 @@ class MetricEvaluator:
         # Add global and group columns, then reorder
         result = self._add_global_columns(result, global_data)
         result = self._add_group_columns(result, group_data)
-        result = self._reorder_columns(result, index_cols, global_data, group_data)
+        result = self._reorder_columns_pivot_by_model(
+            result, index_cols, global_data, group_data,
+            metrics, order_by
+        )
+
+        return result
+
+    def _reorder_columns_pivot_by_model(
+        self,
+        result: pl.DataFrame,
+        index_cols: list[str],
+        global_data: pl.DataFrame,
+        group_data: pl.DataFrame,
+        metrics: MetricDefine | list[MetricDefine] | None,
+        order_by: str,
+    ) -> pl.DataFrame:
+        """Reorder columns for pivot_by_model with proper metric/group ordering"""
+        if result.is_empty():
+            return result
+
+        # Validate order_by parameter
+        if order_by not in ["metrics", "groups"]:
+            raise ValueError(f"order_by must be 'metrics' or 'groups', got '{order_by}'")
+
+        # Get the ordered metrics based on original configuration
+        target_metrics = self._resolve_metrics(metrics)
+
+        # Extract names and labels for ordering
+        # Use names for column matching (since columns contain metric names)
+        # Use labels for scope detection (since scope data contains metric labels)
+        metric_names = [m.name for m in target_metrics]
+        metric_labels = [m.label or m.name for m in target_metrics]
+
+        all_cols = result.columns
+        global_cols = []
+        group_cols = []
+        default_cols = []
+
+        # Get scope information from the original data
+        global_labels = []
+        if not global_data.is_empty():
+            global_labels = global_data.select("label").unique().to_series().to_list()
+
+        group_labels = []
+        if not group_data.is_empty():
+            group_labels = group_data.select("label").unique().to_series().to_list()
+
+        # Separate columns by scope
+        for col in all_cols:
+            if col in index_cols:
+                continue
+            # Check if this column contains a global metric label
+            elif any(label in col for label in global_labels):
+                global_cols.append(col)
+            # Check if this column contains a group metric label
+            elif any(label in col for label in group_labels):
+                group_cols.append(col)
+            else:
+                default_cols.append(col)
+
+        # Order ALL value columns (default, global, group) based on metric definition order
+        # Note: pivot_by_model creates columns like '{"group1","group2","metric"}' format
+        ordered_value_cols = []
+
+        # Combine all value columns (non-index columns)
+        all_value_cols = global_cols + group_cols + default_cols
+
+        # Get unique group combinations for ordering
+        group_combinations = set()
+        for col in default_cols:
+            # Extract group combinations from JSON format columns
+            # Format: '{"group1","group2","metric"}'
+            if col.startswith('{') and col.endswith('}'):
+                # Parse the JSON-like format to extract group parts
+                # Remove outer braces and split by quotes and commas
+                inner = col[1:-1]  # Remove { and }
+                parts = [part.strip('"') for part in inner.split('","')]
+                if len(parts) > 1:
+                    # Get all parts except the last (which is the metric label)
+                    group_parts = parts[:-1]
+                    # Reconstruct the group combination in the same format
+                    group_combo = '","'.join(group_parts)
+                    group_combinations.add(group_combo)
+
+        group_combinations = sorted(list(group_combinations))
+
+        if order_by == "metrics":
+            # Order by metric first, then groups: metric1_group1, metric1_group2, metric2_group1, ...
+            for i, metric_name in enumerate(metric_names):
+                metric_label = metric_labels[i]
+
+                # First add global scope metrics (they don't vary by group)
+                if metric_label in global_cols and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+                    continue
+
+                # Then add group scope metrics (they also don't vary by group combinations)
+                if metric_label in group_cols and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+                    continue
+
+                # Then add group-specific metrics (model/default scope) for this metric across all groups
+                for group_combo in group_combinations:
+                    # Check for different column name formats
+                    possible_col_names = [
+                        f'{{"{group_combo}","{metric_name}"}}',     # JSON format with metric name
+                        f"{group_combo}_{metric_name}",             # Simple format with metric name
+                        f"{metric_name}_{group_combo}",             # Alternative format with metric name
+                    ]
+
+                    for col_name in possible_col_names:
+                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                            ordered_value_cols.append(col_name)
+                            break
+        else:  # order_by == "groups"
+            # Order by groups first, then metric: group1_metric1, group1_metric2, group2_metric1, ...
+            for group_combo in group_combinations:
+                for i, metric_name in enumerate(metric_names):
+                    metric_label = metric_labels[i]
+
+                    # Skip global and group scope metrics in this loop - they'll be added at the end
+                    if metric_label in global_cols or metric_label in group_cols:
+                        continue
+
+                    # Check for different column name formats
+                    possible_col_names = [
+                        f'{{"{group_combo}","{metric_name}"}}',     # JSON format with metric name
+                        f"{group_combo}_{metric_name}",             # Simple format with metric name
+                        f"{metric_name}_{group_combo}",             # Alternative format with metric name
+                    ]
+
+                    for col_name in possible_col_names:
+                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                            ordered_value_cols.append(col_name)
+                            break
+
+            # Add global and group scope metrics at the end (they don't vary by group combinations)
+            for metric_label in metric_labels:
+                if (metric_label in global_cols or metric_label in group_cols) and metric_label not in ordered_value_cols:
+                    ordered_value_cols.append(metric_label)
+
+        # Add any remaining value columns that weren't matched (fallback)
+        for col in all_value_cols:
+            if col not in ordered_value_cols:
+                ordered_value_cols.append(col)
+
+        # Build final column order: index -> ordered value columns
+        ordered_cols = index_cols + ordered_value_cols
+
+        # Only reorder if we have all columns (safety check)
+        if len(ordered_cols) == len(all_cols):
+            result = result.select(ordered_cols)
 
         return result
 
