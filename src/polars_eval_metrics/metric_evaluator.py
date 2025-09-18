@@ -44,6 +44,7 @@ class MetricEvaluator:
     df: pl.LazyFrame
     _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], pl.DataFrame]
     _compiled_metrics: dict[int, CompiledMetric]
+    _long_frame_cache: dict[tuple[str, ...], pl.LazyFrame]
 
     def __init__(
         self,
@@ -126,6 +127,7 @@ class MetricEvaluator:
         # Initialize evaluation cache
         self._evaluation_cache = {}
         self._compiled_metrics = {}
+        self._long_frame_cache = {}
 
     def _apply_base_filter(self) -> pl.LazyFrame:
         """Apply initial filter if provided"""
@@ -654,7 +656,7 @@ class MetricEvaluator:
         """Vectorized evaluation using single Polars group_by operations"""
 
         # Step 1: Prepare data in long format with all estimates
-        df_long = self.data_prep.build_long_frame(self.df, estimates)
+        df_long = self._get_long_frame(estimates)
 
         # Step 2: Generate all error columns for the melted data
         df_with_errors = self._add_error_columns_vectorized(df_long)
@@ -687,6 +689,16 @@ class MetricEvaluator:
             return pl.concat(harmonized_results, how="diagonal")
         else:
             return pl.DataFrame().lazy()
+
+    def _get_long_frame(self, estimates: list[str]) -> pl.LazyFrame:
+        """Return cached long-format frame for the given estimate subset."""
+
+        key = tuple(estimates)
+        cached = self._long_frame_cache.get(key)
+        if cached is None:
+            cached = self.data_prep.build_long_frame(self.df, estimates)
+            self._long_frame_cache[key] = cached
+        return cached
 
     def _evaluate_with_marginal_subgroups(
         self,

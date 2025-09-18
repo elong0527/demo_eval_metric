@@ -144,7 +144,9 @@ class ExpressionRegistry:
         """
         self._metrics[name] = expr
 
-    def register_summary(self, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+    def register_summary(
+        self, name: str, expr: pl.Expr | Callable[[], pl.Expr]
+    ) -> None:
         """
         Register a custom summary expression.
 

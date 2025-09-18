@@ -56,7 +56,9 @@ class MetricCompiler:
 
         return result
 
-    def _compile_custom(self, metric: "MetricDefine") -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_custom(
+        self, metric: "MetricDefine"
+    ) -> tuple[list[pl.Expr], pl.Expr | None]:
         within_exprs: list[pl.Expr] = []
 
         if metric.within_expr is not None:
@@ -89,7 +91,9 @@ class MetricCompiler:
 
         return within_exprs, across_pl_expr
 
-    def _compile_builtin(self, metric: "MetricDefine") -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_builtin(
+        self, metric: "MetricDefine"
+    ) -> tuple[list[pl.Expr], pl.Expr | None]:
         parts = (metric.name + ":").split(":")[:2]
         agg_name = parts[0]
         select_name = parts[1] if parts[1] else None

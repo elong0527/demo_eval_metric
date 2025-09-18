@@ -47,7 +47,9 @@ class DataPreparation:
 
         # Keep all non-estimate columns in the id_vars list
         id_vars = [
-            col for col in df_with_index.collect_schema().names() if col not in estimate_list
+            col
+            for col in df_with_index.collect_schema().names()
+            if col not in estimate_list
         ]
 
         df_long = df_with_index.unpivot(
