@@ -300,7 +300,7 @@ MetricRegistry.register_metric(
 MetricRegistry.register_metric(
     "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
 )
-MetricRegistry.register_metric("n_sample", pl.len().alias("value"))
+MetricRegistry.register_metric("n_sample", pl.struct(["subject_id", "visit_id", "estimate_value"]).n_unique().alias("value"))
 
 # Metrics for subjects with data (non-null ground truth or estimates)
 MetricRegistry.register_metric(
@@ -358,4 +358,6 @@ MetricRegistry.register_summary("sqrt", pl.col("value").sqrt())
 # Register percentile summaries
 percentiles = [1, 5, 25, 75, 90, 95, 99]
 for p in percentiles:
-    MetricRegistry.register_summary(f"p{p}", pl.col("value").quantile(p / 100, interpolation="linear"))
+    MetricRegistry.register_summary(
+        f"p{p}", pl.col("value").quantile(p / 100, interpolation="linear")
+    )
