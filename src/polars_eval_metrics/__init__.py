@@ -10,6 +10,7 @@ from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_evaluator import MetricEvaluator
 from .metric_helpers import create_metrics
 from .metric_registry import MetricRegistry
+from .table_formatter import pivot_to_gt
 
 
 __all__ = [
@@ -20,4 +21,6 @@ __all__ = [
     "create_metrics",
     "MetricRegistry",
     "MetricEvaluator",
+    # Table formatting
+    "format_pivot_table",
 ]

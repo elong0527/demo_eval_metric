@@ -19,7 +19,7 @@ The pivot methods support:
 
 ```{python}
 import polars as pl
-from polars_eval_metrics import MetricDefine, MetricEvaluator
+from polars_eval_metrics import MetricDefine, MetricEvaluator, pivot_to_gt
 from data_generator import create_expanded_clinical_data
 
 # Create sample dataset with comprehensive structure for pivot examples
@@ -46,7 +46,7 @@ evaluator_group = MetricEvaluator(
     metrics=mixed_metrics,
     ground_truth="actual",
     estimates=["model_1", "model_2"],
-    group_by=["treatment", "region"]
+    group_by=["treatment"]
 )
 
 # Get long format results
@@ -56,6 +56,11 @@ evaluator_group.evaluate()
 ```{python}
 # Pivot to wide format with group combinations as rows
 evaluator_group.pivot_by_group()
+```
+
+```{python}
+evaluator_group.pivot_by_group().\
+    pipe(format_pivot_table)
 ```
 
 ## Case 2: Pivot by Group (with subgroups)
@@ -69,11 +74,17 @@ evaluator_group_sub = MetricEvaluator(
     metrics=mixed_metrics,
     ground_truth="actual",
     estimates={"model_1": "Model 1", "model_2": "Model 2"},
-    group_by={"treatment": "Treatment", "region": "Region"},
-    subgroup_by={"age_group": "Age Group"}
+    group_by={"treatment": "Treatment"},
+    subgroup_by={"age_group": "Age Group", "region": "Region"}
 )
 
 evaluator_group_sub.pivot_by_group()
+```
+
+
+```{python}
+evaluator_group_sub.pivot_by_group().\
+    pipe(format_pivot_table)
 ```
 
 ## Case 3: Pivot by Model (without subgroups)
@@ -84,6 +95,11 @@ evaluator_model = evaluator_group
 
 # Pivot to wide format for model comparison
 evaluator_model.pivot_by_model()
+```
+
+```{python}
+evaluator_model.pivot_by_model().\
+    pipe(format_pivot_table)
 ```
 
 ## Case 4: Pivot by Model (with subgroups)
