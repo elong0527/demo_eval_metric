@@ -11,6 +11,7 @@ from typing import Any
 
 import polars as pl
 
+from .metric_compiler import MetricCompiler
 from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_registry import ExpressionRegistry, MetricRegistry
 
@@ -28,6 +29,7 @@ class MetricEvaluator:
     filter_expr: pl.Expr | None
     error_params: dict[str, dict[str, Any]]
     registry: ExpressionRegistry
+    metric_compiler: MetricCompiler
     df: pl.LazyFrame
     _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], pl.DataFrame]
 
@@ -96,6 +98,7 @@ class MetricEvaluator:
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
         self.registry = registry or MetricRegistry.get_registry()
+        self.metric_compiler = MetricCompiler(self.registry)
 
         # Apply base filter once
         self.df = self._apply_base_filter()
@@ -965,7 +968,9 @@ class MetricEvaluator:
         group_cols = self._get_vectorized_grouping_columns(metric)
 
         # Compile metric expressions
-        within_exprs, across_expr = metric.compile_expressions(self.registry)
+        compiled_metric = self.metric_compiler.compile(metric)
+        within_exprs = compiled_metric.within_exprs
+        across_expr = compiled_metric.across_expr
 
         # Apply metric-specific filtering if needed
         df_filtered = self._apply_metric_scope_filter(df_with_errors, metric, estimates)

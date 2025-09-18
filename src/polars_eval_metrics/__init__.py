@@ -6,6 +6,7 @@ Simple, fast, and flexible metric evaluation using Polars lazy evaluation.
 
 # pyre-strict
 
+from .metric_compiler import CompiledMetric, MetricCompiler
 from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_evaluator import MetricEvaluator
 from .metric_helpers import create_metrics
@@ -22,6 +23,8 @@ __all__ = [
     "MetricRegistry",
     "ExpressionRegistry",
     "create_builtin_registry",
+    "MetricCompiler",
+    "CompiledMetric",
     "MetricEvaluator",
     # Table formatting
     "format_pivot_table",
