@@ -22,9 +22,9 @@ class MetricEvaluator:
     df_raw: pl.LazyFrame
     metrics: list[MetricDefine]
     ground_truth: str
-    estimates: list[str]
-    group_by: list[str]
-    subgroup_by: list[str]
+    estimates: dict[str, str]  # Maps estimate names to display labels
+    group_by: dict[str, str]  # Maps group column names to display labels
+    subgroup_by: dict[str, str]  # Maps subgroup column names to display labels
     filter_expr: pl.Expr | None
     error_params: dict[str, dict[str, Any]]
     df: pl.LazyFrame
@@ -35,24 +35,62 @@ class MetricEvaluator:
         df: pl.DataFrame | pl.LazyFrame,
         metrics: MetricDefine | list[MetricDefine],
         ground_truth: str = "actual",
-        estimates: str | list[str] | None = None,
-        group_by: list[str] | None = None,
-        subgroup_by: list[str] | None = None,
+        estimates: str | list[str] | dict[str, str] | None = None,
+        group_by: list[str] | dict[str, str] | None = None,
+        subgroup_by: list[str] | dict[str, str] | None = None,
         filter_expr: pl.Expr | None = None,
         error_params: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        """Initialize evaluator with complete evaluation context"""
+        """Initialize evaluator with complete evaluation context
+
+        Args:
+            df: Input data as DataFrame or LazyFrame
+            metrics: Metric definitions to evaluate
+            ground_truth: Column name containing ground truth values
+            estimates: Estimate column names. Can be:
+                - str: Single column name
+                - list[str]: List of column names
+                - dict[str, str]: Mapping from column names to display labels
+            group_by: Columns to group by for analysis. Can be:
+                - list[str]: List of column names
+                - dict[str, str]: Mapping from column names to display labels
+            subgroup_by: Columns for subgroup analysis. Can be:
+                - list[str]: List of column names
+                - dict[str, str]: Mapping from column names to display labels
+            filter_expr: Optional filter expression
+            error_params: Parameters for error calculations
+        """
         # Store data as LazyFrame
         self.df_raw = df.lazy() if isinstance(df, pl.DataFrame) else df
 
         # Normalize inputs to lists
         self.metrics = [metrics] if isinstance(metrics, MetricDefine) else metrics
         self.ground_truth = ground_truth
-        self.estimates = (
-            [estimates] if isinstance(estimates, str) else (estimates or [])
-        )
-        self.group_by = group_by or []
-        self.subgroup_by = subgroup_by or []
+
+        # Handle estimates - can be string, list of strings, or dict with labels
+        if isinstance(estimates, str):
+            self.estimates = {estimates: estimates}
+        elif isinstance(estimates, dict):
+            self.estimates = estimates
+        elif isinstance(estimates, list):
+            self.estimates = {est: est for est in (estimates or [])}
+        else:
+            self.estimates = {}
+        # Handle group_by - can be list of strings or dict with labels
+        if isinstance(group_by, dict):
+            self.group_by = group_by
+        elif isinstance(group_by, list):
+            self.group_by = {col: col for col in (group_by or [])}
+        else:
+            self.group_by = {}
+
+        # Handle subgroup_by - can be list of strings or dict with labels
+        if isinstance(subgroup_by, dict):
+            self.subgroup_by = subgroup_by
+        elif isinstance(subgroup_by, list):
+            self.subgroup_by = {col: col for col in (subgroup_by or [])}
+        else:
+            self.subgroup_by = {}
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
 
@@ -115,10 +153,11 @@ class MetricEvaluator:
     ) -> list[str]:
         """Build index columns for pivot operations"""
         index_cols = []
-        if not include_estimate and self.group_by:
-            index_cols.extend(self.group_by)
+        # Put subgroup columns first when they exist
         if "subgroup_name" in long_df.columns:
             index_cols.extend(["subgroup_name", "subgroup_value"])
+        if not include_estimate and self.group_by:
+            index_cols.extend(list(self.group_by.keys()))
         if include_estimate:
             index_cols.append("estimate")
         return index_cols
@@ -136,7 +175,7 @@ class MetricEvaluator:
 
         if self.group_by:
             # Use the group_by columns plus label for pivot
-            pivot_cols = self.group_by + ["label"]
+            pivot_cols = list(self.group_by.keys()) + ["label"]
             group_pivoted = group_data_with_index.pivot(
                 on=pivot_cols,
                 values="value",
@@ -350,9 +389,17 @@ class MetricEvaluator:
         # Add global columns and reorder
         result = self._add_global_columns(result, global_data)
         result = self._reorder_columns_pivot_by_group(
-            result, index_cols, global_data, group_data,
-            metrics, estimates, order_by
+            result, index_cols, global_data, group_data, metrics, estimates, order_by
         )
+
+        # Replace group_by column names with their display labels in final output
+        if self.group_by:
+            group_rename_mapping = {}
+            for col_name, label in self.group_by.items():
+                if col_name != label and col_name in result.columns:
+                    group_rename_mapping[col_name] = label
+            if group_rename_mapping:
+                result = result.rename(group_rename_mapping)
 
         return result
 
@@ -372,7 +419,9 @@ class MetricEvaluator:
 
         # Validate order_by parameter
         if order_by not in ["metrics", "estimates"]:
-            raise ValueError(f"order_by must be 'metrics' or 'estimates', got '{order_by}'")
+            raise ValueError(
+                f"order_by must be 'metrics' or 'estimates', got '{order_by}'"
+            )
 
         # Get the ordered metrics and estimates based on original configuration
         target_metrics = self._resolve_metrics(metrics)
@@ -380,7 +429,8 @@ class MetricEvaluator:
 
         # Extract labels in order
         metric_labels = [m.label or m.name for m in target_metrics]
-        estimate_names = target_estimates
+        # Get estimate labels for column ordering (use labels if available, otherwise names)
+        estimate_labels = [self.estimates.get(est, est) for est in target_estimates]
 
         all_cols = result.columns
         global_cols = []
@@ -420,31 +470,40 @@ class MetricEvaluator:
             # Order by metric first, then estimate: metric1_model1, metric1_model2, metric2_model1, ...
             for metric_label in metric_labels:
                 # First add global scope metrics (they don't vary by estimate)
-                if metric_label in global_cols and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in global_cols
+                    and metric_label not in ordered_value_cols
+                ):
                     ordered_value_cols.append(metric_label)
                     continue
 
                 # Then add group scope metrics (they also don't vary by estimate)
-                if metric_label in group_cols and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in group_cols
+                    and metric_label not in ordered_value_cols
+                ):
                     ordered_value_cols.append(metric_label)
                     continue
 
                 # Then add estimate-specific metrics (model/default scope)
-                for estimate_name in estimate_names:
+                for estimate_label in estimate_labels:
                     # Check for different column name formats
                     possible_col_names = [
-                        f'{{"{estimate_name}","{metric_label}"}}',  # JSON format
-                        f"{estimate_name}_{metric_label}",          # Simple format
-                        f"{metric_label}_{estimate_name}",          # Alternative format
+                        f'{{"{estimate_label}","{metric_label}"}}',  # JSON format
+                        f"{estimate_label}_{metric_label}",  # Simple format
+                        f"{metric_label}_{estimate_label}",  # Alternative format
                     ]
 
                     for col_name in possible_col_names:
-                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                        if (
+                            col_name in all_value_cols
+                            and col_name not in ordered_value_cols
+                        ):
                             ordered_value_cols.append(col_name)
                             break
         else:  # order_by == "estimates"
             # Order by estimate first, then metric: model1_metric1, model1_metric2, model2_metric1, ...
-            for estimate_name in estimate_names:
+            for estimate_label in estimate_labels:
                 for metric_label in metric_labels:
                     # Skip global and group scope metrics in this loop - they'll be added at the end
                     if metric_label in global_cols or metric_label in group_cols:
@@ -452,19 +511,24 @@ class MetricEvaluator:
 
                     # Check for different column name formats
                     possible_col_names = [
-                        f'{{"{estimate_name}","{metric_label}"}}',  # JSON format
-                        f"{estimate_name}_{metric_label}",          # Simple format
-                        f"{metric_label}_{estimate_name}",          # Alternative format
+                        f'{{"{estimate_label}","{metric_label}"}}',  # JSON format
+                        f"{estimate_label}_{metric_label}",  # Simple format
+                        f"{metric_label}_{estimate_label}",  # Alternative format
                     ]
 
                     for col_name in possible_col_names:
-                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                        if (
+                            col_name in all_value_cols
+                            and col_name not in ordered_value_cols
+                        ):
                             ordered_value_cols.append(col_name)
                             break
 
             # Add global and group scope metrics at the end (they don't vary by estimate)
             for metric_label in metric_labels:
-                if (metric_label in global_cols or metric_label in group_cols) and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in global_cols or metric_label in group_cols
+                ) and metric_label not in ordered_value_cols:
                     ordered_value_cols.append(metric_label)
 
         # Add any remaining value columns that weren't matched (fallback)
@@ -516,7 +580,7 @@ class MetricEvaluator:
         if not model_default_data.is_empty():
             # Use multiple columns directly in pivot
             if self.group_by:
-                pivot_on_cols = self.group_by + ["metric"]
+                pivot_on_cols = list(self.group_by.keys()) + ["metric"]
             else:
                 # Add a constant column for pivoting when no group_by
                 model_default_data = model_default_data.with_columns(
@@ -537,9 +601,17 @@ class MetricEvaluator:
         result = self._add_global_columns(result, global_data)
         result = self._add_group_columns(result, group_data)
         result = self._reorder_columns_pivot_by_model(
-            result, index_cols, global_data, group_data,
-            metrics, order_by
+            result, index_cols, global_data, group_data, metrics, order_by
         )
+
+        # Replace group_by column names with their display labels in final output
+        if self.group_by:
+            group_rename_mapping = {}
+            for col_name, label in self.group_by.items():
+                if col_name != label and col_name in result.columns:
+                    group_rename_mapping[col_name] = label
+            if group_rename_mapping:
+                result = result.rename(group_rename_mapping)
 
         return result
 
@@ -558,7 +630,9 @@ class MetricEvaluator:
 
         # Validate order_by parameter
         if order_by not in ["metrics", "groups"]:
-            raise ValueError(f"order_by must be 'metrics' or 'groups', got '{order_by}'")
+            raise ValueError(
+                f"order_by must be 'metrics' or 'groups', got '{order_by}'"
+            )
 
         # Get the ordered metrics based on original configuration
         target_metrics = self._resolve_metrics(metrics)
@@ -608,7 +682,7 @@ class MetricEvaluator:
         for col in default_cols:
             # Extract group combinations from JSON format columns
             # Format: '{"group1","group2","metric"}'
-            if col.startswith('{') and col.endswith('}'):
+            if col.startswith("{") and col.endswith("}"):
                 # Parse the JSON-like format to extract group parts
                 # Remove outer braces and split by quotes and commas
                 inner = col[1:-1]  # Remove { and }
@@ -628,12 +702,18 @@ class MetricEvaluator:
                 metric_label = metric_labels[i]
 
                 # First add global scope metrics (they don't vary by group)
-                if metric_label in global_cols and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in global_cols
+                    and metric_label not in ordered_value_cols
+                ):
                     ordered_value_cols.append(metric_label)
                     continue
 
                 # Then add group scope metrics (they also don't vary by group combinations)
-                if metric_label in group_cols and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in group_cols
+                    and metric_label not in ordered_value_cols
+                ):
                     ordered_value_cols.append(metric_label)
                     continue
 
@@ -641,13 +721,16 @@ class MetricEvaluator:
                 for group_combo in group_combinations:
                     # Check for different column name formats
                     possible_col_names = [
-                        f'{{"{group_combo}","{metric_name}"}}',     # JSON format with metric name
-                        f"{group_combo}_{metric_name}",             # Simple format with metric name
-                        f"{metric_name}_{group_combo}",             # Alternative format with metric name
+                        f'{{"{group_combo}","{metric_name}"}}',  # JSON format with metric name
+                        f"{group_combo}_{metric_name}",  # Simple format with metric name
+                        f"{metric_name}_{group_combo}",  # Alternative format with metric name
                     ]
 
                     for col_name in possible_col_names:
-                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                        if (
+                            col_name in all_value_cols
+                            and col_name not in ordered_value_cols
+                        ):
                             ordered_value_cols.append(col_name)
                             break
         else:  # order_by == "groups"
@@ -662,19 +745,24 @@ class MetricEvaluator:
 
                     # Check for different column name formats
                     possible_col_names = [
-                        f'{{"{group_combo}","{metric_name}"}}',     # JSON format with metric name
-                        f"{group_combo}_{metric_name}",             # Simple format with metric name
-                        f"{metric_name}_{group_combo}",             # Alternative format with metric name
+                        f'{{"{group_combo}","{metric_name}"}}',  # JSON format with metric name
+                        f"{group_combo}_{metric_name}",  # Simple format with metric name
+                        f"{metric_name}_{group_combo}",  # Alternative format with metric name
                     ]
 
                     for col_name in possible_col_names:
-                        if col_name in all_value_cols and col_name not in ordered_value_cols:
+                        if (
+                            col_name in all_value_cols
+                            and col_name not in ordered_value_cols
+                        ):
                             ordered_value_cols.append(col_name)
                             break
 
             # Add global and group scope metrics at the end (they don't vary by group combinations)
             for metric_label in metric_labels:
-                if (metric_label in global_cols or metric_label in group_cols) and metric_label not in ordered_value_cols:
+                if (
+                    metric_label in global_cols or metric_label in group_cols
+                ) and metric_label not in ordered_value_cols:
                     ordered_value_cols.append(metric_label)
 
         # Add any remaining value columns that weren't matched (fallback)
@@ -710,14 +798,14 @@ class MetricEvaluator:
     def _resolve_estimates(self, estimates: str | list[str] | None) -> list[str]:
         """Resolve which estimates to evaluate"""
         if estimates is None:
-            return self.estimates
+            return list(self.estimates.keys())
 
         estimates_list = [estimates] if isinstance(estimates, str) else estimates
 
         for e in estimates_list:
             if e not in self.estimates:
                 raise ValueError(
-                    f"Estimate '{e}' not in configured estimates: {self.estimates}"
+                    f"Estimate '{e}' not in configured estimates: {list(self.estimates.keys())}"
                 )
 
         return estimates_list
@@ -774,10 +862,10 @@ class MetricEvaluator:
         # For each metric, evaluate across all marginal subgroup combinations
         for metric in metrics:
             # For each subgroup variable, create separate analyses
-            for subgroup_col in self.subgroup_by:
+            for subgroup_col in self.subgroup_by.keys():
                 # Temporarily set subgroup_by to single column for this analysis
                 original_subgroup_by = self.subgroup_by
-                self.subgroup_by = [subgroup_col]
+                self.subgroup_by = {subgroup_col: self.subgroup_by[subgroup_col]}
 
                 try:
                     # Evaluate metric for this single subgroup
@@ -788,7 +876,9 @@ class MetricEvaluator:
                     # Add subgroup metadata columns
                     metric_result = metric_result.with_columns(
                         [
-                            pl.lit(subgroup_col).alias("subgroup_name"),
+                            pl.lit(self.subgroup_by[subgroup_col]).alias(
+                                "subgroup_name"
+                            ),
                             pl.col(subgroup_col).cast(pl.Utf8).alias("subgroup_value"),
                         ]
                     )
@@ -834,6 +924,17 @@ class MetricEvaluator:
             variable_name="estimate_name",
             value_name="estimate_value",
         )
+
+        # Replace estimate names with their display labels
+        if self.estimates:
+            # Create a mapping expression to replace estimate names with labels
+            estimate_mapping = pl.col("estimate_name")
+            for name, label in self.estimates.items():
+                estimate_mapping = estimate_mapping.replace(name, label)
+            df_long = df_long.with_columns(estimate_mapping.alias("estimate"))
+        else:
+            # If no labels provided, just rename the column
+            df_long = df_long.rename({"estimate_name": "estimate"})
 
         # Rename the ground truth column to a standard name for easier reference
         if self.ground_truth in df_long.collect_schema().names():
@@ -942,23 +1043,23 @@ class MetricEvaluator:
         # Handle scope-based grouping
         if metric.scope == MetricScope.GLOBAL:
             # Global: only subgroups
-            group_cols.extend(self.subgroup_by)
+            group_cols.extend(list(self.subgroup_by.keys()))
 
         elif metric.scope == MetricScope.MODEL:
             # Model: estimate + subgroups
-            group_cols.append("estimate_name")
-            group_cols.extend(self.subgroup_by)
+            group_cols.append("estimate")
+            group_cols.extend(list(self.subgroup_by.keys()))
 
         elif metric.scope == MetricScope.GROUP:
             # Group: groups + subgroups (no estimate separation)
-            group_cols.extend(self.group_by)
-            group_cols.extend(self.subgroup_by)
+            group_cols.extend(list(self.group_by.keys()))
+            group_cols.extend(list(self.subgroup_by.keys()))
 
         else:
             # Default: estimate + groups + subgroups
-            group_cols.append("estimate_name")
-            group_cols.extend(self.group_by)
-            group_cols.extend(self.subgroup_by)
+            group_cols.append("estimate")
+            group_cols.extend(list(self.group_by.keys()))
+            group_cols.extend(list(self.subgroup_by.keys()))
 
         return group_cols
 
@@ -992,15 +1093,8 @@ class MetricEvaluator:
             pl.lit(metric.scope.value if metric.scope else None).alias("scope"),
         ]
 
-        # Rename estimate_name to estimate for compatibility
+        # Add metadata columns
         result_with_metadata = result.with_columns(metadata)
-
-        # Check if estimate_name column exists and rename it
-        schema = result_with_metadata.collect_schema()
-        if "estimate_name" in schema.names():
-            result_with_metadata = result_with_metadata.rename(
-                {"estimate_name": "estimate"}
-            )
 
         return result_with_metadata
 
@@ -1035,7 +1129,11 @@ class MetricEvaluator:
 
         # Convert estimate column to enum with input-based ordering
         if "estimate" in available_columns and self.estimates:
-            estimate_enum = pl.Enum(self.estimates)
+            # Use estimate labels for enum ordering, maintaining original estimate order
+            estimate_labels_ordered = [
+                self.estimates.get(est, est) for est in self.estimates.keys()
+            ]
+            estimate_enum = pl.Enum(estimate_labels_ordered)
             combined = combined.with_columns(pl.col("estimate").cast(estimate_enum))
 
         # Define column order
@@ -1047,7 +1145,7 @@ class MetricEvaluator:
                 column_order.append(col)
 
         # Group columns
-        for col in self.group_by:
+        for col in self.group_by.keys():
             if col in available_columns and col not in column_order:
                 column_order.append(col)
 
@@ -1064,7 +1162,7 @@ class MetricEvaluator:
 
         # Sort columns
         sort_cols = []
-        potential_sort_cols = self.group_by + ["subgroup_name", "label"]
+        potential_sort_cols = list(self.group_by.keys()) + ["subgroup_name", "label"]
         if "estimate" in available_columns:
             potential_sort_cols.append("estimate")
 
@@ -1120,7 +1218,7 @@ class MetricEvaluator:
             "visit_id",  # Entity columns
         ]
         # Add dynamic group_by columns
-        standard_cols.extend(self.group_by)
+        standard_cols.extend(list(self.group_by.keys()))
         # Add remaining standard columns
         standard_cols.extend(
             [

@@ -68,9 +68,9 @@ evaluator_group_sub = MetricEvaluator(
     df=df,
     metrics=mixed_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
-    group_by=["treatment", "region"],
-    subgroup_by=["age_group"]
+    estimates={"model_1": "Model 1", "model_2": "Model 2"},
+    group_by={"treatment": "Treatment", "region": "Region"},
+    subgroup_by={"age_group": "Age Group"}
 )
 
 evaluator_group_sub.pivot_by_group()
