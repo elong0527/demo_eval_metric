@@ -7,7 +7,7 @@ for publication-ready output with proper column spanners and formatting.
 
 import polars as pl
 from polars import selectors as cs
-from great_tables import GT, loc, style
+from great_tables import GT
 
 
 def pivot_to_gt(
@@ -33,7 +33,9 @@ def pivot_to_gt(
     has_subgroups = "subgroup_name" in df.columns and "subgroup_value" in df.columns
 
     # Parse JSON column names to identify metrics and models
-    json_columns = [col for col in df.columns if col.startswith('{"') and col.endswith('"}')]
+    json_columns = [
+        col for col in df.columns if col.startswith('{"') and col.endswith('"}')
+    ]
     parsed_columns = {}
     metrics = set()
     models = set()
@@ -60,25 +62,20 @@ def pivot_to_gt(
     if has_subgroups:
         # Use tab_stub to create row groups based on subgroup_name
         # and use subgroup_value as row labels
-        gt_table = (gt_table
-            .tab_stub(rowname_col="subgroup_value", groupname_col="subgroup_name")
+        gt_table = gt_table.tab_stub(
+            rowname_col="subgroup_value", groupname_col="subgroup_name"
         )
-
 
     # Create column spanners for each metric
     metrics_sorted = sorted(metrics)
     for metric in metrics_sorted:
         # Find all columns for this metric
         metric_columns = [
-            col for col, info in parsed_columns.items()
-            if info["metric"] == metric
+            col for col, info in parsed_columns.items() if info["metric"] == metric
         ]
 
         if metric_columns:
-            gt_table = gt_table.tab_spanner(
-                label=metric,
-                columns=metric_columns
-            )
+            gt_table = gt_table.tab_spanner(label=metric, columns=metric_columns)
 
     # Rename JSON columns to show only model names
     column_renames = {}
@@ -89,9 +86,8 @@ def pivot_to_gt(
         gt_table = gt_table.cols_label(**column_renames)
 
     # Format and center-align all numeric columns
-    gt_table = (gt_table
-        .fmt_number(columns=cs.numeric(), decimals=decimals)
-        .cols_align(align="center", columns=cs.numeric())
+    gt_table = gt_table.fmt_number(columns=cs.numeric(), decimals=decimals).cols_align(
+        align="center", columns=cs.numeric()
     )
 
     return gt_table

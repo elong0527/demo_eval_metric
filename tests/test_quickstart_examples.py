@@ -58,7 +58,7 @@ class TestQuickstartGroupedEvaluation:
 
         result = evaluator.evaluate()
 
-        # Check structure: 2 treatments × 2 models × 2 metrics = 8 rows
+        # Check structure: 2 treatments x 2 models x 2 metrics = 8 rows
         assert result.shape[0] == 8
 
         # Check columns

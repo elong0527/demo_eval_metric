@@ -166,7 +166,7 @@ class TestPivotByMethods:
             if col.startswith('{"')
             and col.endswith('"}')
             and any(grp in col for grp in ['"A"', '"B"'])
-            and any(met in col for met in ['"mae"', '"rmse"'])
+            and any(met in col for met in ['"MAE"', '"RMSE"'])
         ]
         assert len(default_cols) == 8  # 4 groups x 2 metrics
 
@@ -257,7 +257,7 @@ class TestPivotByMethods:
                 if col.startswith('{"')
                 and col.endswith('"}')
                 and any(grp in col for grp in ['"A"', '"B"'])
-                and any(met in col for met in ['"mae"', '"rmse"'])
+                and any(met in col for met in ['"MAE"', '"RMSE"'])
             ]
             if default_indices:
                 assert global_idx < min(default_indices)

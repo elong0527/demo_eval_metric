@@ -700,7 +700,6 @@ class MetricEvaluator:
         if order_by == "metrics":
             # Order by metric first, then groups: metric1_group1, metric1_group2, metric2_group1, ...
             for i, metric_label in enumerate(metric_labels):
-
                 # First add global scope metrics (they don't vary by group)
                 if (
                     metric_label in global_cols
@@ -737,7 +736,6 @@ class MetricEvaluator:
             # Order by groups first, then metric: group1_metric1, group1_metric2, group2_metric1, ...
             for group_combo in group_combinations:
                 for i, metric_label in enumerate(metric_labels):
-
                     # Skip global and group scope metrics in this loop - they'll be added at the end
                     if metric_label in global_cols or metric_label in group_cols:
                         continue
