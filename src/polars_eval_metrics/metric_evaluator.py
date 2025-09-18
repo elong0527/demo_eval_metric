@@ -5,12 +5,14 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 # pyre-strict
 
 import polars as pl
 
+from .data_prep import DataPreparation, DatasetContext
 from .metric_compiler import MetricCompiler
 from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_registry import ExpressionRegistry, MetricRegistry
@@ -30,6 +32,7 @@ class MetricEvaluator:
     error_params: dict[str, dict[str, Any]]
     registry: ExpressionRegistry
     metric_compiler: MetricCompiler
+    data_prep: DataPreparation
     df: pl.LazyFrame
     _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], pl.DataFrame]
 
@@ -99,6 +102,14 @@ class MetricEvaluator:
         self.error_params = error_params or {}
         self.registry = registry or MetricRegistry.get_registry()
         self.metric_compiler = MetricCompiler(self.registry)
+        self.data_prep = DataPreparation(
+            DatasetContext(
+                ground_truth=self.ground_truth,
+                estimates=self.estimates,
+                group_by=self.group_by,
+                subgroup_by=self.subgroup_by,
+            )
+        )
 
         # Apply base filter once
         self.df = self._apply_base_filter()
@@ -819,7 +830,7 @@ class MetricEvaluator:
         """Vectorized evaluation using single Polars group_by operations"""
 
         # Step 1: Prepare data in long format with all estimates
-        df_long = self._prepare_long_format_data(estimates)
+        df_long = self.data_prep.build_long_frame(self.df, estimates)
 
         # Step 2: Generate all error columns for the melted data
         df_with_errors = self._add_error_columns_vectorized(df_long)
@@ -906,44 +917,6 @@ class MetricEvaluator:
             return pl.concat(harmonized_results, how="diagonal")
         else:
             return pl.DataFrame().lazy()
-
-    def _prepare_long_format_data(self, estimates: list[str]) -> pl.LazyFrame:
-        """Reshape data from wide to long format for vectorized processing"""
-
-        # Add a row index to the original data to uniquely identify each sample
-        # This must be done BEFORE unpivoting to avoid double counting
-        df_with_index = self.df.with_row_index("sample_index")
-
-        # Get all columns except estimates to preserve in melt (including the new index)
-        id_vars = []
-        for col in df_with_index.collect_schema().names():
-            if col not in estimates:
-                id_vars.append(col)
-
-        # Unpivot estimates into long format
-        df_long = df_with_index.unpivot(
-            index=id_vars,
-            on=estimates,
-            variable_name="estimate_name",
-            value_name="estimate_value",
-        )
-
-        # Replace estimate names with their display labels
-        if self.estimates:
-            # Create a mapping expression to replace estimate names with labels
-            estimate_mapping = pl.col("estimate_name")
-            for name, label in self.estimates.items():
-                estimate_mapping = estimate_mapping.replace(name, label)
-            df_long = df_long.with_columns(estimate_mapping.alias("estimate"))
-        else:
-            # If no labels provided, just rename the column
-            df_long = df_long.rename({"estimate_name": "estimate"})
-
-        # Rename the ground truth column to a standard name for easier reference
-        if self.ground_truth in df_long.collect_schema().names():
-            df_long = df_long.rename({self.ground_truth: "ground_truth"})
-
-        return df_long
 
     def _add_error_columns_vectorized(self, df_long: pl.LazyFrame) -> pl.LazyFrame:
         """Add error columns for the long-format data"""
