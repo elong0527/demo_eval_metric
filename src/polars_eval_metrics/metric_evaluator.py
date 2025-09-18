@@ -608,9 +608,9 @@ class MetricEvaluator:
 
             # First level: within entities
             if within_exprs:
-                first_level_expr = within_exprs[0].alias("intermediate_value")
+                first_level_expr = within_exprs[0].alias("value")
             elif across_expr is not None:
-                first_level_expr = across_expr.alias("intermediate_value")
+                first_level_expr = across_expr.alias("value")
             else:
                 raise ValueError(
                     f"No valid expression for first level of metric {metric.name}"
@@ -620,16 +620,12 @@ class MetricEvaluator:
 
             # Second level: across entities
             if across_expr is not None and within_exprs:
-                # True two-level case - substitute 'value' with 'intermediate_value' in the expression
-                # For now, use the across expression directly but this may need column name mapping
-                # TODO: More sophisticated expression rewriting to handle column references
-                second_level_expr = (
-                    pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
-                )
+                # True two-level case - use the across_expr directly since we named the column 'value'
+                second_level_expr = across_expr.alias("value").cast(pl.Float64)
             else:
-                # Default aggregation across entities
+                # Default aggregation across entities when no across_expr specified
                 second_level_expr = (
-                    pl.col("intermediate_value").mean().alias("value").cast(pl.Float64)
+                    pl.col("value").mean().alias("value").cast(pl.Float64)
                 )
 
             if group_cols:
