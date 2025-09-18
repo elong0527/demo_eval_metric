@@ -1,0 +1,19 @@
+---
+title: Developer Notes
+---
+
+## Data Preparation Pipeline
+
+`DataPreparation` converts source frames to the long format consumed by `MetricEvaluator` and provides marginal subgroup views.  Each marginal frame already includes canonical `subgroup_name` and `subgroup_value` columns, so evaluator logic no longer mutates `subgroup_by` during iteration.  The helper is configured through `DatasetContext`, which mirrors evaluator inputs (ground truth column, estimate labels, group/subgroup labels).
+
+## Metric Compilation Cache
+
+`MetricEvaluator` now caches `CompiledMetric` instances via `_compiled_metrics`.  Every evaluation resolves metric objects once and reuses their compiled expressions across vectorized passes and pivot rendering.
+
+## Long Frame Cache
+
+Repeated evaluations over the same estimate subsets reuse the melted long-format LazyFrame.  `_long_frame_cache` stores frames by the tuple of estimate names so downstream computations skip the unpivot step unless inputs change.
+
+## Pivot Utilities
+
+`pivot_utils.py` centralizes column ordering for the `pivot_by_group` and `pivot_by_model` helpers.  The utilities partition Polars pivot output into global, group, and default buckets, then derive the desired ordering from the original metric configuration.  This removes duplicated branching across the evaluator and keeps the JSON-style column names (`{"axis","metric"}`) the single source of truth.
