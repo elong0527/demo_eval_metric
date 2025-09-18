@@ -34,6 +34,7 @@ demo_eval_metric/
 |       +-- metric_registry.py  # Unified registry for all expressions
 |       +-- metric_helpers.py   # Helper functions for creating metrics
 |       +-- metric_evaluator.py # MetricEvaluator - executes evaluations
+|       +-- table_formatter.py  # Great Tables integration for pivot tables
 |       +-- py.typed            # PEP 561 type hint marker
 |
 +-- docs/                        # [DOCUMENTATION WEBSITE]
@@ -45,7 +46,13 @@ demo_eval_metric/
 |
 +-- tests/                       # [TEST SUITE]
 |   +-- test_metric_define.py  # Unit tests for MetricDefine
-|   +-- test_basic.py.bak       # [BACKUP - to be updated]
+|   +-- test_metric_evaluator.py # Unit tests for MetricEvaluator
+|   +-- test_metric_helpers.py  # Unit tests for helper functions
+|   +-- test_pivot_by_methods.py # Tests for pivot table methods
+|   +-- test_subgroup_sorting.py # Tests for subgroup value sorting
+|   +-- test_quickstart_examples.py # Integration tests from docs
+|   +-- test_integration_quickstart.py # End-to-end workflow tests
+|   +-- test_enum_labels.py     # Tests for enum label handling
 |
 +-- .github/
 |   +-- workflows/
@@ -287,16 +294,37 @@ metrics = create_metrics(configs)
 
 ## Testing Strategy
 
-### Current Test Coverage
-- [x] **test_metric_define.py**: Comprehensive tests for MetricDefine
-  - Basic metric creation
-  - Custom expressions
-  - Validation rules
-  - All metric types and scopes
+### Current Test Coverage (92 Tests Total)
+- [x] **test_metric_define.py**: Comprehensive tests for MetricDefine (12 tests)
+  - Basic metric creation, custom expressions, validation rules
+  - All metric types and scopes, string representations
+- [x] **test_metric_evaluator.py**: Complete MetricEvaluator testing (19 tests)
+  - Basic evaluation, scopes (global/model/group/default)
+  - Metric types (across_sample, within/across_subject, within/across_visit)
+  - Grouping, edge cases, lazy evaluation
+- [x] **test_metric_helpers.py**: Helper function tests (12 tests)
+  - create_metrics(), create_metric_from_dict()
+  - Error handling, auto-label generation
+- [x] **test_pivot_by_methods.py**: Pivot table functionality (7 tests)
+  - pivot_by_group() and pivot_by_model() methods
+  - Column ordering, mixed scopes, caching efficiency
+- [x] **test_subgroup_sorting.py**: Subgroup sorting validation (6 tests)
+  - Numeric and string subgroup value sorting
+  - Priority over treatment sorting, method consistency
+- [x] **test_quickstart_examples.py**: Documentation integration (11 tests)
+  - Examples from quickstart guide
+  - Data integrity, error handling, equivalent calculations
+- [x] **test_integration_quickstart.py**: End-to-end workflows (11 tests)
+  - Complete evaluation pipelines from docs
+  - Single metric, grouped, subgroup evaluations
+- [x] **test_enum_labels.py**: Enum label handling (3 tests)
+  - Enum ordering, mixed metrics, performance
 
-### Needed Tests
-- [ ] MetricEvaluator integration tests
-- [ ] End-to-end workflow tests
+### Test Strategy Completed
+- [x] Comprehensive unit test coverage for all components
+- [x] Integration tests for complete workflows
+- [x] Edge case and error handling validation
+- [x] Documentation example verification
 
 ## GitHub Actions CI/CD
 
@@ -325,7 +353,8 @@ metrics = create_metrics(configs)
 4. **Validate Early**: Use Pydantic validation in MetricDefine
 5. **Document Examples**: Add examples to docs/ for new features
 6. **Use ASCII Only**: All code, documentation, and comments must use ASCII characters only
-7  **Using typing consistently** using |, dict etc
+7. **Using typing consistently**: using |, dict etc
+8. **Test Subgroup Sorting**: Ensure subgroup_value takes priority in sort order
 
 ### DON'Ts
 1. **Don't Modify plan/**: Reference only, contains original design
@@ -385,6 +414,28 @@ metric = MetricDefine(
 )
 ```
 
+## Recent Major Fixes
+
+### Subgroup Sorting Fix (2025-01-18)
+**Issue**: subgroup_value was not being sorted properly in pivot_by_model() and pivot_by_group() methods
+**Root Cause**: Sort priority was incorrect - treatments were being sorted before subgroup values
+**Solution**: Simple fix by reordering sort columns in _format_result() method:
+- Put subgroup_value first in sort priority
+- Then subgroup_name, group columns, and other columns
+- Works for both numeric and string subgroup values
+**Files Changed**:
+- `/src/polars_eval_metrics/metric_evaluator.py`: Modified sort column logic
+- `/tests/test_subgroup_sorting.py`: Added comprehensive test suite (6 tests)
+- `/tests/test_pivot_by_methods.py`: Updated assertions for metric labels
+
+### ASCII Compliance (2025-01-18)
+**Issue**: Non-ASCII characters (×, ✓, ✅, →, corrupted headers) throughout codebase
+**Solution**: Replaced all non-ASCII characters with ASCII equivalents:
+- `×` → `x`, `✓` → `✔`, `✅` → `[PASS]`, `→` → `->`
+- Fixed corrupted README.md headers and bullet points
+**Files Changed**: All test files, README.md, documentation files
+**Verification**: All 92 tests pass after ASCII conversion
+
 ## Troubleshooting
 
 ### Issue: Import errors in tests
@@ -416,9 +467,14 @@ from polars_eval_metrics import MetricDefine
 5. **Expression composition**: Build complex metrics from simpler ones
 
 ### Completed Features
-- [PASS] **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
-- [PASS] **Custom Expression Support**: Easy registration of custom expressions
-- [PASS] **Clean Architecture**: Separation of concerns between definition and evaluation
+- [x] **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
+- [x] **Custom Expression Support**: Easy registration of custom expressions
+- [x] **Clean Architecture**: Separation of concerns between definition and evaluation
+- [x] **Pivot Table Methods**: pivot_by_group() and pivot_by_model() with proper sorting
+- [x] **Subgroup Sorting**: Correct subgroup_value priority in sort operations
+- [x] **Great Tables Integration**: Professional table formatting with pivot_to_gt()
+- [x] **Comprehensive Testing**: 92 tests covering all components and workflows
+- [x] **ASCII Compliance**: All code uses ASCII-only characters for compatibility
 
 ### Built-in Expressions
 
@@ -476,6 +532,6 @@ from polars_eval_metrics import MetricDefine
 
 ---
 
-*Last updated: 2025-01-02*  
-*Maintainer: Engineering Team*  
-*Major Update: Unified MetricRegistry system - all expressions in one place*
+*Last updated: 2025-01-18*
+*Maintainer: Engineering Team*
+*Recent Updates: Subgroup sorting fix, ASCII compliance, comprehensive test coverage*
