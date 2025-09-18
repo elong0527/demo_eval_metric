@@ -300,7 +300,10 @@ MetricRegistry.register_metric(
 MetricRegistry.register_metric(
     "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
 )
-MetricRegistry.register_metric("n_sample", pl.struct(["subject_id", "visit_id", "estimate_value"]).n_unique().alias("value"))
+MetricRegistry.register_metric(
+    "n_sample",
+    pl.struct(["subject_id", "visit_id", "ground_truth"]).n_unique().alias("value"),
+)
 
 # Metrics for subjects with data (non-null ground truth or estimates)
 MetricRegistry.register_metric(

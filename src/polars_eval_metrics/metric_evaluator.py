@@ -544,16 +544,20 @@ class MetricEvaluator:
             value_name="estimate_value",
         )
 
+        # Rename the ground truth column to a standard name for easier reference
+        if self.ground_truth in df_long.collect_schema().names():
+            df_long = df_long.rename({self.ground_truth: "ground_truth"})
+
         return df_long
 
     def _add_error_columns_vectorized(self, df_long: pl.LazyFrame) -> pl.LazyFrame:
         """Add error columns for the long-format data"""
 
         # Generate error expressions for the vectorized format
-        # Use 'estimate_value' as the estimate column and ground_truth as before
+        # Use 'estimate_value' as the estimate column and 'ground_truth' as the renamed ground truth column
         error_expressions = MetricRegistry.generate_error_columns(
             estimate="estimate_value",
-            ground_truth=self.ground_truth,
+            ground_truth="ground_truth",
             error_types=None,
             error_params=self.error_params,
         )
