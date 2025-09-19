@@ -969,10 +969,13 @@ class MetricEvaluator:
             ]
             ordered_categories.extend(remaining_ordered)
 
-            # Create enum with the combined ordered categories
+            # Create enum with the combined ordered categories (convert to strings)
             if len(ordered_categories) > 1:
-                enum_type = pl.Enum(ordered_categories)
-                result = result.with_columns(pl.col("subgroup_value").cast(enum_type))
+                string_categories = [str(cat) for cat in ordered_categories]
+                enum_type = pl.Enum(string_categories)
+                result = result.with_columns(
+                    pl.col("subgroup_value").cast(pl.Utf8).cast(enum_type)
+                )
 
         return result
 
@@ -1065,53 +1068,51 @@ class MetricEvaluator:
         metrics: list[MetricDefine],
         estimates: list[str],
     ) -> pl.LazyFrame:
-        """Evaluate metrics with marginal subgroup analysis"""
+        """Evaluate metrics with marginal subgroup analysis using vectorized operations"""
+        original_subgroup_by = self.subgroup_by
+
+        # Create all subgroup combinations using vectorized unpivot
+        subgroup_data = self._prepare_subgroup_data_vectorized(
+            df_with_errors, original_subgroup_by
+        )
+
+        # Evaluate all metrics across all subgroups in a vectorized manner
         results = []
-
-        # For each metric, evaluate across all marginal subgroup combinations
         for metric in metrics:
-            # For each subgroup variable, create separate analyses
-            for subgroup_col in self.subgroup_by.keys():
-                # Temporarily set subgroup_by to single column for this analysis
-                original_subgroup_by = self.subgroup_by
-                self.subgroup_by = {subgroup_col: self.subgroup_by[subgroup_col]}
+            # Temporarily clear subgroup_by to use the vectorized subgroup columns instead
+            self.subgroup_by = {}
+            try:
+                metric_result = self._evaluate_metric_vectorized(
+                    subgroup_data, metric, estimates
+                )
+                results.append(metric_result)
+            finally:
+                self.subgroup_by = original_subgroup_by
 
-                try:
-                    # Evaluate metric for this single subgroup
-                    metric_result = self._evaluate_metric_vectorized(
-                        df_with_errors, metric, estimates
-                    )
+        # Combine results
+        harmonized_results = self._harmonize_result_schemas(results)
+        return pl.concat(harmonized_results, how="diagonal")
 
-                    # Add subgroup metadata columns
-                    metric_result = metric_result.with_columns(
-                        [
-                            pl.lit(self.subgroup_by[subgroup_col]).alias(
-                                "subgroup_name"
-                            ),
-                            pl.col(subgroup_col).cast(pl.Utf8).alias("subgroup_value"),
-                        ]
-                    )
+    def _prepare_subgroup_data_vectorized(
+        self, df_with_errors: pl.LazyFrame, subgroup_by: dict[str, str]
+    ) -> pl.LazyFrame:
+        """Prepare subgroup data using vectorized unpivot operations"""
+        schema_names = df_with_errors.collect_schema().names()
+        subgroup_cols = list(subgroup_by.keys())
+        id_vars = [col for col in schema_names if col not in subgroup_cols]
 
-                    # Remove the original subgroup column to avoid duplication
-                    available_cols = metric_result.collect_schema().names()
-                    if subgroup_col in available_cols:
-                        cols_to_keep = [
-                            col for col in available_cols if col != subgroup_col
-                        ]
-                        metric_result = metric_result.select(cols_to_keep)
-
-                    results.append(metric_result)
-
-                finally:
-                    # Restore original subgroup_by
-                    self.subgroup_by = original_subgroup_by
-
-        # Harmonize schemas before combining
-        if results:
-            harmonized_results = self._harmonize_result_schemas(results)
-            return pl.concat(harmonized_results, how="diagonal")
-        else:
-            return pl.DataFrame().lazy()
+        # Use unpivot to create marginal subgroup analysis
+        return df_with_errors.unpivot(
+            index=id_vars,
+            on=subgroup_cols,
+            variable_name="subgroup_name",
+            value_name="subgroup_value",
+        ).with_columns(
+            [
+                # Replace subgroup column names with their display labels
+                pl.col("subgroup_name").replace(subgroup_by)
+            ]
+        )
 
     def _prepare_long_format_data(self, estimates: list[str]) -> pl.LazyFrame:
         """Reshape data from wide to long format for vectorized processing"""
@@ -1120,11 +1121,9 @@ class MetricEvaluator:
         # This must be done BEFORE unpivoting to avoid double counting
         df_with_index = self.df.with_row_index("sample_index")
 
-        # Get all columns except estimates to preserve in melt (including the new index)
-        id_vars = []
-        for col in df_with_index.collect_schema().names():
-            if col not in estimates:
-                id_vars.append(col)
+        # Get all columns except estimates to preserve in melt
+        schema_names = df_with_index.collect_schema().names()
+        id_vars = [col for col in schema_names if col not in estimates]
 
         # Unpivot estimates into long format
         df_long = df_with_index.unpivot(
@@ -1134,20 +1133,10 @@ class MetricEvaluator:
             value_name="estimate_value",
         )
 
-        # Replace estimate names with their display labels
-        if self.estimates:
-            # Create a mapping expression to replace estimate names with labels
-            estimate_mapping = pl.col("estimate_name")
-            for name, label in self.estimates.items():
-                estimate_mapping = estimate_mapping.replace(name, label)
-            df_long = df_long.with_columns(estimate_mapping.alias("estimate"))
-        else:
-            # If no labels provided, just rename the column
-            df_long = df_long.rename({"estimate_name": "estimate"})
-
-        # Rename the ground truth column to a standard name for easier reference
-        if self.ground_truth in df_long.collect_schema().names():
-            df_long = df_long.rename({self.ground_truth: "ground_truth"})
+        # Replace estimate names with their display labels and rename columns
+        df_long = df_long.with_columns(
+            [pl.col("estimate_name").replace(self.estimates).alias("estimate")]
+        ).rename({self.ground_truth: "ground_truth"})
 
         return df_long
 
@@ -1171,7 +1160,7 @@ class MetricEvaluator:
         """Evaluate a single metric using vectorized operations"""
 
         # Determine grouping columns based on metric scope
-        group_cols = self._get_vectorized_grouping_columns(metric)
+        group_cols = self._get_vectorized_grouping_columns(metric, df_with_errors)
 
         # Compile metric expressions
         within_exprs, across_expr = metric.compile_expressions()
@@ -1244,31 +1233,50 @@ class MetricEvaluator:
         # Add metadata columns
         return self._add_metadata_vectorized(result, metric)
 
-    def _get_vectorized_grouping_columns(self, metric: MetricDefine) -> list[str]:
+    def _get_vectorized_grouping_columns(
+        self, metric: MetricDefine, df: pl.LazyFrame | None = None
+    ) -> list[str]:
         """Get grouping columns for vectorized evaluation based on metric scope"""
-
         group_cols = []
+
+        # Check if we're in vectorized subgroup mode (data has subgroup_name/subgroup_value columns)
+        if df is not None:
+            schema_names = df.collect_schema().names()
+            using_vectorized_subgroups = (
+                "subgroup_name" in schema_names and "subgroup_value" in schema_names
+            )
+        else:
+            using_vectorized_subgroups = False
 
         # Handle scope-based grouping
         if metric.scope == MetricScope.GLOBAL:
-            # Global: only subgroups
-            group_cols.extend(list(self.subgroup_by.keys()))
+            if using_vectorized_subgroups:
+                group_cols.extend(["subgroup_name", "subgroup_value"])
+            else:
+                group_cols.extend(list(self.subgroup_by.keys()))
 
         elif metric.scope == MetricScope.MODEL:
-            # Model: estimate + subgroups
             group_cols.append("estimate")
-            group_cols.extend(list(self.subgroup_by.keys()))
+            if using_vectorized_subgroups:
+                group_cols.extend(["subgroup_name", "subgroup_value"])
+            else:
+                group_cols.extend(list(self.subgroup_by.keys()))
 
         elif metric.scope == MetricScope.GROUP:
-            # Group: groups + subgroups (no estimate separation)
             group_cols.extend(list(self.group_by.keys()))
-            group_cols.extend(list(self.subgroup_by.keys()))
+            if using_vectorized_subgroups:
+                group_cols.extend(["subgroup_name", "subgroup_value"])
+            else:
+                group_cols.extend(list(self.subgroup_by.keys()))
 
         else:
             # Default: estimate + groups + subgroups
             group_cols.append("estimate")
             group_cols.extend(list(self.group_by.keys()))
-            group_cols.extend(list(self.subgroup_by.keys()))
+            if using_vectorized_subgroups:
+                group_cols.extend(["subgroup_name", "subgroup_value"])
+            else:
+                group_cols.extend(list(self.subgroup_by.keys()))
 
         return group_cols
 

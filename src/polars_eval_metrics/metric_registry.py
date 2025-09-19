@@ -97,31 +97,16 @@ class MetricRegistry:
         error_types: list[str] | None = None,
         error_params: dict[str, dict[str, Any]] | None = None,
     ) -> list[pl.Expr]:
-        """
-        Generate error column expressions for specified error types.
-
-        Args:
-            estimate: Estimate column name
-            ground_truth: Ground truth column name
-            error_types: List of error types to generate. If None, uses ALL registered types.
-            error_params: Dictionary mapping error types to their parameters
-
-        Returns:
-            List of Polars expressions with aliases matching the error_types names
-        """
-        if error_types is None:
-            # Use all registered error types
-            error_types = list(cls._errors.keys())
-
+        """Generate error column expressions for specified error types."""
+        error_types = error_types or list(cls._errors.keys())
         error_params = error_params or {}
-        expressions = []
 
-        for error_type in error_types:
-            params = error_params.get(error_type, {})
-            expr = cls.get_error(error_type, estimate, ground_truth, **params)
-            expressions.append(expr.alias(error_type))
-
-        return expressions
+        return [
+            cls.get_error(
+                error_type, estimate, ground_truth, **error_params.get(error_type, {})
+            ).alias(error_type)
+            for error_type in error_types
+        ]
 
     @classmethod
     def list_errors(cls) -> list[str]:
