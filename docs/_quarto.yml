@@ -6,22 +6,24 @@ project:
 
 website:
   title: "Polars Eval Metrics"
+  sidebar:
+    style: "docked"
+    search: true
+    contents:
+      - section: "Getting Started"
+        contents:
+          - index.qmd
+          - quickstart.qmd
+      - section: "Examples"
+        contents:
+          - metric_define.qmd
+          - metric_evaluator.qmd
+          - metric_pivot.qmd
+      - section: "Resources"
+        contents:
+          - href: coverage/index.html
+            text: Coverage Report
   navbar:
-    left:
-      - href: index.qmd
-        text: Home
-      - href: quickstart.qmd
-        text: Quick Start
-      - text: Examples
-        menu:
-          - href: metric_define.qmd
-            text: MetricDefine
-          - href: metric_evaluator.qmd
-            text: MetricEvaluator
-          - href: metric_pivot.qmd
-            text: MetricPivot
-      - href: coverage/index.html
-        text: Coverage
     right:
       - icon: github
         href: https://github.com/elong0527/demo_eval_metric
@@ -33,6 +35,7 @@ format:
     toc: true
     toc-depth: 3
     toc-title: "On this page"
+    toc-location: right
     code-copy: true
     code-overflow: wrap
     css: styles.css
