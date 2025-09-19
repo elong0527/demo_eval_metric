@@ -7,7 +7,7 @@ for publication-ready output with proper column spanners and formatting.
 
 import polars as pl
 from polars import selectors as cs
-from great_tables import GT
+from great_tables import GT, html
 
 
 def pivot_to_gt(
@@ -75,12 +75,17 @@ def pivot_to_gt(
         ]
 
         if metric_columns:
-            gt_table = gt_table.tab_spanner(label=metric, columns=metric_columns)
+            gt_table = gt_table.tab_spanner(label=html(metric), columns=metric_columns)
 
-    # Rename JSON columns to show only model names
+    # Rename JSON columns to show only model names (with HTML support)
     column_renames = {}
     for col, info in parsed_columns.items():
-        column_renames[col] = info["model"]
+        column_renames[col] = html(info["model"])
+
+    # Also handle non-JSON columns that might contain HTML
+    non_json_columns = [col for col in df.columns if col not in json_columns and col not in ["subgroup_name", "subgroup_value"]]
+    for col in non_json_columns:
+        column_renames[col] = html(col)
 
     if column_renames:
         gt_table = gt_table.cols_label(**column_renames)
