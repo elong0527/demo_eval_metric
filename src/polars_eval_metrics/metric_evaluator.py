@@ -67,30 +67,10 @@ class MetricEvaluator:
         self.metrics = [metrics] if isinstance(metrics, MetricDefine) else metrics
         self.ground_truth = ground_truth
 
-        # Handle estimates - can be string, list of strings, or dict with labels
-        if isinstance(estimates, str):
-            self.estimates = {estimates: estimates}
-        elif isinstance(estimates, dict):
-            self.estimates = estimates
-        elif isinstance(estimates, list):
-            self.estimates = {est: est for est in (estimates or [])}
-        else:
-            self.estimates = {}
-        # Handle group_by - can be list of strings or dict with labels
-        if isinstance(group_by, dict):
-            self.group_by = group_by
-        elif isinstance(group_by, list):
-            self.group_by = {col: col for col in (group_by or [])}
-        else:
-            self.group_by = {}
-
-        # Handle subgroup_by - can be list of strings or dict with labels
-        if isinstance(subgroup_by, dict):
-            self.subgroup_by = subgroup_by
-        elif isinstance(subgroup_by, list):
-            self.subgroup_by = {col: col for col in (subgroup_by or [])}
-        else:
-            self.subgroup_by = {}
+        # Process inputs using dedicated methods
+        self.estimates = self._process_estimates(estimates)
+        self.group_by = self._process_grouping(group_by)
+        self.subgroup_by = self._process_grouping(subgroup_by)
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
 
@@ -429,17 +409,8 @@ class MetricEvaluator:
         if result.is_empty():
             return result
 
-        # Validate column_order_by parameter
-        if column_order_by not in ["metrics", "estimates"]:
-            raise ValueError(
-                f"column_order_by must be 'metrics' or 'estimates', got '{column_order_by}'"
-            )
-
-        # Validate row_order_by parameter
-        if row_order_by not in ["group", "subgroup"]:
-            raise ValueError(
-                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
-            )
+        # Validate parameters
+        self._validate_evaluation_params(column_order_by, row_order_by)
 
         # Get the ordered metrics and estimates based on original configuration
         target_metrics = self._resolve_metrics(metrics)
@@ -1504,3 +1475,84 @@ class MetricEvaluator:
             harmonized.append(harmonized_result)
 
         return harmonized
+
+    # ========================================
+    # INPUT PROCESSING METHODS - Pure Logic
+    # ========================================
+
+    @staticmethod
+    def _process_estimates(
+        estimates: str | list[str] | dict[str, str] | None,
+    ) -> dict[str, str]:
+        """Pure transformation: normalize estimates to dict format"""
+        if isinstance(estimates, str):
+            return {estimates: estimates}
+        elif isinstance(estimates, dict):
+            return estimates
+        elif isinstance(estimates, list):
+            return {est: est for est in (estimates or [])}
+        else:
+            return {}
+
+    @staticmethod
+    def _process_grouping(
+        grouping: list[str] | dict[str, str] | None,
+    ) -> dict[str, str]:
+        """Pure transformation: normalize grouping to dict format"""
+        if isinstance(grouping, dict):
+            return grouping
+        elif isinstance(grouping, list):
+            return {col: col for col in (grouping or [])}
+        else:
+            return {}
+
+    # ========================================
+    # VALIDATION METHODS - Centralized Logic
+    # ========================================
+
+    def _validate_inputs(self) -> None:
+        """Validate all inputs after processing"""
+        if not self.estimates:
+            raise ValueError("No estimates provided")
+
+        if not self.metrics:
+            raise ValueError("No metrics provided")
+
+        # Validate that required columns exist
+        schema_names = self.df_raw.collect_schema().names()
+
+        if self.ground_truth not in schema_names:
+            raise ValueError(
+                f"Ground truth column '{self.ground_truth}' not found in data"
+            )
+
+        missing_estimates = [
+            est for est in self.estimates.keys() if est not in schema_names
+        ]
+        if missing_estimates:
+            raise ValueError(f"Estimate columns not found in data: {missing_estimates}")
+
+        missing_groups = [
+            col for col in self.group_by.keys() if col not in schema_names
+        ]
+        if missing_groups:
+            raise ValueError(f"Group columns not found in data: {missing_groups}")
+
+        missing_subgroups = [
+            col for col in self.subgroup_by.keys() if col not in schema_names
+        ]
+        if missing_subgroups:
+            raise ValueError(f"Subgroup columns not found in data: {missing_subgroups}")
+
+    @staticmethod
+    def _validate_evaluation_params(column_order_by: str, row_order_by: str) -> None:
+        """Validate evaluation parameters"""
+        if column_order_by not in ["metrics", "estimates"]:
+            raise ValueError(
+                f"column_order_by must be 'metrics' or 'estimates', got '{column_order_by}'"
+            )
+
+        if row_order_by not in ["group", "subgroup"]:
+            raise ValueError(
+                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
+            )

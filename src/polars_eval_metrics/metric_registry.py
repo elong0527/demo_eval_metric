@@ -114,8 +114,18 @@ class MetricRegistry:
         return list(cls._errors.keys())
 
     @classmethod
+    def has_metric(cls, name: str) -> bool:
+        """Check if a metric exists in the registry."""
+        return name in cls._metrics
+
+    @classmethod
+    def has_summary(cls, name: str) -> bool:
+        """Check if a summary/selector exists in the registry."""
+        return name in cls._summaries
+
+    @classmethod
     def has_error(cls, name: str) -> bool:
-        """Check if an error type is registered."""
+        """Check if an error type exists in the registry."""
         return name in cls._errors
 
     # ============ Metric Expression Methods ============

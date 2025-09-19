@@ -159,7 +159,9 @@ class TestErrorHandling:
         """Test error when name is missing."""
         config = {"label": "Missing Name"}
 
-        with pytest.raises(KeyError, match="name"):
+        with pytest.raises(
+            ValueError, match="Metric configuration must include 'name'"
+        ):
             create_metric_from_dict(config)
 
     def test_invalid_type_error(self):

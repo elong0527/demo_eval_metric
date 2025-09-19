@@ -265,46 +265,36 @@ class MetricDefine(BaseModel):
         return result
 
     def _compile_custom_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
-        """Return custom metric expressions - handle built-in names and Polars expressions in list"""
-        within_exprs = []
-
-        # Handle within_expr - always a list after normalization
-        if self.within_expr is not None:
-            # List - resolve each item
-            for item in self.within_expr or []:
-                if isinstance(item, str):
-                    # Built-in metric name
-                    try:
-                        builtin_expr = MetricRegistry.get_metric(item)
-                        within_exprs.append(builtin_expr)
-                    except ValueError:
-                        raise ValueError(
-                            f"Unknown built-in metric in within_expr: {item}"
-                        )
-                else:
-                    # Already a Polars expression
-                    within_exprs.append(item)
-
-        # Handle across_expr - can be string (built-in selector) or expression
-        across_pl_expr = None
-        if self.across_expr is not None:
-            if isinstance(self.across_expr, str):
-                # Built-in selector name
-                try:
-                    across_pl_expr = MetricRegistry.get_summary(self.across_expr)
-                except ValueError:
-                    raise ValueError(
-                        f"Unknown built-in selector in across_expr: {self.across_expr}"
-                    )
-            else:
-                # Already a Polars expression
-                across_pl_expr = self.across_expr
+        """Compile custom metric expressions - assumes all inputs are validated"""
+        within_exprs = self._resolve_within_expressions()
+        across_expr = self._resolve_across_expression()
 
         # If only across_expr provided (no within_expr), use it as single aggregation
-        if len(within_exprs) == 0 and across_pl_expr is not None:
-            return [across_pl_expr], None
+        if len(within_exprs) == 0 and across_expr is not None:
+            return [across_expr], None
 
-        return within_exprs, across_pl_expr
+        return within_exprs, across_expr
+
+    def _resolve_within_expressions(self) -> list[pl.Expr]:
+        """Pure implementation: resolve within expressions without validation"""
+        if self.within_expr is None:
+            return []
+
+        return [
+            MetricRegistry.get_metric(item) if isinstance(item, str) else item
+            for item in self.within_expr
+        ]
+
+    def _resolve_across_expression(self) -> pl.Expr | None:
+        """Pure implementation: resolve across expression without validation"""
+        if self.across_expr is None:
+            return None
+
+        return (
+            MetricRegistry.get_summary(self.across_expr)
+            if isinstance(self.across_expr, str)
+            else self.across_expr
+        )
 
     def _compile_builtin_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
         """Compile built-in metric expressions"""
@@ -524,3 +514,44 @@ class MetricDefine(BaseModel):
     def __repr__(self) -> str:
         """Representation for interactive display"""
         return self.__str__()
+
+    # ========================================
+    # VALIDATION METHODS - Centralized Logic
+    # ========================================
+
+    @staticmethod
+    def _validate_expression_references(
+        within_expr: list[str | pl.Expr] | None, across_expr: str | pl.Expr | None
+    ) -> None:
+        """Validate that all referenced built-in expressions exist"""
+        # Validate within_expr references
+        if within_expr:
+            for item in within_expr:
+                if isinstance(item, str) and not MetricRegistry.has_metric(item):
+                    raise ValueError(f"Unknown built-in metric in within_expr: {item}")
+
+        # Validate across_expr references
+        if isinstance(across_expr, str) and not MetricRegistry.has_summary(across_expr):
+            raise ValueError(f"Unknown built-in selector in across_expr: {across_expr}")
+
+    @classmethod
+    def _validate_metric_consistency(
+        cls,
+        name: str,
+        within_expr: list[str | pl.Expr] | None,
+        across_expr: str | pl.Expr | None,
+    ) -> None:
+        """Validate metric definition consistency"""
+        is_custom = within_expr is not None or across_expr is not None
+
+        if not is_custom and ":" in name:
+            # Built-in hierarchical metric validation
+            parts = name.split(":", 1)
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise ValueError(f"Invalid built-in metric name format: {name}")
+
+            # Validate that both parts exist in registry
+            if not MetricRegistry.has_metric(parts[0]):
+                raise ValueError(f"Unknown built-in metric: {parts[0]}")
+            if not MetricRegistry.has_summary(parts[1]):
+                raise ValueError(f"Unknown built-in selector: {parts[1]}")
