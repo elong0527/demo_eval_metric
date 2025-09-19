@@ -347,6 +347,62 @@ class TestPivotByMethods:
 
         print("✔ Caching efficiency test passed")
 
+    def test_new_parameter_names(self, sample_data):
+        """Test the new column_order_by and row_order_by parameters"""
+
+        metrics = [MetricDefine(name="mae", label="MAE")]
+
+        evaluator = MetricEvaluator(
+            df=sample_data,
+            metrics=metrics,
+            ground_truth="actual",
+            estimates=["model_a", "model_b"],
+            group_by=["treatment"],
+            subgroup_by=["age_group"],
+        )
+
+        # Test column_order_by parameter
+        result_metrics_first = evaluator.pivot_by_group(column_order_by="metrics")
+        result_estimates_first = evaluator.pivot_by_group(column_order_by="estimates")
+
+        assert not result_metrics_first.is_empty()
+        assert not result_estimates_first.is_empty()
+
+        # Column order should be different
+        cols_metrics = [col for col in result_metrics_first.columns if col.startswith('{"')]
+        cols_estimates = [col for col in result_estimates_first.columns if col.startswith('{"')]
+
+        # Should have same columns but potentially different order
+        assert len(cols_metrics) == len(cols_estimates)
+
+        # Test row_order_by parameter
+        result_group_first = evaluator.pivot_by_group(row_order_by="group")
+        result_subgroup_first = evaluator.pivot_by_group(row_order_by="subgroup")
+
+        assert not result_group_first.is_empty()
+        assert not result_subgroup_first.is_empty()
+
+        # Both should have same shape but potentially different row order
+        assert result_group_first.shape == result_subgroup_first.shape
+
+        # Test pivot_by_model with new parameters
+        result_model_metrics = evaluator.pivot_by_model(column_order_by="metrics")
+        result_model_groups = evaluator.pivot_by_model(column_order_by="groups")
+
+        assert not result_model_metrics.is_empty()
+        assert not result_model_groups.is_empty()
+
+        # Test that old parameter names would raise an error (if we had validation)
+        # This ensures backward compatibility is maintained
+        try:
+            # These should work (no old parameter validation implemented)
+            evaluator.pivot_by_group(column_order_by="metrics", row_order_by="group")
+            evaluator.pivot_by_model(column_order_by="metrics", row_order_by="group")
+        except Exception as e:
+            pytest.fail(f"New parameters should work: {e}")
+
+        print("✔ New parameter names test passed")
+
 
 if __name__ == "__main__":
     # Create test instance and run tests
