@@ -21,7 +21,14 @@ class TestEnumPreservationAndOrdering:
         data = {
             "subject_id": ["S01", "S02", "S03", "S04", "S05", "S06"],
             "treatment": ["A", "A", "B", "B", "A", "B"],
-            "age_group": ["Middle", "Senior", "Young", "Middle", "Senior", "Young"],  # Mixed order
+            "age_group": [
+                "Middle",
+                "Senior",
+                "Young",
+                "Middle",
+                "Senior",
+                "Young",
+            ],  # Mixed order
             "region": ["North", "South", "North", "South", "North", "South"],
             "actual": [10, 12, 15, 18, 11, 13],
             "model_1": [11, 13, 14, 19, 12, 14],
@@ -38,7 +45,9 @@ class TestEnumPreservationAndOrdering:
         """Basic metrics for testing"""
         return [MetricDefine(name="mae", label="MAE")]
 
-    def test_enum_preservation_single_subgroup(self, sample_data_with_enum, basic_metrics):
+    def test_enum_preservation_single_subgroup(
+        self, sample_data_with_enum, basic_metrics
+    ):
         """Test that original enum ordering is preserved with single subgroup"""
         evaluator = MetricEvaluator(
             df=sample_data_with_enum,
@@ -58,7 +67,9 @@ class TestEnumPreservationAndOrdering:
         enum_categories = result.get_column("subgroup_value").dtype.categories.to_list()
         assert enum_categories == ["Young", "Middle", "Senior"]
 
-    def test_enum_preservation_multiple_subgroups(self, sample_data_with_enum, basic_metrics):
+    def test_enum_preservation_multiple_subgroups(
+        self, sample_data_with_enum, basic_metrics
+    ):
         """Test enum preservation with multiple subgroups (enum + string)"""
         evaluator = MetricEvaluator(
             df=sample_data_with_enum,
@@ -78,7 +89,9 @@ class TestEnumPreservationAndOrdering:
         enum_categories = result.get_column("subgroup_value").dtype.categories.to_list()
 
         # Age group values should come first in original order
-        age_values = [cat for cat in enum_categories if cat in ["Young", "Middle", "Senior"]]
+        age_values = [
+            cat for cat in enum_categories if cat in ["Young", "Middle", "Senior"]
+        ]
         assert age_values == ["Young", "Middle", "Senior"]
 
         # Region values should be included
@@ -100,7 +113,11 @@ class TestEnumPreservationAndOrdering:
 
         # Filter age group rows and check their order
         age_group_rows = result.filter(pl.col("subgroup_name") == "Age Group")
-        age_group_order = age_group_rows.get_column("subgroup_value").unique(maintain_order=True).to_list()
+        age_group_order = (
+            age_group_rows.get_column("subgroup_value")
+            .unique(maintain_order=True)
+            .to_list()
+        )
 
         # Should be in enum order: Young, Middle, Senior
         assert age_group_order == ["Young", "Middle", "Senior"]
@@ -147,12 +164,18 @@ class TestEnumPreservationAndOrdering:
 
         # Get age group rows from sorted result
         age_group_sorted = sorted_result.filter(pl.col("subgroup_name") == "Age Group")
-        age_order = age_group_sorted.get_column("subgroup_value").unique(maintain_order=True).to_list()
+        age_order = (
+            age_group_sorted.get_column("subgroup_value")
+            .unique(maintain_order=True)
+            .to_list()
+        )
 
         # Should be in enum order
         assert age_order == ["Young", "Middle", "Senior"]
 
-    def test_pivot_by_model_enum_preservation(self, sample_data_with_enum, basic_metrics):
+    def test_pivot_by_model_enum_preservation(
+        self, sample_data_with_enum, basic_metrics
+    ):
         """Test that pivot_by_model also preserves enum ordering"""
         evaluator = MetricEvaluator(
             df=sample_data_with_enum,
@@ -224,4 +247,6 @@ class TestEnumPreservationAndOrdering:
         # Should not convert to enum if only one unique value
         subgroup_dtype = result.get_column("subgroup_value").dtype
         # Could be string or enum depending on implementation, but should work either way
-        assert subgroup_dtype in [pl.Utf8, pl.String] or isinstance(subgroup_dtype, pl.Enum)
+        assert subgroup_dtype in [pl.Utf8, pl.String] or isinstance(
+            subgroup_dtype, pl.Enum
+        )

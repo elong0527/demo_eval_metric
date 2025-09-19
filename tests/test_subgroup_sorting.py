@@ -123,7 +123,7 @@ class TestSubgroupSorting:
             subgroup_by={"priority": "Priority"},
         )
 
-        result = evaluator.pivot_by_group()
+        result = evaluator.pivot_by_group(row_order_by="subgroup")
 
         # Check that within each subgroup_value, treatments are sorted
         # But subgroup_value is the primary sort key

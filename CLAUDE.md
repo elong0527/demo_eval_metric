@@ -429,9 +429,9 @@ metric = MetricDefine(
 - `/tests/test_pivot_by_methods.py`: Updated assertions for metric labels
 
 ### ASCII Compliance (2025-01-18)
-**Issue**: Non-ASCII characters (×, ✓, ✅, →, corrupted headers) throughout codebase
+**Issue**: Non-ASCII characters (x marks, checkmarks, arrows, corrupted headers) throughout codebase
 **Solution**: Replaced all non-ASCII characters with ASCII equivalents:
-- `×` → `x`, `✓` → `✔`, `✅` → `[PASS]`, `→` → `->`
+- Non-ASCII marks → `x`, checkmarks → `[PASS]`, arrows → `->`
 - Fixed corrupted README.md headers and bullet points
 **Files Changed**: All test files, README.md, documentation files
 **Verification**: All 92 tests pass after ASCII conversion
