@@ -294,7 +294,8 @@ class MetricEvaluator:
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
-        order_by: str = "metrics",
+        column_order_by: str = "metrics",
+        row_order_by: str = "group",
     ) -> pl.DataFrame:
         """
         Pivot results with groups as rows and model x metric as columns.
@@ -302,9 +303,12 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
-            order_by: Column ordering strategy ("metrics" or "estimates"). Default: "metrics"
+            column_order_by: Column ordering strategy ("metrics" or "estimates"). Default: "metrics"
                      - "metrics": Order columns by metric first, then estimate (metric1_model1, metric1_model2, metric2_model1, ...)
                      - "estimates": Order columns by estimate first, then metric (model1_metric1, model1_metric2, model2_metric1, ...)
+            row_order_by: Row ordering strategy ("group" or "subgroup"). Default: "group"
+                     - "group": Order rows by group columns first, then subgroup
+                     - "subgroup": Order rows by subgroup columns first, then group
 
         Returns:
             DataFrame with group combinations as rows
@@ -389,7 +393,14 @@ class MetricEvaluator:
         # Add global columns and reorder
         result = self._add_global_columns(result, global_data)
         result = self._reorder_columns_pivot_by_group(
-            result, index_cols, global_data, group_data, metrics, estimates, order_by
+            result,
+            index_cols,
+            global_data,
+            group_data,
+            metrics,
+            estimates,
+            column_order_by,
+            row_order_by,
         )
 
         # Replace group_by column names with their display labels in final output
@@ -411,16 +422,23 @@ class MetricEvaluator:
         group_data: pl.DataFrame,
         metrics: MetricDefine | list[MetricDefine] | None,
         estimates: str | list[str] | None,
-        order_by: str,
+        column_order_by: str,
+        row_order_by: str,
     ) -> pl.DataFrame:
         """Reorder columns for pivot_by_group with proper metric/estimate ordering"""
         if result.is_empty():
             return result
 
-        # Validate order_by parameter
-        if order_by not in ["metrics", "estimates"]:
+        # Validate column_order_by parameter
+        if column_order_by not in ["metrics", "estimates"]:
             raise ValueError(
-                f"order_by must be 'metrics' or 'estimates', got '{order_by}'"
+                f"column_order_by must be 'metrics' or 'estimates', got '{column_order_by}'"
+            )
+
+        # Validate row_order_by parameter
+        if row_order_by not in ["group", "subgroup"]:
+            raise ValueError(
+                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
             )
 
         # Get the ordered metrics and estimates based on original configuration
@@ -466,7 +484,7 @@ class MetricEvaluator:
         # Combine all value columns (non-index columns)
         all_value_cols = global_cols + group_cols + default_cols
 
-        if order_by == "metrics":
+        if column_order_by == "metrics":
             # Order by metric first, then estimate: metric1_model1, metric1_model2, metric2_model1, ...
             for metric_label in metric_labels:
                 # First add global scope metrics (they don't vary by estimate)
@@ -501,7 +519,7 @@ class MetricEvaluator:
                         ):
                             ordered_value_cols.append(col_name)
                             break
-        else:  # order_by == "estimates"
+        else:  # column_order_by == "estimates":
             # Order by estimate first, then metric: model1_metric1, model1_metric2, model2_metric1, ...
             for estimate_label in estimate_labels:
                 for metric_label in metric_labels:
@@ -543,13 +561,53 @@ class MetricEvaluator:
         if len(ordered_cols) == len(all_cols):
             result = result.select(ordered_cols)
 
+        # Apply row sorting based on row_order_by parameter
+        if row_order_by == "subgroup":
+            # Sort by subgroup columns first, then group columns
+            sort_cols = []
+            if "subgroup_value" in result.columns:
+                sort_cols.append("subgroup_value")
+            if "subgroup_name" in result.columns:
+                sort_cols.append("subgroup_name")
+            # Add group columns
+            sort_cols.extend(
+                [
+                    col
+                    for col in index_cols
+                    if col not in ["subgroup_name", "subgroup_value"]
+                ]
+            )
+        else:  # row_order_by == "group" (default)
+            # Sort by group columns first, then subgroup columns
+            sort_cols = []
+            # Add group columns first
+            sort_cols.extend(
+                [
+                    col
+                    for col in index_cols
+                    if col not in ["subgroup_name", "subgroup_value"]
+                ]
+            )
+            # Then add subgroup columns
+            if "subgroup_name" in result.columns:
+                sort_cols.append("subgroup_name")
+            if "subgroup_value" in result.columns:
+                sort_cols.append("subgroup_value")
+
+        # Convert group and subgroup columns to enums first so sorting respects enum order
+        result = self._convert_pivot_columns_to_enums(result)
+
+        if sort_cols:
+            result = result.sort(sort_cols)
+
         return result
 
     def pivot_by_model(
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
-        order_by: str = "metrics",
+        column_order_by: str = "metrics",
+        row_order_by: str = "group",
     ) -> pl.DataFrame:
         """
         Pivot results with models as rows and group x metric as columns.
@@ -557,9 +615,12 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
-            order_by: Column ordering strategy - "metrics" (default) or "groups"
+            column_order_by: Column ordering strategy - "metrics" (default) or "groups"
                      "metrics": Order by metric definition order first, then groups
                      "groups": Order by group combinations first, then metrics
+            row_order_by: Row ordering strategy - "group" (default) or "subgroup"
+                     "group": Order rows by group columns first, then subgroup
+                     "subgroup": Order rows by subgroup columns first, then group
 
         Returns:
             DataFrame with models as rows
@@ -602,7 +663,13 @@ class MetricEvaluator:
         result = self._add_global_columns(result, global_data)
         result = self._add_group_columns(result, group_data)
         result = self._reorder_columns_pivot_by_model(
-            result, index_cols, global_data, group_data, metrics, order_by
+            result,
+            index_cols,
+            global_data,
+            group_data,
+            metrics,
+            column_order_by,
+            row_order_by,
         )
 
         # Replace group_by column names with their display labels in final output
@@ -623,16 +690,23 @@ class MetricEvaluator:
         global_data: pl.DataFrame,
         group_data: pl.DataFrame,
         metrics: MetricDefine | list[MetricDefine] | None,
-        order_by: str,
+        column_order_by: str,
+        row_order_by: str,
     ) -> pl.DataFrame:
         """Reorder columns for pivot_by_model with proper metric/group ordering"""
         if result.is_empty():
             return result
 
-        # Validate order_by parameter
-        if order_by not in ["metrics", "groups"]:
+        # Validate column_order_by parameter
+        if column_order_by not in ["metrics", "groups"]:
             raise ValueError(
-                f"order_by must be 'metrics' or 'groups', got '{order_by}'"
+                f"column_order_by must be 'metrics' or 'groups', got '{column_order_by}'"
+            )
+
+        # Validate row_order_by parameter
+        if row_order_by not in ["group", "subgroup"]:
+            raise ValueError(
+                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
             )
 
         # Get the ordered metrics based on original configuration
@@ -697,7 +771,7 @@ class MetricEvaluator:
 
         group_combinations = sorted(list(group_combinations))
 
-        if order_by == "metrics":
+        if column_order_by == "metrics":
             # Order by metric first, then groups: metric1_group1, metric1_group2, metric2_group1, ...
             for i, metric_label in enumerate(metric_labels):
                 # First add global scope metrics (they don't vary by group)
@@ -732,7 +806,7 @@ class MetricEvaluator:
                         ):
                             ordered_value_cols.append(col_name)
                             break
-        else:  # order_by == "groups"
+        else:  # column_order_by == "groups"
             # Order by groups first, then metric: group1_metric1, group1_metric2, group2_metric1, ...
             for group_combo in group_combinations:
                 for i, metric_label in enumerate(metric_labels):
@@ -774,7 +848,145 @@ class MetricEvaluator:
         if len(ordered_cols) == len(all_cols):
             result = result.select(ordered_cols)
 
+        # Apply row sorting based on row_order_by parameter
+        if row_order_by == "subgroup":
+            # Sort by subgroup columns first, then group columns
+            sort_cols = []
+            if "subgroup_value" in result.columns:
+                sort_cols.append("subgroup_value")
+            if "subgroup_name" in result.columns:
+                sort_cols.append("subgroup_name")
+            # Add group columns (excluding estimate and subgroup columns)
+            sort_cols.extend(
+                [
+                    col
+                    for col in index_cols
+                    if col not in ["estimate", "subgroup_name", "subgroup_value"]
+                ]
+            )
+            # Finally add estimate
+            if "estimate" in result.columns:
+                sort_cols.append("estimate")
+        else:  # row_order_by == "group" (default)
+            # Sort by group columns first, then subgroup columns, then estimate
+            sort_cols = []
+            # Add group columns first (excluding estimate and subgroup columns)
+            sort_cols.extend(
+                [
+                    col
+                    for col in index_cols
+                    if col not in ["estimate", "subgroup_name", "subgroup_value"]
+                ]
+            )
+            # Then add subgroup columns
+            if "subgroup_name" in result.columns:
+                sort_cols.append("subgroup_name")
+            if "subgroup_value" in result.columns:
+                sort_cols.append("subgroup_value")
+            # Finally add estimate
+            if "estimate" in result.columns:
+                sort_cols.append("estimate")
+
+        # Convert group and subgroup columns to enums first so sorting respects enum order
+        result = self._convert_pivot_columns_to_enums(result)
+
+        if sort_cols:
+            result = result.sort(sort_cols)
+
         return result
+
+    def _convert_pivot_columns_to_enums(self, result: pl.DataFrame) -> pl.DataFrame:
+        """Convert group and subgroup columns to enums, preserving original enum ordering when available"""
+
+        # Convert group columns to enums based on their labels
+        for col_name, label in self.group_by.items():
+            target_col = None
+            if col_name in result.columns:
+                target_col = col_name
+            elif label in result.columns and label != col_name:
+                target_col = label
+
+            if target_col:
+                # Check if original data had enum type for this column and preserve its ordering
+                original_enum_categories = self._get_original_enum_categories(col_name)
+                if original_enum_categories is not None:
+                    # Use original enum categories, filtered to only include values present in result
+                    result_values = set(
+                        result.get_column(target_col).unique().to_list()
+                    )
+                    filtered_categories = [
+                        cat for cat in original_enum_categories if cat in result_values
+                    ]
+                    if len(filtered_categories) > 1:
+                        enum_type = pl.Enum(filtered_categories)
+                        result = result.with_columns(pl.col(target_col).cast(enum_type))
+                else:
+                    # Fallback to display order if no original enum found
+                    unique_values = (
+                        result.get_column(target_col)
+                        .unique(maintain_order=True)
+                        .to_list()
+                    )
+                    if len(unique_values) > 1:
+                        enum_type = pl.Enum(unique_values)
+                        result = result.with_columns(pl.col(target_col).cast(enum_type))
+
+        # Convert subgroup columns to enums
+        if "subgroup_name" in result.columns:
+            unique_names = (
+                result.get_column("subgroup_name").unique(maintain_order=True).to_list()
+            )
+            if len(unique_names) > 1:
+                enum_type = pl.Enum(unique_names)
+                result = result.with_columns(pl.col("subgroup_name").cast(enum_type))
+
+        # Convert subgroup_value to enum (values from all subgroups combined)
+        if "subgroup_value" in result.columns:
+            # Get all unique values actually present in the result
+            result_values = (
+                result.get_column("subgroup_value")
+                .unique(maintain_order=True)
+                .to_list()
+            )
+
+            # Try to build an ordered list from original enum categories for each subgroup
+            ordered_categories = []
+            remaining_values = set(result_values)
+
+            # First, add values from enum subgroups in their original order
+            for col_name, label in self.subgroup_by.items():
+                original_enum_categories = self._get_original_enum_categories(col_name)
+                if original_enum_categories is not None:
+                    # Add enum categories that are present in result, maintaining original order
+                    for cat in original_enum_categories:
+                        if cat in remaining_values:
+                            ordered_categories.append(cat)
+                            remaining_values.remove(cat)
+
+            # Then add any remaining values (from non-enum subgroups) in their display order
+            remaining_ordered = [
+                val for val in result_values if val in remaining_values
+            ]
+            ordered_categories.extend(remaining_ordered)
+
+            # Create enum with the combined ordered categories
+            if len(ordered_categories) > 1:
+                enum_type = pl.Enum(ordered_categories)
+                result = result.with_columns(pl.col("subgroup_value").cast(enum_type))
+
+        return result
+
+    def _get_original_enum_categories(self, col_name: str) -> list[str] | None:
+        """Get original enum categories from the source data if the column was an enum"""
+        try:
+            # Check if the column exists in the original dataframe
+            if col_name in self.df_raw.collect_schema().names():
+                col_dtype = self.df_raw.collect_schema()[col_name]
+                if isinstance(col_dtype, pl.Enum):
+                    return col_dtype.categories.to_list()
+        except Exception:
+            pass
+        return None
 
     def _resolve_metrics(
         self, metrics: MetricDefine | list[MetricDefine] | None

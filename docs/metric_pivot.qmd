@@ -24,7 +24,9 @@ from data_generator import create_expanded_clinical_data
 
 # Create sample dataset with comprehensive structure for pivot examples
 df = create_expanded_clinical_data()
-df
+df = df.with_columns(
+    age_group = pl.col("age_group").cast(pl.Enum(["Young", "Middle", "Senior"]))
+)
 ```
 
 ## Case 1: Pivot by Group (without subgroups)
@@ -81,9 +83,17 @@ evaluator_group_sub = MetricEvaluator(
 evaluator_group_sub.pivot_by_group()
 ```
 
+### Order by group
 
 ```{python}
-evaluator_group_sub.pivot_by_group().\
+evaluator_group_sub.pivot_by_group(row_order_by = "group").\
+    pipe(pivot_to_gt)
+```
+
+### Order by subgroup 
+
+```{python}
+evaluator_group_sub.pivot_by_group(row_order_by = "subgroup").\
     pipe(pivot_to_gt)
 ```
 
