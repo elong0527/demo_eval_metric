@@ -1,537 +1,199 @@
-# CLAUDE.md - Development Guidelines for `polars-eval-metrics` Package
+# CLAUDE.md - AI Development Guidelines for `polars-eval-metrics`
 
-This document provides comprehensive guidance for developing and maintaining the `polars-eval-metrics` package, a high-performance model evaluation framework using Polars lazy evaluation.
+This document provides focused guidance for AI assistants working on the `polars-eval-metrics` package.
 
 ## Project Overview
 
-**Package Name**: `polars-eval-metrics`  
-**Purpose**: A flexible, high-performance framework for evaluating model predictions with support for hierarchical aggregations, custom metrics, and YAML-based configuration.
+**Package**: High-performance model evaluation framework using Polars lazy evaluation
+**Core Pattern**: Definition -> Evaluation -> Formatting pipeline
+**Key Features**: Vectorized operations, hierarchical aggregations, pivot tables, YAML configuration
 
-### Key Features
-- **Lazy Evaluation**: Leverages Polars LazyFrame for optimal query planning
-- **Flexible Metrics**: Built-in and custom metric definitions
-- **YAML Configuration**: Complete evaluation setup via YAML
-- **Type Safety**: Pydantic validation throughout
-- **Hierarchical Aggregation**: Support for subject/visit level metrics
-- **Clear Architecture**: Separation of definition, creation, and evaluation
+## Architecture Principles
 
-## Project Structure
+### 1. **Polars-First Design**
+- Use LazyFrame for all data operations
+- Leverage vectorized operations over loops
+- Utilize `cs.numeric()`, `cs.by_dtype()` selectors
+- Apply schema harmonization for concatenation
 
+### 2. **Clean Separation of Concerns**
 ```
-demo_eval_metric/
-+-- plan/                        # [REFERENCE ONLY - DO NOT MODIFY]
-|   +-- CLAUDE.md               # Original planning documentation
-|   +-- class_diagram.md        # Architecture diagrams
-|   +-- polar_expression.md     # Polars expression patterns
-|   +-- YAML_PATTERNS.md        # YAML configuration patterns
-|   +-- examples.qmd            # Example notebooks
-|   +-- evaluation_schema.yaml  # Schema reference
-|
-+-- src/                         # [PRODUCTION CODE]
-|   +-- polars_eval_metrics/
-|       +-- __init__.py         # Package exports
-|       +-- metric_define.py    # MetricDefine class - metric definition
-|       +-- metric_registry.py  # Unified registry for all expressions
-|       +-- metric_helpers.py   # Helper functions for creating metrics
-|       +-- metric_evaluator.py # MetricEvaluator - executes evaluations
-|       +-- table_formatter.py  # Great Tables integration for pivot tables
-|       +-- py.typed            # PEP 561 type hint marker
-|
-+-- docs/                        # [DOCUMENTATION WEBSITE]
-|   +-- _quarto.yml             # Quarto configuration
-|   +-- index.qmd               # Homepage
-|   +-- quickstart.qmd         # Quick start guide
-|   +-- metric.qmd              # MetricDefine examples
-|   +-- _site/                  # [GENERATED - git ignored]
-|
-+-- tests/                       # [TEST SUITE]
-|   +-- test_metric_define.py  # Unit tests for MetricDefine
-|   +-- test_metric_evaluator.py # Unit tests for MetricEvaluator
-|   +-- test_metric_helpers.py  # Unit tests for helper functions
-|   +-- test_pivot_by_methods.py # Tests for pivot table methods
-|   +-- test_subgroup_sorting.py # Tests for subgroup value sorting
-|   +-- test_quickstart_examples.py # Integration tests from docs
-|   +-- test_integration_quickstart.py # End-to-end workflow tests
-|   +-- test_enum_labels.py     # Tests for enum label handling
-|
-+-- .github/
-|   +-- workflows/
-|       +-- docs.yml            # Documentation deployment
-|       +-- test.yml            # CI/CD testing pipeline
-|
-+-- pyproject.toml              # Package configuration
-+-- README.md                   # Project README
-+-- LICENSE                     # MIT License
-+-- CLAUDE.md                   # This file
+MetricRegistry -> MetricDefine -> MetricEvaluator -> TableFormatter
+   (expressions)    (config)       (computation)      (presentation)
 ```
 
-## Core Architecture
+### 3. **Validation Strategy**
+- Validate once at initialization, not in internal methods
+- Use Pydantic for input validation
+- Centralize validation logic in dedicated methods
+- Fail fast with clear error messages
 
-### Class Hierarchy and Responsibilities
+## Core Components
 
-```mermaid
-graph TD
-    A[MetricRegistry] -->|provides expressions to| B[MetricDefine]
-    B -->|used by| C[MetricEvaluator]
-    A -->|provides error columns to| C
-```
+### MetricRegistry (`metric_registry.py`)
+- **Purpose**: Unified expression storage
+- **Pattern**: Register once, use everywhere
+- **Key Methods**: `register_error()`, `register_metric()`, `get_*()`, `list_*()`
 
-### 1. **MetricRegistry** (`metric_registry.py`)
-**Purpose**: Unified registry for all expression types  
-**Responsibilities**:
-- Manage error expressions (data preparation)
-- Manage metric expressions (aggregation)
-- Manage selector expressions (second-level aggregation)
-- Provide consistent API for registration and retrieval
+### MetricDefine (`metric_define.py`)
+- **Purpose**: Metric configuration and compilation
+- **Pattern**: Immutable configuration objects
+- **Key Features**: Type/scope validation, expression compilation, Pydantic validation
 
-**Key Features**:
+### MetricEvaluator (`metric_evaluator.py`)
+- **Purpose**: Vectorized evaluation engine
+- **Pattern**: Cache-optimized lazy evaluation
+- **Key Features**: Subgroup vectorization, pivot operations, enum preservation
+
+## Development Guidelines
+
+### Code Style
+- **No comments** unless explicitly requested
+- Use type hints consistently (`|` syntax, not `Union`)
+- Prefer `dict[str, str]` over `Dict[str, str]`
+- **ASCII characters only** (enforced by pre-commit hooks and ruff)
+- Follow existing naming conventions
+
+### ASCII Compliance (MANDATORY)
+All code, documentation, and configuration files MUST use ASCII characters only:
+- No Unicode symbols, emojis, or special characters
+- No smart quotes, dashes, or accented characters
+- Enforced automatically by:
+  - Ruff rules: RUF001, RUF002, RUF003
+  - Pre-commit hook: `check-ascii-only`
+  - CI/CD pipeline validation
+
+### Polars Optimization Patterns
 ```python
-# Error expressions
-MetricRegistry.register_error(name, func)
-MetricRegistry.get_error(name, estimate, ground_truth, **params)
-MetricRegistry.generate_error_columns(estimate, ground_truth, error_types)
+# Good: Vectorized operations
+df.unpivot(index=id_vars, on=subgroup_cols, variable_name="subgroup_name")
 
-# Metric expressions
-MetricRegistry.register_metric(name, expr)
-MetricRegistry.get_metric(name)
+# Bad: Nested loops
+for subgroup in subgroups:
+    for value in values:
+        # process individually
 
-# Selector expressions
-MetricRegistry.register_selector(name, expr)
-MetricRegistry.get_selector(name)
+# Good: Schema harmonization
+harmonized_results = self._harmonize_result_schemas(results)
+return pl.concat(harmonized_results, how="diagonal")
+
+# Good: Selectors
+df.select(cs.numeric()).fmt_number(decimals=2)
 ```
 
-### 2. **MetricDefine** (`metric_define.py`)
-**Purpose**: Core metric definition class  
-**Responsibilities**:
-- Define metric properties (name, label, type, scope)
-- Hold within-entity and across-entity aggregation expressions
-- Validate metric configuration
-- Resolve expressions from MetricRegistry
+### Testing Strategy
+- Test public APIs, not internal implementation
+- Use parametrized tests for multiple scenarios
+- Mock external dependencies
+- Validate both happy path and edge cases
 
-**Key Features**:
+### Error Handling
 ```python
-class MetricDefine:
-    name: str                           # Metric identifier
-    label: str | None                   # Display name
-    type: MetricType                    # Aggregation type
-    scope: MetricScope | None           # Calculation scope
-    within_expr: list[str | pl.Expr]   # Within-entity aggregation expressions
-    across_expr: str | pl.Expr         # Across-entity aggregation expression
+# Good: Early validation with clear messages
+if missing_columns:
+    raise ValueError(f"Required columns not found: {missing_columns}")
+
+# Good: Type-specific error handling
+try:
+    schema = df.collect_schema()
+except Exception:
+    schema = df.limit(1).collect().schema
 ```
-
-**Expression Naming Convention** (Updated 2025-01-03):
-- `within_expr`: Expressions for within-entity aggregation (e.g., within subject/visit)
-  - Used in WITHIN_SUBJECT, ACROSS_SUBJECT, WITHIN_VISIT, ACROSS_VISIT
-  - Aggregates data within each entity (subject or visit)
-- `across_expr`: Expressions for across-entity aggregation or final computation
-  - For ACROSS_SAMPLE: Applied directly to error columns
-  - For ACROSS_SUBJECT/VISIT: Summarizes within_expr results across entities
-  - For WITHIN_SUBJECT/VISIT: Not used (within_expr provides final result)
-
-Note: These are distinct from `group_by`/`subgroup_by` which control analysis stratification (e.g., by treatment, age, sex)
-
-### 3. **MetricEvaluator** (`metric_evaluator.py`)
-**Purpose**: Main evaluation engine  
-**Responsibilities**:
-- Execute metric evaluations on data
-- Generate error columns using MetricRegistry
-- Handle hierarchical aggregations
-- Apply filters and grouping
-- Return results as Polars DataFrames
-
-## Metric Types and Aggregation Patterns
-
-### MetricType Enum
-| Type | Description | LazyFrame Pattern |
-|------|-------------|-------------------|
-| `ACROSS_SAMPLE` | Aggregate across all samples | `.select(expr)` |
-| `WITHIN_SUBJECT` | Aggregate within each subject | `.group_by('subject_id').agg(expr)` |
-| `ACROSS_SUBJECT` | Two-level: within then across subjects | `.group_by('subject_id').agg(expr).select(selector)` |
-| `WITHIN_VISIT` | Aggregate within each visit | `.group_by(['subject_id', 'visit_id']).agg(expr)` |
-| `ACROSS_VISIT` | Two-level: within then across visits | `.group_by(['subject_id', 'visit_id']).agg(expr).select(selector)` |
-
-### MetricScope Enum
-| Scope | Description | Usage |
-|-------|-------------|-------|
-| `GLOBAL` | Calculate once for entire dataset | Overall metrics |
-| `MODEL` | Calculate per model only | Model comparison |
-| `GROUP` | Calculate per group only | Group analysis |
-
-## Development Workflow
-
-### 1. Setting Up Development Environment
-```bash
-# Create virtual environment
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install package in development mode
-uv pip install -e .
-
-# Install test dependencies
-uv pip install pytest pytest-cov
-```
-
-### 2. Running Tests
-```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Run specific test file
-python -m pytest tests/test_metric_define.py -v
-
-# Run with coverage
-python -m pytest tests/ --cov=src/polars_eval_metrics --cov-report=html
-```
-
-### 3. Code Quality Checks
-```bash
-# Format code
-black src/ tests/
-
-# Lint code
-ruff check src/ tests/
-
-# Type checking (if configured)
-mypy src/polars_eval_metrics
-```
-
-### 4. Documentation
-```bash
-# Build documentation locally
-cd docs
-quarto render
-
-# Preview documentation
-quarto preview
-```
-
-## API Usage Examples
-
-### Using the Unified MetricRegistry
-```python
-from polars_eval_metrics import MetricRegistry
-import polars as pl
-
-# Register custom error type
-MetricRegistry.register_error('within_threshold', 
-    lambda est, gt, threshold=1.0: (pl.col(est) - pl.col(gt)).abs() <= threshold)
-
-# Register custom metric using the error type
-MetricRegistry.register_metric('accuracy',
-    pl.col('within_threshold').mean() * 100)
-
-# Register custom selector
-MetricRegistry.register_selector('p90', pl.col('value').quantile(0.9, interpolation="linear"))
-
-# List available expressions
-print(MetricRegistry.list_errors())    # All error types
-print(MetricRegistry.list_metrics())   # All metrics
-print(MetricRegistry.list_selectors()) # All selectors
-```
-
-### Basic Metric Definition
-```python
-from polars_eval_metrics import MetricDefine, MetricType
-
-# Simple metric using built-in expression
-mae = MetricDefine(name="mae")
-
-# Custom metric with inline expression
-pct_accurate = MetricDefine(
-    name="pct_within_1",
-    label="% Within +/- 1",
-    type=MetricType.ACROSS_SAMPLE,
-    across_expr=(pl.col('absolute_error') < 1).mean() * 100
-)
-```
-
-### Hierarchical Metrics
-```python
-# Two-level aggregation
-mae_mean = MetricDefine(
-    name="mae:mean",
-    type=MetricType.ACROSS_SUBJECT
-)
-```
-
-### YAML Configuration
-```yaml
-# evaluation_config.yaml
-ground_truth: actual
-estimates: [model_1, model_2]
-group_by: [treatment_group]
-
-metrics:
-  - name: mae
-    label: Mean Absolute Error
-    
-  - name: rmse:median
-    label: Median RMSE by Subject
-    type: across_subject
-```
-
-### Creating Metrics from Configuration
-```python
-from polars_eval_metrics import MetricDefine, MetricType, create_metrics
-
-# Direct metric creation
-metric = MetricDefine(
-    name='mae',
-    type=MetricType.ACROSS_SAMPLE
-)
-
-# Create multiple metrics from list
-metrics = create_metrics(['mae', 'rmse', 'me'])
-
-# Create from configuration dictionaries
-configs = [
-    {'name': 'mae', 'label': 'Mean Absolute Error'},
-    {'name': 'rmse', 'type': 'across_subject'}
-]
-metrics = create_metrics(configs)
-```
-
-## Testing Strategy
-
-### Current Test Coverage (92 Tests Total)
-- [x] **test_metric_define.py**: Comprehensive tests for MetricDefine (12 tests)
-  - Basic metric creation, custom expressions, validation rules
-  - All metric types and scopes, string representations
-- [x] **test_metric_evaluator.py**: Complete MetricEvaluator testing (19 tests)
-  - Basic evaluation, scopes (global/model/group/default)
-  - Metric types (across_sample, within/across_subject, within/across_visit)
-  - Grouping, edge cases, lazy evaluation
-- [x] **test_metric_helpers.py**: Helper function tests (12 tests)
-  - create_metrics(), create_metric_from_dict()
-  - Error handling, auto-label generation
-- [x] **test_pivot_by_methods.py**: Pivot table functionality (7 tests)
-  - pivot_by_group() and pivot_by_model() methods
-  - Column ordering, mixed scopes, caching efficiency
-- [x] **test_subgroup_sorting.py**: Subgroup sorting validation (6 tests)
-  - Numeric and string subgroup value sorting
-  - Priority over treatment sorting, method consistency
-- [x] **test_quickstart_examples.py**: Documentation integration (11 tests)
-  - Examples from quickstart guide
-  - Data integrity, error handling, equivalent calculations
-- [x] **test_integration_quickstart.py**: End-to-end workflows (11 tests)
-  - Complete evaluation pipelines from docs
-  - Single metric, grouped, subgroup evaluations
-- [x] **test_enum_labels.py**: Enum label handling (3 tests)
-  - Enum ordering, mixed metrics, performance
-
-### Test Strategy Completed
-- [x] Comprehensive unit test coverage for all components
-- [x] Integration tests for complete workflows
-- [x] Edge case and error handling validation
-- [x] Documentation example verification
-
-## GitHub Actions CI/CD
-
-### Test Workflow (`.github/workflows/test.yml`)
-- Runs on: Push to main, Pull requests
-- Python versions: 3.11, 3.12
-- Steps:
-  1. Install dependencies
-  2. Run pytest
-  3. Check code formatting
-  4. Run linting
-
-### Documentation Workflow (`.github/workflows/docs.yml`)
-- Runs on: Push to main
-- Deploys to: GitHub Pages
-- Process:
-  1. Build Quarto documentation
-  2. Deploy to gh-pages branch
-
-## Important Development Notes
-
-### DO's
-1. **Use Type Hints**: All functions should have type annotations
-2. **Write Tests First**: TDD approach for new features
-3. **Direct Creation**: Create MetricDefine instances directly or via EvaluationConfig
-4. **Validate Early**: Use Pydantic validation in MetricDefine
-5. **Document Examples**: Add examples to docs/ for new features
-6. **Use ASCII Only**: All code, documentation, and comments must use ASCII characters only
-7. **Using typing consistently**: using |, dict etc
-8. **Test Subgroup Sorting**: Ensure subgroup_value takes priority in sort order
-
-### DON'Ts
-1. **Don't Modify plan/**: Reference only, contains original design
-2. **Don't Skip Validation**: Always validate user input
-3. **Don't Mix Concerns**: Keep metric definition separate from evaluation
-4. **Don't Hardcode**: Use configuration for all settings
-5. **Don't Use Unicode**: No emojis, special symbols, or non-ASCII characters
 
 ## Common Patterns
 
-### Registering Custom Expressions
+### Input Normalization
 ```python
-# Create a registry instance
-registry = MetricRegistry()
-
-# Register custom error type with parameters
-def buffer_error(estimate: str, ground_truth: str, buffer: float = 0.5):
-    return (pl.col(estimate) - pl.col(ground_truth)).abs() <= buffer
-
-registry.register_error('buffer_error', buffer_error)
-
-# Register metric that uses the custom error
-registry.register_metric('buffer_accuracy',
-    pl.col('buffer_error').mean() * 100)
-
-# Use in evaluation
-evaluator = MetricEvaluator(
-    df=data,
-    metrics=[MetricDefine(name='buffer_accuracy')],
-    registry=registry,  # Pass the custom registry
-    # ... other parameters
-)
+@staticmethod
+def _process_estimates(estimates: str | list[str] | dict[str, str] | None) -> dict[str, str]:
+    if isinstance(estimates, str):
+        return {estimates: estimates}
+    elif isinstance(estimates, dict):
+        return estimates
+    elif isinstance(estimates, list):
+        return {est: est for est in (estimates or [])}
+    return {}
 ```
 
-### Creating Custom Metrics
+### Conditional Logic for Optional Features
 ```python
-# Pattern 1: Simple custom expression
-metric = MetricDefine(
-    name="custom",
-    across_expr=pl.col("error").abs().mean()
-)
+# Check data structure, not configuration
+if "subgroup_name" in df.columns:
+    # Handle subgroup logic
 
-# Pattern 2: Using registered metric with custom selector
-metric = MetricDefine(
-    name="mae_p90",
-    type=MetricType.ACROSS_SUBJECT,
-    within_expr="mae",  # From registry
-    across_expr=pl.col("value").quantile(0.9, interpolation="linear")  # Custom
-)
-
-# Pattern 3: Multiple aggregations
-metric = MetricDefine(
-    name="weighted",
-    type=MetricType.ACROSS_SUBJECT,
-    within_expr=["mae", pl.col("weight").mean().alias("w")],
-    across_expr=(pl.col("value") * pl.col("w")).sum() / pl.col("w").sum()
-)
+# Build columns dynamically
+index_cols = []
+if "subgroup_name" in df.columns:
+    index_cols.extend(["subgroup_name", "subgroup_value"])
+if self.group_by:
+    index_cols.extend(list(self.group_by.keys()))
 ```
 
-## Recent Major Fixes
-
-### Subgroup Sorting Fix (2025-01-18)
-**Issue**: subgroup_value was not being sorted properly in pivot_by_model() and pivot_by_group() methods
-**Root Cause**: Sort priority was incorrect - treatments were being sorted before subgroup values
-**Solution**: Simple fix by reordering sort columns in _format_result() method:
-- Put subgroup_value first in sort priority
-- Then subgroup_name, group columns, and other columns
-- Works for both numeric and string subgroup values
-**Files Changed**:
-- `/src/polars_eval_metrics/metric_evaluator.py`: Modified sort column logic
-- `/tests/test_subgroup_sorting.py`: Added comprehensive test suite (6 tests)
-- `/tests/test_pivot_by_methods.py`: Updated assertions for metric labels
-
-### ASCII Compliance (2025-01-18)
-**Issue**: Non-ASCII characters (x marks, checkmarks, arrows, corrupted headers) throughout codebase
-**Solution**: Replaced all non-ASCII characters with ASCII equivalents:
-- Non-ASCII marks → `x`, checkmarks → `[PASS]`, arrows → `->`
-- Fixed corrupted README.md headers and bullet points
-**Files Changed**: All test files, README.md, documentation files
-**Verification**: All 92 tests pass after ASCII conversion
-
-## Troubleshooting
-
-### Issue: Import errors in tests
-**Solution**: Install package in development mode
-```bash
-uv pip install -e .
-```
-
-### Issue: GitHub Actions failing
-**Solution**: Check test.yml points to correct directories:
-- Tests should run from root: `pytest tests/`
-- Coverage should check: `src/polars_eval_metrics`
-
-### Issue: Documentation not building
-**Solution**: Ensure all imports in docs use correct paths:
+### Caching Pattern
 ```python
-import sys
-sys.path.append('../src')
-from polars_eval_metrics import MetricDefine
+def _get_cached_evaluation(self, metrics=None, estimates=None) -> pl.DataFrame:
+    cache_key = self._get_cache_key(metrics, estimates)
+    if cache_key not in self._evaluation_cache:
+        result = self.evaluate(metrics=metrics, estimates=estimates, collect=True)
+        self._evaluation_cache[cache_key] = result
+    return self._evaluation_cache[cache_key]
 ```
 
-## Future Enhancements
+## Anti-Patterns to Avoid
 
-### Planned Features
-1. **pl_expr() method**: Show LazyFrame chain visualization
-2. **More built-in expressions**: Expand the registry with more error types, metrics, and selectors
-3. **Performance benchmarks**: Add performance testing suite
-4. **CLI interface**: Command-line evaluation tool
-5. **Expression composition**: Build complex metrics from simpler ones
+### Don't
+- Create dummy columns for optional features
+- Mix validation with business logic
+- Use nested loops where vectorization is possible
+- Hardcode column names or magic strings
+- Modify data in-place (use immutable operations)
+- Use complex inheritance hierarchies
 
-### Completed Features
-- [x] **Unified Registry Pattern**: All expressions (errors, metrics, selectors) in MetricRegistry
-- [x] **Custom Expression Support**: Easy registration of custom expressions
-- [x] **Clean Architecture**: Separation of concerns between definition and evaluation
-- [x] **Pivot Table Methods**: pivot_by_group() and pivot_by_model() with proper sorting
-- [x] **Subgroup Sorting**: Correct subgroup_value priority in sort operations
-- [x] **Great Tables Integration**: Professional table formatting with pivot_to_gt()
-- [x] **Comprehensive Testing**: 92 tests covering all components and workflows
-- [x] **ASCII Compliance**: All code uses ASCII-only characters for compatibility
+### Do
+- Use conditional logic for optional features
+- Validate inputs once at boundaries
+- Leverage Polars vectorized operations
+- Use configuration-driven column handling
+- Return new objects from transformations
+- Prefer composition over inheritance
 
-### Built-in Expressions
+## Performance Considerations
 
-#### Error Types
-- `error`: Basic difference (estimate - ground_truth)
-- `absolute_error`: Absolute difference
-- `squared_error`: Squared difference
-- `percent_error`: Percentage error
-- `absolute_percent_error`: Absolute percentage error
+1. **Lazy Evaluation**: Keep operations as LazyFrame until collection needed
+2. **Schema Harmonization**: Essential for concat operations with different column sets
+3. **Vectorized Subgroups**: Use `unpivot()` instead of loops for marginal analysis
+4. **Caching**: Cache expensive evaluations with proper key generation
+5. **Enum Preservation**: Maintain original data types through transformations
 
-#### Metrics
-- `mae`: Mean Absolute Error
-- `mse`: Mean Squared Error
-- `rmse`: Root Mean Squared Error
-- `me`: Mean Error (bias)
-- `mpe`: Mean Percentage Error
-- `mape`: Mean Absolute Percentage Error
-- `n_subject`: Number of unique subjects
-- `n_visit`: Number of unique visits
-- `n_sample`: Sample count
-- `n_subject_with_data`: Number of subjects with non-null data
-- `n_visit_with_data`: Number of visits with non-null data
-- `n_sample_with_data`: Number of samples with non-null data
-- `pct_subject_with_data`: Percentage of subjects with non-null data
-- `pct_visit_with_data`: Percentage of visits with non-null data
-- `pct_sample_with_data`: Percentage of samples with non-null data
+## Integration Points
 
-#### Summaries (Aggregation Functions)
-- Basic statistics: `mean`, `median`, `std`, `min`, `max`, `sum`, `sqrt`
-- Percentiles: `p1`, `p5`, `p25`, `p75`, `p90`, `p95`, `p99`
+### External Dependencies
+- **Polars**: Core data processing (require exact version matching)
+- **Pydantic**: Input validation and type safety
+- **Great Tables**: HTML table formatting
+- **Pytest**: Testing framework
 
-## Contributing Guidelines
+### File Structure
+```
+src/polars_eval_metrics/
+|-- __init__.py          # Public API exports
+|-- metric_registry.py   # Expression storage
+|-- metric_define.py     # Configuration objects
+|-- metric_evaluator.py  # Computation engine
+|-- metric_helpers.py    # Convenience functions
+|-- table_formatter.py   # Output formatting
+```
 
-### Pull Request Process
-1. Create feature branch from main
-2. Write tests for new features
-3. Update documentation
-4. Ensure all tests pass
-5. Update CHANGELOG.md
-6. Submit PR with clear description
+## Future Development Notes
 
-### Code Review Checklist
-- [ ] Tests added/updated
-- [ ] Documentation updated
-- [ ] Type hints present
-- [ ] No breaking changes
-- [ ] Follows existing patterns
-
-## Support and Resources
-
-- **Documentation**: Auto-deployed to GitHub Pages
-- **Issues**: GitHub Issues for bug reports
-- **Discussions**: GitHub Discussions for questions
-- **Examples**: See `docs/` directory for usage examples
+- Keep vectorized patterns when adding new features
+- Maintain separation between definition and evaluation
+- Consider performance impact of new aggregation types
+- Preserve enum ordering in all transformations
+- Add new metrics to registry, don't hardcode
+- Test pivot operations thoroughly (complex column naming)
 
 ---
 
-*Last updated: 2025-01-18*
-*Maintainer: Engineering Team*
-*Recent Updates: Subgroup sorting fix, ASCII compliance, comprehensive test coverage*
+*Focus: Code quality, performance, maintainability*
+*Updated: 2025-01-18*
