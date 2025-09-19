@@ -5,8 +5,8 @@ This module provides functions to format pivot table results using great_tables
 for publication-ready output with proper column spanners and formatting.
 """
 
-import polars as pl
 from polars import selectors as cs
+import polars as pl
 from great_tables import GT, html
 
 
@@ -83,7 +83,11 @@ def pivot_to_gt(
         column_renames[col] = html(info["model"])
 
     # Also handle non-JSON columns that might contain HTML
-    non_json_columns = [col for col in df.columns if col not in json_columns and col not in ["subgroup_name", "subgroup_value"]]
+    non_json_columns = [
+        col
+        for col in df.columns
+        if col not in json_columns and col not in ["subgroup_name", "subgroup_value"]
+    ]
     for col in non_json_columns:
         column_renames[col] = html(col)
 
