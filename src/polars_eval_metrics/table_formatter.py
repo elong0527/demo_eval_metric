@@ -5,9 +5,9 @@ This module provides functions to format pivot table results using great_tables
 for publication-ready output with proper column spanners and formatting.
 """
 
-from polars import selectors as cs
 import polars as pl
 from great_tables import GT, html
+from polars import selectors as cs
 
 
 def pivot_to_gt(
