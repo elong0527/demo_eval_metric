@@ -42,8 +42,14 @@ MetricRegistry -> MetricDefine -> MetricEvaluator -> TableFormatter
 
 ### MetricEvaluator (`metric_evaluator.py`)
 - **Purpose**: Vectorized evaluation engine
-- **Pattern**: Cache-optimized lazy evaluation
-- **Key Features**: Subgroup vectorization, pivot operations, enum preservation
+- **Pattern**: Cache-optimized lazy evaluation returning ARD objects
+- **Key Features**: Subgroup vectorization, pivot operations, enum preservation, ARD conversion
+
+### ARD (`ard.py`)
+- **Purpose**: Analysis Results Data container with fixed schema
+- **Pattern**: Immutable data structure with type-safe stat storage
+- **Key Features**: Struct-based storage, filtering, pivoting, formatting utilities
+- **Schema**: `groups | subgroups | estimate | metric | stat | context`
 
 ## Development Guidelines
 
@@ -131,12 +137,50 @@ if self.group_by:
 
 ### Caching Pattern
 ```python
-def _get_cached_evaluation(self, metrics=None, estimates=None) -> pl.DataFrame:
+def _get_cached_evaluation(self, metrics=None, estimates=None) -> ARD:
     cache_key = self._get_cache_key(metrics, estimates)
     if cache_key not in self._evaluation_cache:
-        result = self.evaluate(metrics=metrics, estimates=estimates, collect=True)
+        result = self.evaluate(metrics=metrics, estimates=estimates)
         self._evaluation_cache[cache_key] = result
     return self._evaluation_cache[cache_key]
+```
+
+### ARD Stat Structure
+```python
+# Multi-field stat storage for type safety
+stat = {
+    "type": "float",           # Type indicator: float, int, bool, string, json
+    "value_float": 3.14,       # Float values
+    "value_int": None,         # Integer values
+    "value_bool": None,        # Boolean values
+    "value_str": None,         # String values
+    "value_json": None,        # JSON-serialized complex values
+    "format": "{:.2f}",        # Optional format string
+    "unit": "seconds"          # Optional unit
+}
+
+# Value extraction
+value = ARD._stat_value(stat)  # Returns the appropriate typed value
+formatted = ARD._format_stat(stat)  # Returns formatted string
+```
+
+### ARD Usage Patterns
+```python
+# Creating ARD from records
+records = [
+    {"groups": {"trt": "A"}, "metric": "mae", "stat": 3.2},
+    {"groups": {"trt": "B"}, "metric": "mae", "stat": 4.1}
+]
+ard = ARD(records)
+
+# Filtering
+filtered = ard.filter(groups={"trt": "A"}, metrics=["mae"])
+
+# Converting to wide format
+wide_df = ard.to_wide(columns=["metric"], values="stat")
+
+# Getting values only
+stats_df = ard.get_stats()  # Returns metric + value DataFrame
 ```
 
 ## Anti-Patterns to Avoid
@@ -177,12 +221,32 @@ def _get_cached_evaluation(self, metrics=None, estimates=None) -> pl.DataFrame:
 ```
 src/polars_eval_metrics/
 |-- __init__.py          # Public API exports
+|-- ard.py               # Analysis Results Data container
 |-- metric_registry.py   # Expression storage
 |-- metric_define.py     # Configuration objects
 |-- metric_evaluator.py  # Computation engine
 |-- metric_helpers.py    # Convenience functions
-|-- table_formatter.py   # Output formatting
+|-- table_formatter.py   # Output formatting (ARD -> Great Tables)
 ```
+
+## ARD Design Principles
+
+### Fixed Schema Approach
+- Always maintain 6 canonical columns: `groups | subgroups | estimate | metric | stat | context`
+- Use struct columns for hierarchical data (groups, subgroups, context)
+- Multi-field stat storage for type safety and performance
+- Preserve null/empty distinction for optional structures
+
+### Integration with MetricEvaluator
+- `MetricEvaluator.evaluate()` returns ARD objects directly
+- Cache ARD objects, not raw DataFrames
+- Use `_convert_to_ard()` method for internal conversion
+- Maintain enum types through the conversion process
+
+### Table Formatting Integration
+- `ard_to_wide()` and `ard_to_gt()` functions for output formatting
+- JSON column naming for metric/estimate combinations
+- Great Tables integration with proper spanners and labels
 
 ## Future Development Notes
 
@@ -192,8 +256,10 @@ src/polars_eval_metrics/
 - Preserve enum ordering in all transformations
 - Add new metrics to registry, don't hardcode
 - Test pivot operations thoroughly (complex column naming)
+- Maintain ARD schema consistency across all operations
+- Use ARD as the primary data interchange format
 
 ---
 
 *Focus: Code quality, performance, maintainability*
-*Updated: 2025-01-18*
+*Updated: 2025-01-21 - Added ARD integration and design principles*

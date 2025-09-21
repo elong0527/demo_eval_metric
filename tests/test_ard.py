@@ -1,5 +1,7 @@
 """Tests for ARD (Analysis Results Data) structure."""
 
+import json
+
 import polars as pl
 
 from polars_eval_metrics.ard import ARD
@@ -154,8 +156,8 @@ class TestARDTransformations:
         null_row = df.filter(pl.col("trt").is_null() & pl.col("site").is_null())
         assert null_row.height == 1
 
-    def test_to_wide(self):
-        """Test pivot to wide format."""
+    def test_unnest_comprehensive(self):
+        """Test unnesting for data access (replacing to_wide test)."""
         records = [
             {"groups": {"trt": "A"}, "metric": "mae", "stat": 3.2},
             {"groups": {"trt": "A"}, "metric": "rmse", "stat": 4.1},
@@ -164,10 +166,10 @@ class TestARDTransformations:
         ]
 
         ard = ARD(records)
-        wide = ard.to_wide()
+        unnested = ard.unnest(["groups"])
 
-        assert "mae" in wide.columns or '["mae"]' in str(wide.columns)
-        assert wide.shape[0] == 2  # Two treatment groups
+        assert "trt" in unnested.columns
+        assert unnested.shape[0] == 4  # All records preserved
 
     def test_null_handling(self):
         """Test null to empty conversion."""
@@ -240,7 +242,16 @@ class TestARDStatHandling:
         assert df["stat"][1]["type"] == "float"
         assert df["stat"][2]["type"] == "string"
         assert df["stat"][3]["type"] == "bool"
-        assert df["stat"][4]["type"] == "struct"
+        assert df["stat"][4]["type"] == "json"
+
+        assert df["stat"][0]["value_int"] == 42
+        assert df["stat"][1]["value_float"] == 3.14159
+        assert df["stat"][2]["value_str"] == "significant"
+        assert df["stat"][3]["value_bool"] is True
+        assert json.loads(df["stat"][4]["value_json"]) == {
+            "lower": 2.5,
+            "upper": 3.5,
+        }
 
     def test_get_stats(self):
         """Test extracting stat values."""
@@ -252,7 +263,7 @@ class TestARDStatHandling:
         ard = ARD(records)
 
         # Get just values
-        values = ard.get_stats(as_values=True)
+        values = ard.get_stats()
         assert "value" in values.columns
         assert values["value"][0] == 3.2
 

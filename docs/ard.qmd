@@ -109,7 +109,7 @@ print(stats_ard)
 
 ```{python}
 # Extract just the values
-values_df = stats_ard.get_stats(as_values=True)
+values_df = stats_ard.get_stats()
 print("Values only:")
 print(values_df)
 
@@ -281,6 +281,11 @@ print(full_unnest)
 ## Summary and Inspection
 
 ```{python}
+# Use the larger dataset for summary and advanced operations
+converted_ard = large_ard
+```
+
+```{python}
 # Get summary statistics
 summary = converted_ard.summary()
 print("ARD Summary:")
@@ -296,14 +301,12 @@ converted_ard.describe()
 ## Custom Expressions and Filtering
 
 ```{python}
-# Use Polars expressions for complex filtering
+# Use Polars expressions for complex filtering on the long format
 import polars as pl
 
-# Filter using custom expressions
-custom_filtered = converted_ard.filter(
-    expr=pl.col("stat").struct.field("value") > 3.0
-)
-print(f"Values > 3.0: {len(custom_filtered)} records")
+long_values = converted_ard.to_long()
+custom_filtered = long_values.filter(pl.col("value") > 3.0)
+print(f"Values > 3.0: {custom_filtered.height} records")
 print(custom_filtered)
 ```
 

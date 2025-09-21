@@ -73,4 +73,3 @@ pip install -e .
 ## Documentation
 
 - [Quick Start](quickstart.qmd) - Installation and basic concepts
-- [Metric Examples](metric.qmd) - Detailed examples and use cases

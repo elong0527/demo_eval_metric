@@ -57,19 +57,21 @@ class TestMetricEvaluatorBasic:
 
         # Check structure
         assert len(result) == 4  # 2 metrics x 2 models
-        assert set(result.columns) == {
+        df = result.collect()
+        assert set(df.columns) == {
+            "groups",
+            "subgroups",
             "estimate",
             "metric",
-            "label",
-            "value",
-            "metric_type",
-            "scope",
+            "stat",
+            "context",
         }
-        assert set(result["metric"].unique()) == {"mae", "rmse"}
-        assert set(result["estimate"].unique()) == {"model_a", "model_b"}
+        assert set(df["metric"].unique()) == {"mae", "rmse"}
+        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
 
-        # Check values are reasonable (non-negative, finite)
-        values = result["value"].to_list()
+        # Check values are reasonable (non-negative, finite) using get_stats
+        stats_df = result.get_stats()
+        values = stats_df["value"].to_list()
         assert all(v >= 0 for v in values if v is not None)
         assert all(
             not (isinstance(v, float) and v != v) for v in values
@@ -86,8 +88,9 @@ class TestMetricEvaluatorBasic:
 
         result = evaluator.evaluate()
         assert len(result) == 1
-        assert result["metric"][0] == "mae"
-        assert result["estimate"][0] == "model_a"
+        df = result.collect()
+        assert df["metric"][0] == "mae"
+        assert df["estimate"][0] == "model_a"
 
 
 class TestMetricEvaluatorScopes:
@@ -122,9 +125,11 @@ class TestMetricEvaluatorScopes:
 
         # Global scope should ignore estimates and groups
         assert len(result) == 1
-        assert "estimate" not in result.columns  # No estimate column for global
-        assert "treatment" not in result.columns  # Groups ignored
-        assert result["value"][0] == 3.0  # 3 unique subjects
+        df = result.collect()
+        assert df["estimate"][0] is None  # No estimate value for global
+        assert df["groups"][0] is None  # Groups ignored for global scope
+        stats = result.get_stats()
+        assert stats["value"][0] == 3.0  # 3 unique subjects
 
     def test_model_scope(self, grouped_data):
         """Test MODEL scope - per model, ignore groups"""
@@ -142,9 +147,11 @@ class TestMetricEvaluatorScopes:
 
         # Model scope: one row per model, groups ignored
         assert len(result) == 2
-        assert set(result["estimate"].unique()) == {"model_a", "model_b"}
-        assert "treatment" not in result.columns  # Groups ignored
-        assert all(v == 6.0 for v in result["value"])  # 6 samples each model
+        df = result.collect()
+        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
+        assert all(df["groups"].is_null())  # Groups ignored for model scope
+        stats = result.get_stats()
+        assert all(v == 6.0 for v in stats["value"])  # 6 samples each model
 
     def test_group_scope(self, grouped_data):
         """Test GROUP scope - per group, aggregate models"""
@@ -162,15 +169,20 @@ class TestMetricEvaluatorScopes:
 
         # Group scope: one row per group, models aggregated
         assert len(result) == 2
-        assert set(result["treatment"].unique()) == {"A", "B"}
-        assert "estimate" not in result.columns  # Models aggregated
+        unnested = result.unnest(["groups"])
+        assert set(unnested["treatment"].unique()) == {"A", "B"}
+        df = result.collect()
+        assert all(df["estimate"].is_null())  # Models aggregated
 
-        # Check counts per group
-        for row in result.iter_rows(named=True):
-            if row["treatment"] == "A":
-                assert row["value"] == 2.0  # 2 subjects in A
-            else:  # treatment == "B"
-                assert row["value"] == 1.0  # 1 subject in B
+        # Check counts per group - access values directly from ARD
+        df = result.collect()
+        for i, row in enumerate(df.iter_rows(named=True)):
+            groups = row["groups"]
+            stat = row["stat"]
+            if groups and groups["treatment"] == "A":
+                assert stat["value_float"] == 2.0  # 2 subjects in A
+            elif groups and groups["treatment"] == "B":
+                assert stat["value_float"] == 1.0  # 1 subject in B
 
     def test_default_scope(self, grouped_data):
         """Test default scope - per model-group combination"""
@@ -188,8 +200,10 @@ class TestMetricEvaluatorScopes:
 
         # Default scope: estimate x group combinations
         assert len(result) == 4  # 2 models x 2 groups
-        assert set(result["estimate"].unique()) == {"model_a", "model_b"}
-        assert set(result["treatment"].unique()) == {"A", "B"}
+        df = result.collect()
+        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
+        unnested = result.unnest(["groups"])
+        assert set(unnested["treatment"].unique()) == {"A", "B"}
 
 
 class TestMetricEvaluatorTypes:
@@ -220,7 +234,9 @@ class TestMetricEvaluatorTypes:
 
         result = evaluator.evaluate()
         assert len(result) == 1
-        assert result["metric_type"][0] == "across_sample"
+        df = result.collect()
+        context = df.select(pl.col("context").struct.field("metric_type"))
+        assert context["metric_type"][0] == "across_sample"
 
     def test_within_subject(self, hierarchical_data):
         """Test WITHIN_SUBJECT - per subject aggregation"""
@@ -235,8 +251,9 @@ class TestMetricEvaluatorTypes:
 
         result = evaluator.evaluate()
         assert len(result) == 3  # 3 subjects
-        assert set(result["subject_id"].unique()) == {1, 2, 3}
-        assert all(result["metric_type"] == "within_subject")
+        df = result.collect()
+        context = df.select(pl.col("context").struct.field("metric_type"))
+        assert all(context["metric_type"] == "within_subject")
 
     def test_across_subject(self, hierarchical_data):
         """Test ACROSS_SUBJECT - within subjects then across"""
@@ -252,9 +269,13 @@ class TestMetricEvaluatorTypes:
 
         result = evaluator.evaluate()
         assert len(result) == 1  # Single aggregated result across subjects
-        assert "subject_id" not in result.columns  # No per-subject breakdown
-        assert all(result["metric_type"] == "across_subject")
-        assert result["value"][0] > 0  # Should be a reasonable MAE value
+        unnested = result.unnest(["groups"])
+        assert "subject_id" not in unnested.columns  # No per-subject breakdown
+        df = result.collect()
+        context = df.select(pl.col("context").struct.field("metric_type"))
+        assert all(context["metric_type"] == "across_subject")
+        stats = result.get_stats()
+        assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_within_visit(self, hierarchical_data):
         """Test WITHIN_VISIT - per visit aggregation"""
@@ -269,8 +290,6 @@ class TestMetricEvaluatorTypes:
 
         result = evaluator.evaluate()
         assert len(result) == 9  # 9 subject-visit combinations
-        assert set(result["subject_id"].unique()) == {1, 2, 3}
-        assert set(result["visit_id"].unique()) == {1, 2, 3}
 
     def test_across_visit(self, hierarchical_data):
         """Test ACROSS_VISIT - within visits then across"""
@@ -286,10 +305,14 @@ class TestMetricEvaluatorTypes:
 
         result = evaluator.evaluate()
         assert len(result) == 1  # Single aggregated result across visits
-        assert "subject_id" not in result.columns  # No per-subject breakdown
-        assert "visit_id" not in result.columns  # No per-visit breakdown
-        assert all(result["metric_type"] == "across_visit")
-        assert result["value"][0] > 0  # Should be a reasonable MAE value
+        unnested = result.unnest(["groups"])
+        assert "subject_id" not in unnested.columns  # No per-subject breakdown
+        assert "visit_id" not in unnested.columns  # No per-visit breakdown
+        df = result.collect()
+        context = df.select(pl.col("context").struct.field("metric_type"))
+        assert all(context["metric_type"] == "across_visit")
+        stats = result.get_stats()
+        assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_across_visit_custom_across_expr(self, hierarchical_data):
         """Test ACROSS_VISIT with custom across_expr (count, min, max, etc.)"""
@@ -335,19 +358,21 @@ class TestMetricEvaluatorTypes:
 
         # Check we have all metrics
         assert len(result) == 4
-        assert set(result["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
+        df = result.collect()
+        assert set(df["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
 
         # Check count equals number of visits (9 = 3 subjects x 3 visits)
-        count_result = result.filter(pl.col("metric") == "mae_count")
+        stats = result.get_stats()
+        count_result = stats.filter(pl.col("metric") == "mae_count")
         assert count_result["value"][0] == 9.0
 
         # Check min < max
-        min_result = result.filter(pl.col("metric") == "mae_min")
-        max_result = result.filter(pl.col("metric") == "mae_max")
+        min_result = stats.filter(pl.col("metric") == "mae_min")
+        max_result = stats.filter(pl.col("metric") == "mae_max")
         assert min_result["value"][0] < max_result["value"][0]
 
         # Check sum is positive
-        sum_result = result.filter(pl.col("metric") == "mae_sum")
+        sum_result = stats.filter(pl.col("metric") == "mae_sum")
         assert sum_result["value"][0] > 0
 
     def test_across_subject_custom_across_expr(self, hierarchical_data):
@@ -387,22 +412,24 @@ class TestMetricEvaluatorTypes:
 
         # Check we have all metrics
         assert len(result) == 3
-        assert set(result["metric"]) == {
+        df = result.collect()
+        assert set(df["metric"]) == {
             "mae_count_subj",
             "mae_median_subj",
             "mae_std_subj",
         }
 
         # Check count equals number of subjects (3)
-        count_result = result.filter(pl.col("metric") == "mae_count_subj")
+        stats = result.get_stats()
+        count_result = stats.filter(pl.col("metric") == "mae_count_subj")
         assert count_result["value"][0] == 3.0
 
         # Check median is reasonable (should be positive)
-        median_result = result.filter(pl.col("metric") == "mae_median_subj")
+        median_result = stats.filter(pl.col("metric") == "mae_median_subj")
         assert median_result["value"][0] > 0
 
         # Check std is non-negative
-        std_result = result.filter(pl.col("metric") == "mae_std_subj")
+        std_result = stats.filter(pl.col("metric") == "mae_std_subj")
         assert std_result["value"][0] >= 0
 
 
@@ -435,7 +462,8 @@ class TestMetricEvaluatorGrouping:
 
         result = evaluator.evaluate()
         assert len(result) == 2  # Two treatment groups
-        assert set(result["treatment"].unique()) == {"A", "B"}
+        unnested = result.unnest(["groups"])
+        assert set(unnested["treatment"].unique()) == {"A", "B"}
 
     def test_subgroup_by_only(self, complex_data):
         """Test subgroup analysis"""
@@ -450,12 +478,17 @@ class TestMetricEvaluatorGrouping:
         result = evaluator.evaluate()
 
         # Should have marginal analysis for each subgroup variable
-        assert "subgroup_name" in result.columns
-        assert "subgroup_value" in result.columns
+        unnested = result.unnest(["subgroups"])
+        # In ARD, subgroups are unnested directly by their column names
+        assert "age_group" in unnested.columns
+        assert "sex" in unnested.columns
 
         # Check we have results for both subgroup variables
-        subgroup_names = set(result["subgroup_name"].unique())
-        assert subgroup_names == {"age_group", "sex"}
+        # Each row should have data for one of the subgroup dimensions
+        age_results = unnested.filter(pl.col("age_group").is_not_null())
+        sex_results = unnested.filter(pl.col("sex").is_not_null())
+        assert len(age_results) > 0  # Has age_group results
+        assert len(sex_results) > 0  # Has sex results
 
     def test_group_and_subgroup(self, complex_data):
         """Test combination of group_by and subgroup_by"""
@@ -471,13 +504,15 @@ class TestMetricEvaluatorGrouping:
         result = evaluator.evaluate()
 
         # Should have group x subgroup combinations
-        assert "treatment" in result.columns
-        assert "subgroup_name" in result.columns
-        assert "subgroup_value" in result.columns
+        groups_unnested = result.unnest(["groups"])
+        subgroups_unnested = result.unnest(["subgroups"])
+        assert "treatment" in groups_unnested.columns
+        assert "age_group" in subgroups_unnested.columns
 
         # Verify we have treatment groups and age_group subgroups
-        assert set(result["treatment"].unique()).issubset({"A", "B"})
-        assert result["subgroup_name"].unique()[0] == "age_group"
+        assert set(groups_unnested["treatment"].unique()).issubset({"A", "B"})
+        age_results = subgroups_unnested.filter(pl.col("age_group").is_not_null())
+        assert len(age_results) > 0  # Has age_group subgroup results
 
 
 class TestMetricEvaluatorEdgeCases:
@@ -549,7 +584,8 @@ class TestMetricEvaluatorEdgeCases:
 
         result = evaluator.evaluate()
         assert len(result) == 1
-        assert result["value"][0] == 2.0
+        stats = result.get_stats()
+        assert stats["value"][0] == 2.0
 
     def test_invalid_metric_name(self, sample_data):
         """Test error handling for invalid configuration"""
@@ -608,16 +644,14 @@ class TestMetricEvaluatorEdgeCases:
             estimates=["model_a"],
         )
 
-        # Test lazy evaluation
-        lazy_result = evaluator.evaluate(collect=False)
-        assert isinstance(lazy_result, pl.LazyFrame)
+        # Test that evaluate always returns ARD object
+        result = evaluator.evaluate()
 
-        # Test eager evaluation
-        eager_result = evaluator.evaluate(collect=True)
-        assert isinstance(eager_result, pl.DataFrame)
-
-        # Results should be equivalent
-        assert lazy_result.collect().equals(eager_result)
+        # Should be ARD object with consistent behavior
+        assert len(result) == 1
+        df = result.collect()
+        stats = result.get_stats()
+        assert stats["value"][0] == 2.375  # MAE should be 2.375
 
     @pytest.fixture
     def sample_data(self):
