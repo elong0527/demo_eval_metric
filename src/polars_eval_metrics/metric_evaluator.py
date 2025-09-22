@@ -299,13 +299,13 @@ class MetricEvaluator:
             "_value_kind",
             "_value_format",
             "_value_unit",
+            "_extras_struct",
             "_value_float",
             "_value_int",
             "_value_bool",
             "_value_str",
             "_value_json",
             "_value_struct",
-            "_vector_payload",
         ]
         schema_names = set(schema.names())
         drop_cols = [col for col in cleanup_cols if col in schema_names]
@@ -1018,11 +1018,8 @@ class MetricEvaluator:
         else:
             raise ValueError(f"Unknown metric type: {metric.type}")
 
-        # Add metadata columns and bundle entity-level vectors when needed
-        result_with_metadata = self._add_metadata_vectorized(
-            result, metric, result_info
-        )
-        return self._bundle_entity_vectors(result_with_metadata, metric)
+        # Add metadata columns and attach entity identifiers when needed
+        return self._add_metadata_vectorized(result, metric, result_info)
 
     def _get_vectorized_grouping_columns(
         self, metric: MetricDefine, df: pl.LazyFrame | None = None
@@ -1120,41 +1117,49 @@ class MetricEvaluator:
 
         result = result.with_columns(metadata_columns)
 
-        # Canonical helper columns for stat construction
-        result = result.with_columns(
+        # Attach entity identifiers for within-entity metrics
+        result = self._attach_entity_identifier(result, metric)
+
+        # Helper columns for stat struct construction
+        helper_columns = [
             pl.lit(None, dtype=pl.Float64).alias("_value_float"),
             pl.lit(None, dtype=pl.Int64).alias("_value_int"),
             pl.lit(None, dtype=pl.Boolean).alias("_value_bool"),
             pl.lit(None, dtype=pl.Utf8).alias("_value_str"),
             pl.lit(None, dtype=pl.Utf8).alias("_value_json"),
-            pl.lit(None, dtype=pl.Struct([])).alias("_value_struct"),
-        )
+            pl.lit(None).alias("_value_struct"),
+        ]
+        result = result.with_columns(helper_columns)
 
-        # Normalise raw value column and populate helper fields
         if value_kind == "int":
             result = result.with_columns(
-                pl.col("value").round(0).cast(pl.Int64).alias("_value_int"),
-                pl.col("value").cast(pl.Float64).alias("_value_float"),
+                pl.col("value").cast(pl.Int64, strict=False).alias("_value_int"),
+                pl.col("value").cast(pl.Float64, strict=False).alias("_value_float"),
+                pl.col("value").cast(pl.Float64, strict=False),
             )
-            result = result.with_columns(pl.col("value").cast(pl.Float64))
         elif value_kind == "float":
             result = result.with_columns(
-                pl.col("value").cast(pl.Float64).alias("_value_float"),
-                pl.col("value").cast(pl.Float64),
+                pl.col("value").cast(pl.Float64, strict=False).alias("_value_float"),
+                pl.col("value").cast(pl.Float64, strict=False),
             )
         elif value_kind == "bool":
             result = result.with_columns(
-                pl.col("value").cast(pl.Boolean).alias("_value_bool"),
+                pl.col("value").cast(pl.Boolean, strict=False).alias("_value_bool"),
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
         elif value_kind == "string":
             result = result.with_columns(
-                pl.col("value").cast(pl.Utf8).alias("_value_str"),
+                pl.col("value").cast(pl.Utf8, strict=False).alias("_value_str"),
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
         elif value_kind == "json":
             result = result.with_columns(
-                pl.col("value").cast(pl.Utf8).alias("_value_json"),
+                pl.col("value")
+                .map_elements(
+                    lambda v: ARD._encode_json(v) if v is not None else None,
+                    return_dtype=pl.Utf8,
+                )
+                .alias("_value_json"),
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
         elif value_kind == "struct":
@@ -1162,9 +1167,10 @@ class MetricEvaluator:
                 pl.col("value").alias("_value_struct"),
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
+        else:
+            result = result.with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
 
         # Handle extras as structured payloads
-        extra_cols: list[str] = []
         if info.extras:
             extra_cols = [f"_extra_{name}" for name in info.extras.keys()]
             struct_fields = [
@@ -1172,84 +1178,45 @@ class MetricEvaluator:
                 for col_name in extra_cols
             ]
             result = result.with_columns(
-                pl.struct(struct_fields).alias("_value_struct")
+                pl.struct(struct_fields).alias("_extras_struct")
             )
-        if not info.extras:
-            # Ensure consistent schema by keeping already-initialised Null struct
-            result = result.with_columns(pl.col("_value_struct"))
-
-        if extra_cols:
+            if value_kind != "struct":
+                result = result.with_columns(
+                    pl.struct(struct_fields).alias("_value_struct")
+                )
             result = result.drop(extra_cols)
+        else:
+            result = result.with_columns(
+                pl.lit(None).alias("_extras_struct")
+            )
 
         return result
 
-    def _bundle_entity_vectors(
+    def _attach_entity_identifier(
         self, result: pl.LazyFrame, metric: MetricDefine
     ) -> pl.LazyFrame:
-        """Bundle entity-level results into vector payloads for within metrics."""
+        """Attach a canonical id struct for within-entity metrics."""
 
         entity_cols = self._get_entity_grouping_columns(metric.type)
         if not entity_cols:
-            return result
+            if "id" in result.collect_schema().names():
+                return result
+            return result.with_columns(pl.lit(None).alias("id"))
 
         schema = result.collect_schema()
-        schema_names = set(schema.names())
-        if any(col not in schema_names for col in entity_cols):
-            return result
+        available = set(schema.names())
+        present = [col for col in entity_cols if col in available]
 
-        helper_value = "__value_list"
-        helper_indices = {col: f"__index_{col}" for col in entity_cols}
+        if not present:
+            if "id" in available:
+                return result
+            return result.with_columns(pl.lit(None).alias("id"))
 
-        helper_columns = {
-            "_value_float",
-            "_value_int",
-            "_value_bool",
-            "_value_str",
-            "_value_json",
-            "_value_struct",
-        }
-        grouping_cols = [
-            col
-            for col in schema.names()
-            if col not in {"value", *entity_cols} and col not in helper_columns
-        ]
+        id_struct = pl.struct([pl.col(col).alias(col) for col in present]).alias("id")
+        cleaned = result.with_columns(id_struct)
 
-        base = result.sort(entity_cols)
-        aggregate_exprs: list[pl.Expr] = [pl.col("value").alias(helper_value)]
-        aggregate_exprs.extend(
-            pl.col(col).alias(alias) for col, alias in helper_indices.items()
-        )
-
-        if grouping_cols:
-            aggregated = base.group_by(grouping_cols).agg(aggregate_exprs)
-        else:
-            aggregated = (
-                base.with_columns(pl.lit(0).alias("__group_marker"))
-                .group_by("__group_marker")
-                .agg(aggregate_exprs)
-                .drop("__group_marker")
-            )
-
-        vector_struct = pl.struct(
-            [
-                pl.col(helper_value).alias("values"),
-                pl.struct(
-                    [pl.col(alias).alias(col) for col, alias in helper_indices.items()]
-                ).alias("index"),
-            ]
-        )
-
-        aggregated = aggregated.with_columns(
-            [
-                vector_struct.alias("_vector_payload"),
-                pl.lit(None, dtype=pl.Float64).alias("value"),
-            ]
-        )
-        aggregated = aggregated.drop([helper_value, *helper_indices.values()])
-
-        aggregated = aggregated.with_columns(pl.lit("vector").alias("_value_kind"))
-
-        return aggregated
+        # Drop entity columns to avoid polluting downstream schema
+        return cleaned.drop(present)
 
     def _format_result(self, combined: pl.LazyFrame) -> pl.LazyFrame:
         """Minimal formatting - ARD handles all presentation concerns"""
@@ -1304,7 +1271,6 @@ class MetricEvaluator:
         else:
             exprs.append(pl.col("metric").cast(pl.Utf8).alias("label"))
 
-        # Formatted value and raw components sourced from ARD stat struct
         if "stat" in schema.names():
             exprs.append(pl.col("stat"))
             exprs.append(
@@ -1312,17 +1278,9 @@ class MetricEvaluator:
                 .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
                 .alias("value")
             )
-        elif "value" in schema.names():
-            # Legacy fallback when stat struct is unavailable
-            exprs.append(
-                pl.col("value")
-                .cast(pl.Float64)
-                .map_elements(
-                    lambda v: "NULL" if v is None else f"{float(v):.1f}",
-                    return_dtype=pl.Utf8,
-                )
-                .alias("value")
-            )
+
+        if "id" in schema.names():
+            exprs.append(pl.col("id"))
 
         # Scope metadata
         if "metric_type" in schema.names():
@@ -1377,8 +1335,7 @@ class MetricEvaluator:
         null_int: pl.Expr = pl.lit(None, dtype=pl.Int64)
         null_bool: pl.Expr = pl.lit(None, dtype=pl.Boolean)
         null_struct_expr: pl.Expr = pl.lit(None, dtype=pl.Struct([]))
-        null_vector: pl.Expr = pl.lit(None, dtype=pl.List(pl.Float64))
-        null_index: pl.Expr = pl.lit(None, dtype=pl.List(pl.Utf8))
+        null_any: pl.Expr = pl.lit(None)
 
         kind_expr: pl.Expr | None = (
             pl.col("_value_kind") if "_value_kind" in schema.names() else None
@@ -1389,199 +1346,80 @@ class MetricEvaluator:
         unit_col: pl.Expr = (
             pl.col("_value_unit") if "_value_unit" in schema.names() else null_utf8
         )
-
-        value_col: pl.Expr = (
-            pl.col("value") if "value" in schema.names() else null_float
+        extras_col: pl.Expr = (
+            pl.col("_extras_struct")
+            if "_extras_struct" in schema.names()
+            else null_any
         )
 
-        float_col: pl.Expr = (
+        float_value = (
             pl.col("_value_float")
             if "_value_float" in schema.names()
-            else value_col.cast(pl.Float64)
+            else null_float
         )
-        int_col: pl.Expr = (
-            pl.col("_value_int")
-            if "_value_int" in schema.names()
-            else value_col.round(0).cast(pl.Int64)
+        int_value = (
+            pl.col("_value_int") if "_value_int" in schema.names() else null_int
         )
-        bool_col: pl.Expr = (
-            pl.col("_value_bool")
-            if "_value_bool" in schema.names()
-            else value_col.cast(pl.Boolean)
+        bool_value = (
+            pl.col("_value_bool") if "_value_bool" in schema.names() else null_bool
         )
-        str_col: pl.Expr = (
-            pl.col("_value_str")
-            if "_value_str" in schema.names()
-            else value_col.cast(pl.Utf8)
+        string_value = (
+            pl.col("_value_str") if "_value_str" in schema.names() else null_utf8
         )
-        json_col: pl.Expr = (
-            pl.col("_value_json")
-            if "_value_json" in schema.names()
-            else value_col.cast(pl.Utf8)
+        json_value = (
+            pl.col("_value_json") if "_value_json" in schema.names() else null_utf8
         )
-        struct_col: pl.Expr = (
+        struct_value = (
             pl.col("_value_struct")
             if "_value_struct" in schema.names()
             else null_struct_expr
         )
 
-        has_vector_payload = "_vector_payload" in schema.names()
-        vector_payload_col: pl.Expr = (
-            pl.col("_vector_payload")
-            if has_vector_payload
-            else pl.lit(None, dtype=pl.Struct([]))
+        value_col: pl.Expr = (
+            pl.col("value") if "value" in schema.names() else null_any
         )
 
-        payload_dtype = schema.get("_vector_payload") if has_vector_payload else None
-        index_field_names: tuple[str, ...] = tuple()
-        if isinstance(payload_dtype, pl.Struct):
-            for field in payload_dtype.fields:
-                if field.name == "index" and isinstance(field.dtype, pl.Struct):
-                    index_field_names = tuple(
-                        subfield.name for subfield in field.dtype.fields
-                    )
-                    break
-
-        if has_vector_payload:
-            values_expr: pl.Expr = (
-                pl.when(vector_payload_col.is_null())
-                .then(null_vector)
-                .otherwise(
-                    vector_payload_col.struct.field("values").cast(
-                        pl.List(pl.Float64), strict=False
-                    )
-                )
-            )
-
-            def encode_index(
-                payload: Any, field_order: tuple[str, ...] | None = index_field_names
-            ) -> list[str] | None:
-                order = field_order if field_order else None
-                return ARD._encode_index_vector(payload, order)
-
-            index_expr: pl.Expr = (
-                pl.when(vector_payload_col.is_null())
-                .then(null_index)
-                .otherwise(
-                    vector_payload_col.struct.field("index").map_elements(
-                        encode_index,
-                        return_dtype=pl.List(pl.Utf8),
-                    )
-                )
-            )
-        else:
-            values_expr = null_vector
-            index_expr = null_index
-
-        def build_struct(
-            type_label: str,
-            *,
-            value_float: pl.Expr = null_float,
-            value_int: pl.Expr = null_int,
-            value_bool: pl.Expr = null_bool,
-            value_str: pl.Expr = null_utf8,
-            value_json: pl.Expr = null_utf8,
-            value_struct_expr: pl.Expr | None = None,
-            value_vector_expr: pl.Expr = null_vector,
-            index_vector_expr: pl.Expr = null_index,
-        ) -> pl.Expr:
-            struct_expr = (
-                value_struct_expr if value_struct_expr is not None else struct_col
-            )
-            vector_expr = value_vector_expr
-            index_vector = index_vector_expr
-            if type_label == "float":
-                type_is_null = value_float.is_null()
-            elif type_label == "int":
-                type_is_null = value_int.is_null()
-            elif type_label == "bool":
-                type_is_null = value_bool.is_null()
-            elif type_label == "string":
-                type_is_null = value_str.is_null()
-            elif type_label == "json":
-                type_is_null = value_json.is_null()
-            elif type_label == "struct":
-                type_is_null = struct_expr.is_null()
-            elif type_label == "vector":
-                type_is_null = vector_expr.is_null()
+        if kind_expr is None:
+            inferred_type = schema.get("value")
+            if inferred_type in (pl.Float32, pl.Float64):
+                inferred_kind = "float"
+            elif inferred_type in {
+                pl.Int8,
+                pl.Int16,
+                pl.Int32,
+                pl.Int64,
+                pl.UInt8,
+                pl.UInt16,
+                pl.UInt32,
+                pl.UInt64,
+            }:
+                inferred_kind = "int"
+            elif inferred_type == pl.Boolean:
+                inferred_kind = "bool"
+            elif inferred_type == pl.Utf8:
+                inferred_kind = "string"
+            elif isinstance(inferred_type, pl.Struct):
+                inferred_kind = "struct"
             else:
-                type_is_null = value_json.is_null()
+                inferred_kind = "json"
+            kind_expr = pl.lit(inferred_kind, dtype=pl.Utf8)
 
-            return pl.struct(
-                [
-                    pl.when(type_is_null)
-                    .then(null_utf8)
-                    .otherwise(pl.lit(type_label))
-                    .alias("type"),
-                    value_float.alias("value_float"),
-                    value_int.alias("value_int"),
-                    value_bool.alias("value_bool"),
-                    value_str.alias("value_str"),
-                    value_json.alias("value_json"),
-                    struct_expr.alias("value_struct"),
-                    vector_expr.alias("value_vector"),
-                    index_vector.alias("index_vector"),
-                    format_col.alias("format"),
-                    unit_col.alias("unit"),
-                ]
-            )
+        type_label = pl.when(kind_expr.is_null()).then(null_utf8).otherwise(kind_expr)
 
-        float_struct = build_struct("float", value_float=float_col)
-        int_struct = build_struct("int", value_int=int_col)
-        bool_struct = build_struct("bool", value_bool=bool_col)
-        string_struct = build_struct("string", value_str=str_col)
-        json_struct = build_struct("json", value_json=json_col)
-        struct_struct = build_struct("struct", value_struct_expr=struct_col)
-        vector_struct = build_struct(
-            "vector", value_vector_expr=values_expr, index_vector_expr=index_expr
-        )
-
-        if kind_expr is not None:
-            return (
-                pl.when(kind_expr == "vector")
-                .then(vector_struct)
-                .when(kind_expr == "struct")
-                .then(struct_struct)
-                .when(kind_expr == "float")
-                .then(float_struct)
-                .when(kind_expr == "int")
-                .then(int_struct)
-                .when(kind_expr == "bool")
-                .then(bool_struct)
-                .when(kind_expr == "string")
-                .then(string_struct)
-                .when(kind_expr == "json")
-                .then(json_struct)
-                .otherwise(json_struct)
-            ).alias("stat")
-
-        if has_vector_payload:
-            return vector_struct.alias("stat")
-
-        value_dtype = schema.get("value", pl.Float64)
-        if value_dtype in (pl.Float32, pl.Float64):
-            return float_struct.alias("stat")
-        if value_dtype in {
-            pl.Int8,
-            pl.Int16,
-            pl.Int32,
-            pl.Int64,
-            pl.UInt8,
-            pl.UInt16,
-            pl.UInt32,
-            pl.UInt64,
-        }:
-            return int_struct.alias("stat")
-        if value_dtype == pl.Boolean:
-            return bool_struct.alias("stat")
-        if value_dtype == pl.Utf8:
-            return string_struct.alias("stat")
-
-        value_struct_dtype = schema.get("_value_struct")
-        if isinstance(value_struct_dtype, pl.Struct):
-            return struct_struct.alias("stat")
-
-        return json_struct.alias("stat")
+        return pl.struct(
+            [
+                type_label.alias("type"),
+                float_value.alias("value_float"),
+                int_value.alias("value_int"),
+                bool_value.alias("value_bool"),
+                string_value.alias("value_str"),
+                json_value.alias("value_json"),
+                struct_value.alias("value_struct"),
+                format_col.alias("format"),
+                unit_col.alias("unit"),
+                extras_col.alias("extras"),
+            ]
+        ).alias("stat")
 
     def _expr_context_struct(self, schema: pl.Schema) -> pl.Expr:
         null_utf8 = pl.lit(None, dtype=pl.Utf8)

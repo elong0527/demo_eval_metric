@@ -20,6 +20,7 @@ class ARD:
     _group_fields: tuple[str, ...]
     _subgroup_fields: tuple[str, ...]
     _context_fields: tuple[str, ...]
+    _id_fields: tuple[str, ...]
 
     def __init__(
         self, data: pl.DataFrame | pl.LazyFrame | list[dict[str, Any]] | None = None
@@ -40,6 +41,7 @@ class ARD:
         self._group_fields = self._extract_struct_fields(schema, "groups")
         self._subgroup_fields = self._extract_struct_fields(schema, "subgroups")
         self._context_fields = self._extract_struct_fields(schema, "context")
+        self._id_fields = self._extract_struct_fields(schema, "id")
 
     # ---------------------------------------------------------------------
     # Construction helpers
@@ -57,10 +59,9 @@ class ARD:
                 pl.Field("value_str", pl.Utf8),
                 pl.Field("value_json", pl.Utf8),
                 pl.Field("value_struct", pl.Struct([])),
-                pl.Field("value_vector", pl.List(pl.Float64)),
-                pl.Field("index_vector", pl.List(pl.Utf8)),
                 pl.Field("format", pl.Utf8),
                 pl.Field("unit", pl.Utf8),
+                pl.Field("extras", pl.Struct([])),
             ]
         )
         frame = pl.DataFrame(
@@ -72,6 +73,7 @@ class ARD:
                 "label": pl.Series([], dtype=pl.Utf8),
                 "stat": pl.Series([], dtype=stat_dtype),
                 "context": pl.Series([], dtype=pl.Struct([])),
+                "id": pl.Series([], dtype=pl.Null),
             }
         )
         return frame.lazy()
@@ -84,6 +86,7 @@ class ARD:
         group_fields = ARD._collect_struct_keys(records, "groups")
         subgroup_fields = ARD._collect_struct_keys(records, "subgroups")
         context_fields = ARD._collect_struct_keys(records, "context")
+        id_fields = ARD._collect_struct_keys(records, "id")
 
         normalised: list[dict[str, Any]] = []
         for row in records:
@@ -100,6 +103,7 @@ class ARD:
                     "context": ARD._normalise_mapping(
                         row.get("context"), context_fields
                     ),
+                    "id": ARD._normalise_mapping(row.get("id"), id_fields),
                 }
             )
 
@@ -144,12 +148,15 @@ class ARD:
     @staticmethod
     def _normalise_stat(value: Any) -> dict[str, Any]:
         if isinstance(value, Mapping) and {"type", "value"}.issubset(value.keys()):
-            return ARD._populate_stat(
+            stat = ARD._populate_stat(
                 value.get("value"),
                 type_hint=value.get("type"),
                 fmt=value.get("format"),
                 unit=value.get("unit"),
             )
+            if "extras" in value:
+                stat["extras"] = value.get("extras")
+            return stat
 
         return ARD._populate_stat(value)
 
@@ -169,10 +176,9 @@ class ARD:
             "value_str": None,
             "value_json": None,
             "value_struct": None,
-            "value_vector": None,
-            "index_vector": None,
             "format": fmt,
             "unit": unit,
+            "extras": None,
         }
 
         if raw_value is None:
@@ -182,44 +188,15 @@ class ARD:
         hint = type_hint.lower() if isinstance(type_hint, str) else None
 
         if isinstance(raw_value, Mapping):
-            # Treat dictionaries with vector payload specially
-            if "values" in raw_value or hint == "vector":
-                values_payload = raw_value.get("values")
-                if isinstance(values_payload, Iterable) and not isinstance(
-                    values_payload, (str, bytes)
-                ):
-                    stat["value_vector"] = [
-                        float(value) if isinstance(value, (int, float)) else None
-                        for value in values_payload
-                    ]
-                index_payload = raw_value.get("index")
-                stat["index_vector"] = ARD._encode_index_vector(
-                    index_payload,
-                    tuple(index_payload.keys())
-                    if isinstance(index_payload, Mapping)
-                    else None,
-                )
-                stat["type"] = "vector"
+            if hint == "struct" or hint is None:
+                stat["value_struct"] = dict(raw_value)
+                stat["type"] = "struct"
                 return stat
 
-        if hint == "vector":
-            if isinstance(raw_value, Mapping) and "values" in raw_value:
-                return ARD._populate_stat(
-                    raw_value,
-                    type_hint=None,
-                    fmt=fmt,
-                    unit=unit,
-                )
-            if isinstance(raw_value, Iterable) and not isinstance(
-                raw_value, (str, bytes)
-            ):
-                stat["value_vector"] = [
-                    float(value) if isinstance(value, (int, float)) else None
-                    for value in raw_value
-                ]
-                stat["index_vector"] = None
-                stat["type"] = "vector"
-                return stat
+        if hint == "struct" and isinstance(raw_value, Mapping):
+            stat["value_struct"] = dict(raw_value)
+            stat["type"] = "struct"
+            return stat
 
         def assign(field: str, value: Any, label: str) -> dict[str, Any]:
             stat[field] = value
@@ -236,7 +213,7 @@ class ARD:
             return assign("value_str", str(raw_value), "string")
         if hint == "struct":
             return assign("value_struct", raw_value, "struct")
-        if hint in {"json", "struct", "list"}:
+        if hint in {"json", "list"}:
             return assign("value_json", ARD._encode_json(raw_value), "json")
 
         if isinstance(raw_value, bool):
@@ -249,11 +226,11 @@ class ARD:
             return assign("value_str", raw_value, "string")
         if isinstance(raw_value, (dict, list, tuple)):
             if isinstance(raw_value, Mapping) and "values" in raw_value:
-                return ARD._populate_stat(
-                    raw_value,
-                    type_hint="vector",
-                    fmt=fmt,
-                    unit=unit,
+                stat["extras"] = raw_value
+                return assign(
+                    "value_json",
+                    ARD._encode_json(raw_value),
+                    hint or "json",
                 )
             return assign("value_json", ARD._encode_json(raw_value), "json")
 
@@ -268,55 +245,6 @@ class ARD:
             return json.dumps(value)
         except TypeError:
             return json.dumps(value, default=str)
-
-    @staticmethod
-    def _encode_index_vector(
-        index: Any, field_order: tuple[str, ...] | None = None
-    ) -> list[str] | None:
-        if index is None:
-            return None
-
-        if isinstance(index, Mapping):
-            keys = list(field_order or index.keys())
-            sequences: list[list[Any]] = []
-            for key in keys:
-                values = index.get(key)
-                if not isinstance(values, Iterable) or isinstance(values, (str, bytes)):
-                    return None
-                sequences.append(list(values))
-
-            encoded: list[str] = []
-            for row in zip(*sequences):
-                payload = {key: value for key, value in zip(keys, row)}
-                encoded.append(ARD._encode_json(payload))
-            return encoded or None
-
-        if isinstance(index, Iterable) and not isinstance(index, (str, bytes)):
-            encoded: list[str] = []
-            for item in index:
-                encoded.append(ARD._encode_json(item))
-            return encoded or None
-
-        return [ARD._encode_json(index)]
-
-    @staticmethod
-    def _decode_index_vector(index_vector: list[str] | None) -> list[Any] | None:
-        if index_vector is None:
-            return None
-
-        decoded: list[Any] = []
-        for item in index_vector:
-            if item is None:
-                decoded.append(None)
-                continue
-            if isinstance(item, str):
-                try:
-                    decoded.append(json.loads(item))
-                except json.JSONDecodeError:
-                    decoded.append(item)
-            else:
-                decoded.append(item)
-        return decoded or None
 
     @staticmethod
     def _extract_struct_fields(
@@ -356,6 +284,7 @@ class ARD:
                 "metric",
                 "stat",
                 "context",
+                "id",
             ]
             if col in available
         ]
@@ -425,18 +354,12 @@ class ARD:
                 return encoded
         if type_label == "struct":
             return stat.get("value_struct")
-        if type_label == "vector":
-            values = stat.get("value_vector")
-            index_raw = stat.get("index_vector")
-            decoded_index = ARD._decode_index_vector(index_raw)
-            return {"values": values, "index": decoded_index}
 
         for field in [
             "value_float",
             "value_int",
             "value_bool",
             "value_str",
-            "value_vector",
             "value_json",
             "value_struct",
         ]:
@@ -449,10 +372,6 @@ class ARD:
                         return candidate
                 if field == "value_struct":
                     return candidate
-                if field == "value_vector":
-                    index_raw = stat.get("index_vector")
-                    decoded_index = ARD._decode_index_vector(index_raw)
-                    return {"values": candidate, "index": decoded_index}
                 return candidate
 
         return None
@@ -466,38 +385,6 @@ class ARD:
         type_label = (stat.get("type") or "").lower()
         fmt = stat.get("format")
         unit = stat.get("unit")
-
-        if type_label == "vector":
-            vector = value or {}
-            values = vector.get("values") or []
-            index_list = vector.get("index")
-            pairs: list[str] = []
-            if index_list:
-                for idx, val in zip(index_list, values):
-                    if isinstance(idx, Mapping):
-                        idx_repr = ", ".join(f"{k}={v}" for k, v in idx.items())
-                    else:
-                        idx_repr = "None" if idx is None else str(idx)
-                    if isinstance(val, float):
-                        val_repr = f"{val:.3f}"
-                    elif isinstance(val, int):
-                        val_repr = f"{val}"
-                    else:
-                        val_repr = "" if val is None else str(val)
-                    pairs.append(f"{idx_repr}: {val_repr}")
-            else:
-                for val in values:
-                    if isinstance(val, float):
-                        pairs.append(f"{val:.3f}")
-                    elif isinstance(val, int):
-                        pairs.append(f"{val}")
-                    else:
-                        pairs.append("" if val is None else str(val))
-
-            rendered = f"[{', '.join(pairs)}]" if pairs else "[]"
-            if unit:
-                rendered = f"{rendered} {unit}"
-            return rendered
 
         if fmt and value is not None:
             try:
@@ -693,6 +580,7 @@ class ARD:
                 _collapse("groups", self._group_fields),
                 _collapse("subgroups", self._subgroup_fields),
                 _collapse("context", self._context_fields),
+                _collapse("id", self._id_fields),
                 pl.when(pl.col("estimate") == "")
                 .then(None)
                 .otherwise(pl.col("estimate"))
@@ -718,6 +606,7 @@ class ARD:
                 _expand("groups", self._group_fields),
                 _expand("subgroups", self._subgroup_fields),
                 _expand("context", self._context_fields),
+                _expand("id", self._id_fields),
                 pl.col("estimate").fill_null(""),
             ]
         )
@@ -731,7 +620,7 @@ class ARD:
         columns = columns or ["groups", "subgroups"]
         lf = self._lf
         for column in columns:
-            if column in {"groups", "subgroups", "context", "stat"}:
+            if column in {"groups", "subgroups", "context", "stat", "id"}:
                 has_values = (
                     lf.select(pl.col(column).is_not_null().any()).collect().item()
                 )

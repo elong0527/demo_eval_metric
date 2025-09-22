@@ -72,7 +72,7 @@ res = evaluator.evaluate()
 res
 ```
 
-The resulting `DataFrame` keeps the formatted `value` column alongside the underlying `stat` struct, so you can render metrics directly while still accessing typed values through `res["stat"]` when needed.
+The resulting `DataFrame` keeps the formatted `value` column alongside optional `id` structs for entity-level metrics, while the `stat` struct preserves type-specific details for downstream access.
 
 ```{python}
 # Grab integer counts for the subject metrics
@@ -146,6 +146,11 @@ evaluator = MetricEvaluator(
 )
 
 evaluator.evaluate()
+```
+
+```{python}
+# Inspect subject identifiers carried in the id struct
+evaluator.evaluate().unnest(["id"])
 ```
 
 

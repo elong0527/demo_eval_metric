@@ -11,7 +11,7 @@ The Analysis Results Data (ARD) structure is a standardized format for storing a
 
 Traditional approaches to storing evaluation results often use ad-hoc schemas with varying column names and structures. ARD solves this by providing:
 
-- **Fixed Schema**: Always 6 columns, regardless of complexity
+- **Fixed Schema**: Always 7 columns, regardless of complexity
 - **Type Safety**: Structured data with validation
 - **Flexibility**: Handles any combination of groups, metrics, and estimates
 - **Performance**: Built on Polars lazy evaluation
@@ -19,7 +19,7 @@ Traditional approaches to storing evaluation results often use ad-hoc schemas wi
 
 ## Core Schema
 
-ARD uses exactly 6 columns in every dataset:
+ARD uses exactly 7 columns in every dataset:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -29,12 +29,16 @@ ARD uses exactly 6 columns in every dataset:
 | `metric` | `pl.Utf8` | Metric identifier |
 | `stat` | `pl.Struct` | Statistical value with type information |
 | `context` | `pl.Struct` | Metadata and computation details |
+| `id` | `pl.Struct` | Optional entity identifiers (subject, visit, etc.) |
 
 The `stat` struct contains:
-- `type`: Data type hint ("int", "float", "string", "struct")
-- `value`: The actual statistical value
+- `type`: Data type hint ("int", "float", "string", "struct" …)
+- `value_float`, `value_int`, `value_bool`, `value_str`, `value_json`, `value_struct`: Typed value channels
 - `format`: Optional format string for display
 - `unit`: Optional unit of measurement
+- `extras`: Optional structured payload for metric-specific attachments
+
+The `id` struct is populated for within-entity metrics such as per-subject or per-visit summaries. It mirrors whatever identifier columns were present in the evaluation pipeline and remains `null` for global metrics.
 
 # Getting Started
 
@@ -304,10 +308,15 @@ converted_ard.describe()
 # Use Polars expressions for complex filtering on the long format
 import polars as pl
 
-long_values = converted_ard.to_long()
-custom_filtered = long_values.filter(pl.col("value") > 3.0)
+long_values = converted_ard.to_long().with_columns(
+    pl.col("stat")
+    .map_elements(ARD._stat_value, return_dtype=pl.Float64)
+    .alias("value_numeric")
+)
+
+custom_filtered = long_values.filter(pl.col("value_numeric") > 3.0)
 print(f"Values > 3.0: {custom_filtered.height} records")
-print(custom_filtered)
+print(custom_filtered.select(pl.exclude("value_numeric")))
 ```
 
 ## Handling Missing Data

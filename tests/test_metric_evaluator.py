@@ -5,8 +5,6 @@ Tests cover core functionality, all scope types, grouping strategies,
 and edge cases based on examples from metric_evaluator.qmd
 """
 
-import json
-
 import pytest
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricScope, MetricType
@@ -41,6 +39,7 @@ class TestMetricEvaluatorBasic:
             "metric",
             "stat",
             "context",
+            "id",
         }
         assert set(df["metric"].unique()) == {"mae", "rmse"}
         assert set(df["estimate"].unique()) == {"model_a", "model_b"}
@@ -201,17 +200,21 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 1  # bundled as vector payload
         df = result.collect()
+        assert len(df) == 3  # One row per subject
+
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "within_subject")
 
-        stat = df["stat"][0]
-        assert stat["type"] == "vector"
-        values = stat["value_vector"]
-        assert values is not None and len(values) == 3
-        index_entries = [json.loads(entry) for entry in stat["index_vector"]]
-        assert [entry["subject_id"] for entry in index_entries] == [1, 2, 3]
+        # ID struct should carry subject identifiers
+        id_df = df.unnest(["id"])
+        assert "subject_id" in id_df.columns
+        assert set(id_df["subject_id"].to_list()) == {1, 2, 3}
+
+        # Value column surfaces subject-level MAE on the long representation
+        assert "value" in result.columns
+        assert all(result["value"].is_not_null())
+        assert all(df["stat"].struct.field("type") == "float")
 
     def test_across_subject(self, hierarchical_metric_df):
         """Test ACROSS_SUBJECT - within subjects then across"""
@@ -247,16 +250,22 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 1  # vector payload covers all visits
         df = result.collect()
-        stat = df["stat"][0]
-        assert stat["type"] == "vector"
-        values = stat["value_vector"]
-        assert values is not None and len(values) == 9
-        decoded = [json.loads(entry) for entry in stat["index_vector"]]
-        assert {(entry["subject_id"], entry["visit_id"]) for entry in decoded} == {
+        assert len(df) == 9  # Subject x visit combinations
+
+        context = df.select(pl.col("context").struct.field("metric_type"))
+        assert all(context["metric_type"] == "within_visit")
+
+        id_df = df.unnest(["id"])
+        assert {"subject_id", "visit_id"}.issubset(set(id_df.columns))
+        expected_pairs = {
             (subject, visit) for subject in [1, 2, 3] for visit in [1, 2, 3]
         }
+        observed_pairs = {
+            (row["subject_id"], row["visit_id"]) for row in id_df.iter_rows(named=True)
+        }
+        assert observed_pairs == expected_pairs
+        assert all(df["stat"].struct.field("type") == "float")
 
     def test_across_visit(self, hierarchical_metric_df):
         """Test ACROSS_VISIT - within visits then across"""

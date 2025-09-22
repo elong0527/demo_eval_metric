@@ -14,7 +14,7 @@ class TestARDBasics:
         """Test creating empty ARD."""
         ard = ARD()
         assert len(ard) == 0
-        assert ard.collect().shape == (0, 6)
+        assert ard.collect().shape == (0, 7)
 
     def test_empty_get_stats(self):
         """get_stats should work on empty ARD with fixed schema."""
@@ -242,16 +242,13 @@ class TestARDStatHandling:
         assert df["stat"][1]["type"] == "float"
         assert df["stat"][2]["type"] == "string"
         assert df["stat"][3]["type"] == "bool"
-        assert df["stat"][4]["type"] == "json"
+        assert df["stat"][4]["type"] == "struct"
 
         assert df["stat"][0]["value_int"] == 42
         assert df["stat"][1]["value_float"] == 3.14159
         assert df["stat"][2]["value_str"] == "significant"
         assert df["stat"][3]["value_bool"] is True
-        assert json.loads(df["stat"][4]["value_json"]) == {
-            "lower": 2.5,
-            "upper": 3.5,
-        }
+        assert df["stat"][4]["value_struct"] == {"lower": 2.5, "upper": 3.5}
 
     def test_get_stats(self):
         """Test extracting stat values."""
