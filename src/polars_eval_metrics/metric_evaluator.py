@@ -7,11 +7,15 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
-from typing import Any
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any, Sequence
 
 # pyre-strict
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from polars.selectors import Selector
 
 from .ard import ARD
 from .metric_define import MetricDefine, MetricScope, MetricType
@@ -32,6 +36,14 @@ class MetricEvaluator:
     error_params: dict[str, dict[str, Any]]
     df: pl.LazyFrame
     _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], ARD]
+    _estimate_keys: list[str]
+    _estimate_label_lookup: dict[str, str]
+    _estimate_label_reverse: dict[str, str]
+    _estimate_label_order: dict[str, int]
+    _estimate_key_order: dict[str, int]
+    _metric_label_order: dict[str, int]
+    _metric_name_order: dict[str, int]
+    _subgroup_categories: list[str]
 
     def __init__(
         self,
@@ -146,6 +158,37 @@ class MetricEvaluator:
     def clear_cache(self) -> None:
         """Clear the evaluation cache"""
         self._evaluation_cache.clear()
+
+    def filter(
+        self,
+        *,
+        metrics: MetricDefine | list[MetricDefine] | None = None,
+        estimates: str | list[str] | None = None,
+    ) -> "MetricEvaluator":
+        """Return a new evaluator scoped to the requested metrics or estimates."""
+
+        filtered_metrics = (
+            self._resolve_metrics(metrics) if metrics is not None else self.metrics
+        )
+        filtered_estimate_keys = (
+            self._resolve_estimates(estimates)
+            if estimates is not None
+            else list(self.estimates.keys())
+        )
+        filtered_estimates = {
+            key: self.estimates[key] for key in filtered_estimate_keys
+        }
+
+        return MetricEvaluator(
+            df=self.df,
+            metrics=filtered_metrics,
+            ground_truth=self.ground_truth,
+            estimates=filtered_estimates,
+            group_by=self.group_by,
+            subgroup_by=self.subgroup_by,
+            filter_expr=None,
+            error_params=self.error_params,
+        )
 
     def _evaluate_ard(
         self,
@@ -373,10 +416,13 @@ class MetricEvaluator:
         group_cols = [label for label in self.group_by.values() if label in long_df.columns]
         subgroup_present = "subgroup_name" in long_df.columns and "subgroup_value" in long_df.columns
 
+        index_cols: list[str]
         if row_order_by == "subgroup" and subgroup_present:
             index_cols = ["subgroup_name", "subgroup_value"] + group_cols
         else:
-            index_cols = group_cols + (["subgroup_name", "subgroup_value"] if subgroup_present else [])
+            index_cols = group_cols + (
+                ["subgroup_name", "subgroup_value"] if subgroup_present else []
+            )
 
         def pivot_default(df: pl.DataFrame) -> pl.DataFrame:
             default_df = df.filter(pl.col("scope").is_null())
@@ -469,9 +515,9 @@ class MetricEvaluator:
         value_cols = [col for col in result.columns if col not in index_cols]
         default_cols = [col for col in value_cols if col.startswith('{"') and col.endswith('"}')] if value_cols else []
 
-        estimate_order_lookup = self._estimate_label_order
-        metric_label_order_lookup = self._metric_label_order
-        metric_name_order_lookup = self._metric_name_order
+        estimate_order_lookup: dict[str, int] = self._estimate_label_order
+        metric_label_order_lookup: dict[str, int] = self._metric_label_order
+        metric_name_order_lookup: dict[str, int] = self._metric_name_order
 
         def metric_order(label: str) -> int:
             if label in metric_label_order_lookup:
@@ -602,10 +648,13 @@ class MetricEvaluator:
 
         subgroup_present = "subgroup_name" in long_df.columns and "subgroup_value" in long_df.columns
 
+        index_cols: list[str]
         if row_order_by == "subgroup" and subgroup_present:
             index_cols = ["estimate", "subgroup_name", "subgroup_value"]
         else:
-            index_cols = ["estimate"] + (["subgroup_name", "subgroup_value"] if subgroup_present else [])
+            index_cols = ["estimate"] + (
+                ["subgroup_name", "subgroup_value"] if subgroup_present else []
+            )
 
         if "estimate" in index_cols:
             estimate_series = long_df.get_column("estimate") if "estimate" in long_df.columns else None
@@ -1474,16 +1523,27 @@ class EvaluationResult(pl.DataFrame):
         """Return a copy of the flattened DataFrame representation."""
         return pl.DataFrame(self)
 
-    def unnest(self, columns, *args, **kwargs) -> pl.DataFrame:
+    def unnest(
+        self,
+        columns: str | "Selector" | Collection[str | "Selector"],
+        *args: Any,
+        **kwargs: Any,
+    ) -> pl.DataFrame:
         """Delegate unnest operations to the structured ARD representation."""
         df = self._ard.collect()
-        cols = [columns] if isinstance(columns, str) else list(columns)
-        safe_cols = []
+        if isinstance(columns, str):
+            cols: list[str | "Selector"] = [columns]
+        elif isinstance(columns, Collection):
+            cols = list(columns)
+        else:
+            cols = [columns]
+        safe_cols: list[str | "Selector"] = []
         schema = df.schema
         for col in cols:
-            dtype = schema.get(col)
-            if dtype is None or dtype == pl.Null:
-                continue
+            if isinstance(col, str):
+                dtype = schema.get(col)
+                if dtype is None or dtype == pl.Null:
+                    continue
             safe_cols.append(col)
 
         if safe_cols:

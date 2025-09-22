@@ -282,7 +282,9 @@ class ARD:
             return self._lf.select(pl.col(key)).collect()[key]
         raise KeyError(key)
 
-    def iter_rows(self, *args: Any, **kwargs: Any):
+    def iter_rows(
+        self, *args: Any, **kwargs: Any
+    ) -> Iterable[tuple[Any, ...]]:
         """Iterate over rows of the eagerly collected DataFrame."""
         return self.collect().iter_rows(*args, **kwargs)
 
@@ -442,10 +444,14 @@ class ARD:
         context: Mapping[str, Any] | None = None,
         metrics: list[str] | str | None = None,
         estimates: list[str] | str | None = None,
-        expr: IntoExpr | None = None,
+        expr: pl.Expr | None = None,
     ) -> ARD:
         if isinstance(groups, pl.Expr):
-            expr = groups if expr is None else expr & groups
+            group_expr: pl.Expr = groups
+            if expr is None:
+                expr = group_expr
+            else:
+                expr = expr & group_expr
             groups = None
 
         lf = self._apply_struct_filters(self._lf, "groups", groups, self._group_fields)
