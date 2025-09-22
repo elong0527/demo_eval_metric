@@ -13,33 +13,7 @@ from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricScope, Metr
 class TestMetricEvaluatorBasic:
     """Test basic MetricEvaluator functionality"""
 
-    @pytest.fixture
-    def sample_data(self):
-        """Standard test data with missing values"""
-        return pl.DataFrame(
-            {
-                "subject_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-                "visit_id": [1, 2, 3, 1, 2, 3, 1, 2, 3],
-                "treatment": ["A", "A", "A", "A", "A", "A", "B", "B", "B"],
-                "age_group": [
-                    "young",
-                    "young",
-                    "young",
-                    "middle",
-                    "middle",
-                    "middle",
-                    "senior",
-                    "senior",
-                    "senior",
-                ],
-                "sex": ["M", "M", "M", "F", "F", "F", "M", "M", "M"],
-                "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
-                "model_a": [8, 22, 28, 18, 24, 38, None, 19, 35],
-                "model_b": [12, None, None, 13, 27, 33, 14, 25, 29],
-            }
-        )
-
-    def test_simple_metrics(self, sample_data):
+    def test_simple_metrics(self, metric_sample_df):
         """Test basic metric evaluation"""
         metrics = [
             MetricDefine(name="mae", label="Mean Absolute Error"),
@@ -47,7 +21,7 @@ class TestMetricEvaluatorBasic:
         ]
 
         evaluator = MetricEvaluator(
-            df=sample_data,
+            df=metric_sample_df,
             metrics=metrics,
             ground_truth="actual",
             estimates=["model_a", "model_b"],
@@ -77,10 +51,10 @@ class TestMetricEvaluatorBasic:
             not (isinstance(v, float) and v != v) for v in values
         )  # Check for NaN
 
-    def test_single_metric_single_estimate(self, sample_data):
+    def test_single_metric_single_estimate(self, metric_sample_df):
         """Test minimal case"""
         evaluator = MetricEvaluator(
-            df=sample_data,
+            df=metric_sample_df,
             metrics=[MetricDefine(name="mae")],
             ground_truth="actual",
             estimates=["model_a"],
@@ -96,25 +70,12 @@ class TestMetricEvaluatorBasic:
 class TestMetricEvaluatorScopes:
     """Test all MetricScope types"""
 
-    @pytest.fixture
-    def grouped_data(self):
-        """Data with clear group structure"""
-        return pl.DataFrame(
-            {
-                "subject_id": [1, 1, 2, 2, 3, 3],
-                "actual": [10, 20, 15, 25, 12, 22],
-                "model_a": [8, 22, 18, 24, 15, 19],
-                "model_b": [12, 18, 13, 27, 14, 25],
-                "treatment": ["A", "A", "A", "A", "B", "B"],
-            }
-        )
-
-    def test_global_scope(self, grouped_data):
+    def test_global_scope(self, grouped_metric_df):
         """Test GLOBAL scope - single result across all"""
         metric = MetricDefine(name="n_subject", scope="global")
 
         evaluator = MetricEvaluator(
-            df=grouped_data,
+            df=grouped_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a", "model_b"],
@@ -131,12 +92,12 @@ class TestMetricEvaluatorScopes:
         stats = result.get_stats()
         assert stats["value"][0] == 3.0  # 3 unique subjects
 
-    def test_model_scope(self, grouped_data):
+    def test_model_scope(self, grouped_metric_df):
         """Test MODEL scope - per model, ignore groups"""
         metric = MetricDefine(name="n_sample_with_data", scope="model")
 
         evaluator = MetricEvaluator(
-            df=grouped_data,
+            df=grouped_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a", "model_b"],
@@ -153,12 +114,12 @@ class TestMetricEvaluatorScopes:
         stats = result.get_stats()
         assert all(v == 6.0 for v in stats["value"])  # 6 samples each model
 
-    def test_group_scope(self, grouped_data):
+    def test_group_scope(self, grouped_metric_df):
         """Test GROUP scope - per group, aggregate models"""
         metric = MetricDefine(name="n_subject", scope="group")
 
         evaluator = MetricEvaluator(
-            df=grouped_data,
+            df=grouped_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a", "model_b"],
@@ -184,12 +145,12 @@ class TestMetricEvaluatorScopes:
             elif groups and groups["treatment"] == "B":
                 assert stat["value_float"] == 1.0  # 1 subject in B
 
-    def test_default_scope(self, grouped_data):
+    def test_default_scope(self, grouped_metric_df):
         """Test default scope - per model-group combination"""
         metric = MetricDefine(name="mae")  # Default scope
 
         evaluator = MetricEvaluator(
-            df=grouped_data,
+            df=grouped_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a", "model_b"],
@@ -209,24 +170,12 @@ class TestMetricEvaluatorScopes:
 class TestMetricEvaluatorTypes:
     """Test all MetricType aggregations"""
 
-    @pytest.fixture
-    def hierarchical_data(self):
-        """Data structured for hierarchical metrics"""
-        return pl.DataFrame(
-            {
-                "subject_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-                "visit_id": [1, 2, 3, 1, 2, 3, 1, 2, 3],
-                "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
-                "model_a": [8, 22, 28, 18, 24, 38, 15, 19, 35],
-            }
-        )
-
-    def test_across_sample(self, hierarchical_data):
+    def test_across_sample(self, hierarchical_metric_df):
         """Test ACROSS_SAMPLE - aggregate across all samples"""
         metric = MetricDefine(name="mae", type="across_sample")
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a"],
@@ -238,12 +187,12 @@ class TestMetricEvaluatorTypes:
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert context["metric_type"][0] == "across_sample"
 
-    def test_within_subject(self, hierarchical_data):
+    def test_within_subject(self, hierarchical_metric_df):
         """Test WITHIN_SUBJECT - per subject aggregation"""
         metric = MetricDefine(name="mae", type="within_subject")
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a"],
@@ -255,13 +204,13 @@ class TestMetricEvaluatorTypes:
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "within_subject")
 
-    def test_across_subject(self, hierarchical_data):
+    def test_across_subject(self, hierarchical_metric_df):
         """Test ACROSS_SUBJECT - within subjects then across"""
         # Use proper hierarchical metric that does within-subject then across-subject aggregation
         metric = MetricDefine(name="mae:mean", type="across_subject")
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a"],
@@ -277,12 +226,12 @@ class TestMetricEvaluatorTypes:
         stats = result.get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
-    def test_within_visit(self, hierarchical_data):
+    def test_within_visit(self, hierarchical_metric_df):
         """Test WITHIN_VISIT - per visit aggregation"""
         metric = MetricDefine(name="mae", type="within_visit")
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a"],
@@ -291,13 +240,13 @@ class TestMetricEvaluatorTypes:
         result = evaluator.evaluate()
         assert len(result) == 9  # 9 subject-visit combinations
 
-    def test_across_visit(self, hierarchical_data):
+    def test_across_visit(self, hierarchical_metric_df):
         """Test ACROSS_VISIT - within visits then across"""
         # Use proper hierarchical metric that does within-visit then across-visit aggregation
         metric = MetricDefine(name="mae:mean", type="across_visit")
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=[metric],
             ground_truth="actual",
             estimates=["model_a"],
@@ -314,7 +263,7 @@ class TestMetricEvaluatorTypes:
         stats = result.get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
-    def test_across_visit_custom_across_expr(self, hierarchical_data):
+    def test_across_visit_custom_across_expr(self, hierarchical_metric_df):
         """Test ACROSS_VISIT with custom across_expr (count, min, max, etc.)"""
         metrics = [
             MetricDefine(
@@ -348,7 +297,7 @@ class TestMetricEvaluatorTypes:
         ]
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=metrics,
             ground_truth="actual",
             estimates=["model_a"],
@@ -375,7 +324,7 @@ class TestMetricEvaluatorTypes:
         sum_result = stats.filter(pl.col("metric") == "mae_sum")
         assert sum_result["value"][0] > 0
 
-    def test_across_subject_custom_across_expr(self, hierarchical_data):
+    def test_across_subject_custom_across_expr(self, hierarchical_metric_df):
         """Test ACROSS_SUBJECT with custom across_expr (count, median, std, etc.)"""
         metrics = [
             MetricDefine(
@@ -402,7 +351,7 @@ class TestMetricEvaluatorTypes:
         ]
 
         evaluator = MetricEvaluator(
-            df=hierarchical_data,
+            df=hierarchical_metric_df,
             metrics=metrics,
             ground_truth="actual",
             estimates=["model_a"],
@@ -515,6 +464,126 @@ class TestMetricEvaluatorGrouping:
         assert len(age_results) > 0  # Has age_group subgroup results
 
 
+class TestMetricEvaluatorAdvancedScenarios:
+    """Additional scenarios covering scope mixing and typed subgroup inputs."""
+
+    def test_mixed_scope_metrics(self, grouped_metric_df):
+        """Metrics spanning all scopes should co-exist in a single evaluation run."""
+        metrics = [
+            MetricDefine(name="mae"),
+            MetricDefine(name="n_sample", scope=MetricScope.GLOBAL),
+            MetricDefine(name="n_subject", scope=MetricScope.GROUP),
+            MetricDefine(name="n_sample_with_data", scope=MetricScope.MODEL),
+        ]
+
+        evaluator = MetricEvaluator(
+            df=grouped_metric_df,
+            metrics=metrics,
+            ground_truth="actual",
+            estimates=["model_a", "model_b"],
+            group_by=["treatment"],
+        )
+
+        result = evaluator.evaluate()
+        df = result.collect()
+
+        context_scope = df.select(
+            pl.col("metric"),
+            pl.col("context").struct.field("scope").alias("scope"),
+        )
+
+        assert context_scope.filter(pl.col("metric") == "n_sample")["scope"].to_list() == [
+            "global"
+        ]
+        assert set(
+            context_scope.filter(pl.col("metric") == "n_subject")["scope"].to_list()
+        ) == {"group"}
+        assert set(
+            context_scope.filter(pl.col("metric") == "n_sample_with_data")["scope"].to_list()
+        ) == {"model"}
+        assert all(
+            value is None
+            for value in context_scope.filter(pl.col("metric") == "mae")["scope"].to_list()
+        )
+
+        global_rows = df.filter(pl.col("metric") == "n_sample")
+        assert global_rows.height == 1
+        assert global_rows["estimate"][0] is None
+        assert global_rows["groups"][0] is None
+
+        group_rows = df.filter(pl.col("metric") == "n_subject")
+        assert all(value is None for value in group_rows["estimate"].to_list())
+        treatments = {
+            group["treatment"]
+            for group in group_rows["groups"].to_list()
+            if group is not None
+        }
+        assert treatments == {"A", "B"}
+
+        model_rows = df.filter(pl.col("metric") == "n_sample_with_data")
+        assert all(group is None for group in model_rows["groups"].to_list())
+        assert set(model_rows["estimate"].to_list()) == {"model_a", "model_b"}
+
+        mae_rows = df.filter(pl.col("metric") == "mae")
+        combinations = {
+            (row["estimate"], row["groups"]["treatment"])
+            for row in mae_rows.iter_rows(named=True)
+        }
+        assert combinations == {
+            ("model_a", "A"),
+            ("model_a", "B"),
+            ("model_b", "A"),
+            ("model_b", "B"),
+        }
+
+    def test_group_subgroup_overlap_raises(self, metric_sample_df):
+        """Using the same column for group and subgroup should raise a clear error."""
+        evaluator = MetricEvaluator(
+            df=metric_sample_df,
+            metrics=[MetricDefine(name="mae")],
+            ground_truth="actual",
+            estimates=["model_a"],
+            group_by=["treatment"],
+            subgroup_by=["treatment"],
+        )
+
+        possible_errors = [
+            pl.exceptions.ColumnNotFoundError,
+            pl.exceptions.ComputeError,
+        ]
+        if hasattr(pl.exceptions, "InvalidOperationError"):
+            possible_errors.append(pl.exceptions.InvalidOperationError)
+
+        with pytest.raises(tuple(possible_errors)):
+            evaluator.evaluate()
+
+    def test_enum_subgroup_inputs(self, metric_sample_df):
+        """Pre-typed Enum subgroup columns should preserve their category order."""
+        enum_order = ["young", "middle", "senior"]
+        enum_df = metric_sample_df.with_columns(
+            pl.col("age_group").cast(pl.Enum(enum_order))
+        )
+
+        evaluator = MetricEvaluator(
+            df=enum_df,
+            metrics=[MetricDefine(name="mae")],
+            ground_truth="actual",
+            estimates=["model_a", "model_b"],
+            subgroup_by=["age_group"],
+        )
+
+        result = evaluator.evaluate()
+        subgroups = result.unnest(["subgroups"])
+        subgroup_values = subgroups["subgroup_value"]
+
+        assert isinstance(subgroup_values.dtype, pl.Enum)
+        assert subgroup_values.dtype.categories.to_list() == enum_order
+        assert set(subgroup_values.drop_nulls().to_list()) == set(enum_order)
+        assert set(
+            subgroups["subgroup_name"].drop_nulls().to_list()
+        ) == {"age_group"}
+
+
 class TestMetricEvaluatorEdgeCases:
     """Test edge cases and error conditions"""
 
@@ -587,11 +656,11 @@ class TestMetricEvaluatorEdgeCases:
         stats = result.get_stats()
         assert stats["value"][0] == 2.0
 
-    def test_invalid_metric_name(self, sample_data):
+    def test_invalid_metric_name(self, metric_sample_df):
         """Test error handling for invalid configuration"""
         with pytest.raises(ValueError, match="not in configured metrics"):
             evaluator = MetricEvaluator(
-                df=sample_data,
+                df=metric_sample_df,
                 metrics=[MetricDefine(name="mae")],
                 ground_truth="actual",
                 estimates=["model_a"],
@@ -599,11 +668,11 @@ class TestMetricEvaluatorEdgeCases:
             # Try to evaluate metric not in original configuration
             evaluator.evaluate(metrics=[MetricDefine(name="rmse")])
 
-    def test_invalid_estimate_name(self, sample_data):
+    def test_invalid_estimate_name(self, metric_sample_df):
         """Test error handling for invalid estimate"""
         with pytest.raises(ValueError, match="not in configured estimates"):
             evaluator = MetricEvaluator(
-                df=sample_data,
+                df=metric_sample_df,
                 metrics=[MetricDefine(name="mae")],
                 ground_truth="actual",
                 estimates=["model_a"],
@@ -635,10 +704,10 @@ class TestMetricEvaluatorEdgeCases:
         # Should only use rows where keep=True (subjects 1, 2, 4)
         # MAE should be calculated on 3 rows, not 4
 
-    def test_lazy_vs_eager_evaluation(self, sample_data):
+    def test_lazy_vs_eager_evaluation(self, metric_sample_df):
         """Test collect parameter"""
         evaluator = MetricEvaluator(
-            df=sample_data,
+            df=metric_sample_df,
             metrics=[MetricDefine(name="mae")],
             ground_truth="actual",
             estimates=["model_a"],
@@ -653,27 +722,3 @@ class TestMetricEvaluatorEdgeCases:
         stats = result.get_stats()
         assert stats["value"][0] == 2.375  # MAE should be 2.375
 
-    @pytest.fixture
-    def sample_data(self):
-        """Standard test data"""
-        return pl.DataFrame(
-            {
-                "subject_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-                "visit_id": [1, 2, 3, 1, 2, 3, 1, 2, 3],
-                "treatment": ["A", "A", "A", "A", "A", "A", "B", "B", "B"],
-                "age_group": [
-                    "young",
-                    "young",
-                    "young",
-                    "middle",
-                    "middle",
-                    "middle",
-                    "senior",
-                    "senior",
-                    "senior",
-                ],
-                "actual": [10, 20, 30, 15, 25, 35, 12, 22, 32],
-                "model_a": [8, 22, 28, 18, 24, 38, None, 19, 35],
-                "model_b": [12, None, None, 13, 27, 33, 14, 25, 29],
-            }
-        )
