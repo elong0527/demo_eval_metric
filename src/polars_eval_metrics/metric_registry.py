@@ -290,11 +290,14 @@ class MetricRegistry:
         if not cls._registry_contains("summary", name):
             raise MetricNotFoundError(name, cls.list_summaries(), "summary")
 
-        expr = cls._registry_store("summary")[name]
-        # If it's a callable, call it to get the expression
-        if callable(expr):
-            return expr()
-        return expr
+        summary_entry = cls._registry_store("summary")[name]
+        result = summary_entry() if callable(summary_entry) else summary_entry
+        if not isinstance(result, pl.Expr):
+            raise TypeError(
+                "Summary registry returned a non-expression object; "
+                "ensure summaries resolve to pl.Expr."
+            )
+        return result
 
     # ============ Built-in Error Expression Functions ============
 

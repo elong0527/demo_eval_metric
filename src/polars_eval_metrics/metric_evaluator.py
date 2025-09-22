@@ -7,7 +7,7 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING, Any, Sequence
 
 # pyre-strict
@@ -1011,7 +1011,7 @@ class MetricEvaluator:
             "subgroup_value",
         }.issubset(schema_names)
 
-        def existing(columns: Sequence[str]) -> list[str]:
+        def existing(columns: Iterable[str]) -> list[str]:
             return [col for col in columns if col in schema_names]
 
         group_cols: list[str] = []
