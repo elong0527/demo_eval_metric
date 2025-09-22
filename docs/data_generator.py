@@ -13,11 +13,13 @@ def generate_sample_data(
     """
     Generate sample data for testing metrics.
 
+    The values follow a deterministic pattern derived from the subject and visit
+    identifiers, so no random seed configuration is required.
+
     Args:
         n_subjects: Number of subjects
         n_visits: Number of visits per subject
         n_groups: Number of treatment groups
-        seed: Random seed for reproducibility
 
     Returns:
         DataFrame with sample data

@@ -66,6 +66,7 @@ class ARD:
                 "subgroups": pl.Series([], dtype=pl.Struct([])),
                 "estimate": pl.Series([], dtype=pl.Utf8),
                 "metric": pl.Series([], dtype=pl.Utf8),
+                "label": pl.Series([], dtype=pl.Utf8),
                 "stat": pl.Series([], dtype=stat_dtype),
                 "context": pl.Series([], dtype=pl.Struct([])),
             }
@@ -85,12 +86,13 @@ class ARD:
         for row in records:
             normalised.append(
                 {
-                    "groups": ARD._normalise_mapping(row.get("groups"), group_fields),
-                    "subgroups": ARD._normalise_mapping(
-                        row.get("subgroups"), subgroup_fields
-                    ),
+                   "groups": ARD._normalise_mapping(row.get("groups"), group_fields),
+                   "subgroups": ARD._normalise_mapping(
+                       row.get("subgroups"), subgroup_fields
+                   ),
                     "estimate": row.get("estimate"),
                     "metric": row.get("metric"),
+                    "label": row.get("label"),
                     "stat": ARD._normalise_stat(row.get("stat")),
                     "context": ARD._normalise_mapping(
                         row.get("context"), context_fields
@@ -256,6 +258,15 @@ class ARD:
         return self.collect().height
 
     @property
+    def shape(self) -> tuple[int, int]:
+        collected = self.collect()
+        return collected.shape
+
+    @property
+    def columns(self) -> list[str]:
+        return list(self.schema.keys())
+
+    @property
     def schema(self) -> dict[str, pl.DataType]:
         """Expose the ARD schema for compatibility with tests/utilities."""
         collected = self._lf.collect_schema()
@@ -263,7 +274,17 @@ class ARD:
 
     def __getitem__(self, key: str) -> pl.Series:
         """Allow DataFrame-like column access for compatibility with tests."""
-        return self.collect()[key]
+        collected = self.collect()
+        if key in collected.columns:
+            return collected[key]
+        schema_names = self._lf.collect_schema().names()
+        if key in schema_names:
+            return self._lf.select(pl.col(key)).collect()[key]
+        raise KeyError(key)
+
+    def iter_rows(self, *args: Any, **kwargs: Any):
+        """Iterate over rows of the eagerly collected DataFrame."""
+        return self.collect().iter_rows(*args, **kwargs)
 
     def sort(self, *args: Any, **kwargs: Any) -> ARD:
         """Return a sorted ARD (collecting lazily)."""

@@ -69,9 +69,14 @@ evaluator = MetricEvaluator(
 - Results 
 
 ```{python}
-# Returns DataFrame by default
-evaluator.evaluate()  
+# Returns EvaluationResult (DataFrame subclass)
+result = evaluator.evaluate()
+result  # EvaluationResult behaves like a Polars DataFrame  
 ```
+
+`EvaluationResult` keeps the canonical ARD representation accessible through
+helpers like `collect()`, `get_stats()`, and `to_ard()` while still behaving
+like a Polars `DataFrame` for interactive inspection.
 
 - Equivalent Polars code
 

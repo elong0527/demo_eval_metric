@@ -64,8 +64,17 @@ evaluator = MetricEvaluator(
 )
 
 results = evaluator.evaluate()
-print(results)
+print(results)  # EvaluationResult (subclass of polars.DataFrame)
+
+# Access structured helpers when needed
+stats = results.get_stats()
+ard = results.to_ard()
 ```
+
+`MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
+Polars `DataFrame` but keeps a handle on the underlying ARD object. Use the
+helper methods (`collect()`, `get_stats()`, `to_ard()`, or `to_long()`) when you
+need either the canonical struct columns or a plain long-format table.
 
 ## Code Coverage
 
@@ -98,7 +107,7 @@ quarto render
 quarto preview
 ```
 
-## > Contributing
+## Contributing
 
 Contributions are welcome! Please:
 
@@ -111,7 +120,7 @@ Contributions are welcome! Please:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## = Links
+## Links
 
 - [Documentation](https://elong0527.github.io/demo_eval_metric/)
 - [GitHub Repository](https://github.com/elong0527/demo_eval_metric)

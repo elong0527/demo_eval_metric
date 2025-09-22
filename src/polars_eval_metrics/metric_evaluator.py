@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Unified Metric Evaluation Pipeline
 
@@ -70,8 +72,25 @@ class MetricEvaluator:
 
         # Process inputs using dedicated methods
         self.estimates = self._process_estimates(estimates)
+        # Preserve insertion order for deterministic display and sorting
+        self._estimate_keys = list(self.estimates.keys())
+        self._estimate_label_lookup = dict(self.estimates)
+        self._estimate_label_reverse = {
+            label: key for key, label in self._estimate_label_lookup.items()
+        }
+        self._estimate_label_order = {
+            label: idx for idx, label in enumerate(self._estimate_label_lookup.values())
+        }
+        self._estimate_key_order = {key: idx for idx, key in enumerate(self._estimate_keys)}
+        self._metric_label_order = {
+            metric.label or metric.name: idx for idx, metric in enumerate(self.metrics)
+        }
+        self._metric_name_order = {
+            metric.name: idx for idx, metric in enumerate(self.metrics)
+        }
         self.group_by = self._process_grouping(group_by)
         self.subgroup_by = self._process_grouping(subgroup_by)
+        self._subgroup_categories = self._compute_subgroup_categories()
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
 
@@ -111,14 +130,16 @@ class MetricEvaluator:
         cache_key = self._get_cache_key(metrics, estimates)
 
         if cache_key not in self._evaluation_cache:
-            # Compute and cache the result using new ARD method
-            # Create temporary evaluator with filtered metrics/estimates for caching
             if metrics is not None or estimates is not None:
                 filtered_evaluator = self.filter(metrics=metrics, estimates=estimates)
-                result = filtered_evaluator.evaluate()
+                ard_result = filtered_evaluator._evaluate_ard(
+                    metrics=metrics, estimates=estimates
+                )
             else:
-                result = self.evaluate()
-            self._evaluation_cache[cache_key] = result
+                ard_result = self._evaluate_ard(
+                    metrics=metrics, estimates=estimates
+                )
+            self._evaluation_cache[cache_key] = ard_result
 
         return self._evaluation_cache[cache_key]
 
@@ -126,36 +147,49 @@ class MetricEvaluator:
         """Clear the evaluation cache"""
         self._evaluation_cache.clear()
 
-    def evaluate(
+    def _evaluate_ard(
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
     ) -> ARD:
-        """
-        Unified evaluation method returning ARD format.
+        """Internal helper that returns evaluation results as ARD."""
 
-        Args:
-            metrics: Subset of metrics to evaluate (None = use all configured)
-            estimates: Subset of estimates to evaluate (None = use all configured)
-
-        Returns:
-            ARD object with evaluation results
-        """
-        # Determine evaluation targets
         target_metrics = self._resolve_metrics(metrics)
         target_estimates = self._resolve_estimates(estimates)
 
         if not target_metrics or not target_estimates:
             raise ValueError("No metrics or estimates to evaluate")
 
-        # Vectorized evaluation - single Polars operation
         combined = self._vectorized_evaluate(target_metrics, target_estimates)
-
-        # Format final result
         formatted = self._format_result(combined)
-
-        # Convert to ARD format
         return self._convert_to_ard(formatted)
+
+    def evaluate(
+        self,
+        metrics: MetricDefine | list[MetricDefine] | None = None,
+        estimates: str | list[str] | None = None,
+        *,
+        collect: bool = True,
+    ) -> ARD | pl.LazyFrame | "EvaluationResult":
+        """
+        Unified evaluation method returning ARD format.
+
+        Args:
+            metrics: Subset of metrics to evaluate (None = use all configured)
+            estimates: Subset of estimates to evaluate (None = use all configured)
+            collect: When False, return a ``LazyFrame`` rather than an ``ARD`` instance
+
+        Returns:
+            :class:`EvaluationResult` (subclass of ``polars.DataFrame``), or a ``LazyFrame``
+            when ``collect`` is False.
+        """
+
+        ard = self._evaluate_ard(metrics=metrics, estimates=estimates)
+
+        if not collect:
+            return ard.lazy
+
+        return EvaluationResult(ard)
 
     def _convert_to_ard(self, result_lf: pl.LazyFrame) -> ARD:
         """Convert the evaluator output into the canonical ARD columns lazily."""
@@ -336,7 +370,7 @@ class MetricEvaluator:
         """
         long_df = self._collect_long_dataframe(metrics=metrics, estimates=estimates)
 
-        group_cols = [self.group_by[col] for col in self.group_by]
+        group_cols = [label for label in self.group_by.values() if label in long_df.columns]
         subgroup_present = "subgroup_name" in long_df.columns and "subgroup_value" in long_df.columns
 
         if row_order_by == "subgroup" and subgroup_present:
@@ -347,16 +381,19 @@ class MetricEvaluator:
         def pivot_default(df: pl.DataFrame) -> pl.DataFrame:
             default_df = df.filter(pl.col("scope").is_null())
             if default_df.is_empty():
-                return pl.DataFrame()
+                return (
+                    pl.DataFrame({col: [] for col in index_cols})
+                    if index_cols
+                    else pl.DataFrame()
+                )
 
-            on_cols = ["estimate", "label"]
-            if column_order_by == "metrics":
-                on_cols = ["label", "estimate"]
+            display_col = "estimate_label" if "estimate_label" in default_df.columns else "estimate"
+            on_cols = [display_col, "label"]
 
             if index_cols:
                 pivoted = default_df.pivot(
                     index=index_cols,
-                    columns=on_cols,
+                    on=on_cols,
                     values="value",
                     aggregate_function="first",
                 )
@@ -364,7 +401,7 @@ class MetricEvaluator:
                 with_idx = default_df.with_row_index("_idx")
                 pivoted = with_idx.pivot(
                     index=["_idx"],
-                    columns=on_cols,
+                    on=on_cols,
                     values="value",
                     aggregate_function="first",
                 ).drop("_idx")
@@ -379,7 +416,7 @@ class MetricEvaluator:
             if index_cols:
                 pivoted = scoped.pivot(
                     index=index_cols,
-                    columns=columns,
+                    on=columns,
                     values="value",
                     aggregate_function="first",
                 )
@@ -387,7 +424,7 @@ class MetricEvaluator:
                 with_idx = scoped.with_row_index("_idx")
                 pivoted = with_idx.pivot(
                     index=["_idx"],
-                    columns=columns,
+                    on=columns,
                     values="value",
                     aggregate_function="first",
                 ).drop("_idx")
@@ -399,11 +436,29 @@ class MetricEvaluator:
 
         group_pivot, group_cols_created = pivot_scope(long_df, "group", ["label"])
         if not group_pivot.is_empty():
-            result = result.join(group_pivot, on=index_cols, how="left")
+            if result.is_empty():
+                result = group_pivot
+            else:
+                result = result.join(group_pivot, on=index_cols, how="left")
 
         global_pivot, global_cols_created = pivot_scope(long_df, "global", ["label"])
         if not global_pivot.is_empty():
-            result = result.join(global_pivot, on=index_cols, how="left")
+            if not index_cols:
+                if result.is_empty():
+                    result = global_pivot
+                else:
+                    result = pl.concat([result, global_pivot], how="horizontal")
+            elif index_cols and global_pivot.height == 1:
+                broadcast_values = {
+                    col: global_pivot[col][0] for col in global_cols_created
+                }
+                result = result.with_columns(
+                    [pl.lit(broadcast_values[col]).alias(col) for col in broadcast_values]
+                )
+            elif result.is_empty():
+                result = global_pivot
+            else:
+                result = result.join(global_pivot, on=index_cols, how="left")
 
         if result.is_empty():
             if index_cols:
@@ -414,6 +469,18 @@ class MetricEvaluator:
         value_cols = [col for col in result.columns if col not in index_cols]
         default_cols = [col for col in value_cols if col.startswith('{"') and col.endswith('"}')] if value_cols else []
 
+        estimate_order_lookup = self._estimate_label_order
+        metric_label_order_lookup = self._metric_label_order
+        metric_name_order_lookup = self._metric_name_order
+
+        def metric_order(label: str) -> int:
+            if label in metric_label_order_lookup:
+                return metric_label_order_lookup[label]
+            return metric_name_order_lookup.get(label, len(metric_label_order_lookup))
+
+        def estimate_order(label: str) -> int:
+            return estimate_order_lookup.get(label, len(estimate_order_lookup))
+
         def sort_default(columns: list[str]) -> list[str]:
             def parse(col: str) -> tuple[str, str]:
                 inner = col[2:-2]
@@ -421,8 +488,20 @@ class MetricEvaluator:
                 return (parts[0], parts[1]) if len(parts) == 2 else (col, "")
 
             if column_order_by == "metrics":
-                return sorted(columns, key=lambda c: (parse(c)[1], parse(c)[0]))
-            return sorted(columns, key=lambda c: (parse(c)[0], parse(c)[1]))
+                return sorted(
+                    columns,
+                    key=lambda c: (
+                        metric_order(parse(c)[1]),
+                        estimate_order(parse(c)[0]),
+                    ),
+                )
+            return sorted(
+                columns,
+                key=lambda c: (
+                    estimate_order(parse(c)[0]),
+                    metric_order(parse(c)[1]),
+                ),
+            )
 
         ordered = (
             index_cols
@@ -436,6 +515,59 @@ class MetricEvaluator:
 
         ordered = [col for col in ordered if col in result.columns]
 
+        if "subgroup_value" in result.columns:
+            if self._subgroup_categories and all(
+                isinstance(cat, str) for cat in self._subgroup_categories
+            ):
+                result = result.with_columns(
+                    pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
+                )
+            else:
+                result = result.with_columns(
+                    pl.col("subgroup_value").cast(pl.Utf8)
+                )
+
+        sort_columns: list[str] = []
+        temp_sort_columns: list[str] = []
+        subgroup_order_map = {
+            label: idx for idx, label in enumerate(self.subgroup_by.values())
+        }
+
+        if row_order_by == "group":
+            sort_columns.extend([col for col in group_cols if col in result.columns])
+            if "subgroup_name" in result.columns and self.subgroup_by:
+                result = result.with_columns(
+                    pl.col("subgroup_name")
+                    .replace(subgroup_order_map)
+                    .fill_null(len(subgroup_order_map))
+                    .cast(pl.Int32)
+                    .alias("__subgroup_name_order")
+                )
+                sort_columns.append("__subgroup_name_order")
+                temp_sort_columns.append("__subgroup_name_order")
+            if "subgroup_value" in result.columns:
+                sort_columns.append("subgroup_value")
+        else:
+            if "subgroup_name" in result.columns and self.subgroup_by:
+                result = result.with_columns(
+                    pl.col("subgroup_name")
+                    .replace(subgroup_order_map)
+                    .fill_null(len(subgroup_order_map))
+                    .cast(pl.Int32)
+                    .alias("__subgroup_name_order")
+                )
+                sort_columns.append("__subgroup_name_order")
+                temp_sort_columns.append("__subgroup_name_order")
+            if "subgroup_value" in result.columns:
+                sort_columns.append("subgroup_value")
+            sort_columns.extend([col for col in group_cols if col in result.columns])
+
+        if sort_columns:
+            result = result.sort(sort_columns)
+
+        if temp_sort_columns:
+            result = result.drop(temp_sort_columns)
+
         seen: set[str] = set()
         deduped: list[str] = []
         for col in ordered:
@@ -443,7 +575,9 @@ class MetricEvaluator:
                 deduped.append(col)
                 seen.add(col)
 
-        return result.select(deduped)
+        result = result.select(deduped)
+
+        return result
 
     def pivot_by_model(
         self,
@@ -473,37 +607,148 @@ class MetricEvaluator:
         else:
             index_cols = ["estimate"] + (["subgroup_name", "subgroup_value"] if subgroup_present else [])
 
+        if "estimate" in index_cols:
+            estimate_series = long_df.get_column("estimate") if "estimate" in long_df.columns else None
+            if estimate_series is None or estimate_series.is_null().all():
+                index_cols = [col for col in index_cols if col != "estimate"]
+
+        default_cols_created: list[str] = []
+        global_cols_created: list[str] = []
+        group_cols_created: list[str] = []
+
         default_df = long_df.filter(pl.col("scope").is_null())
         if default_df.is_empty():
-            default_pivot = pl.DataFrame({col: [] for col in index_cols})
+            default_pivot = (
+                pl.DataFrame({col: [] for col in index_cols}) if index_cols else pl.DataFrame()
+            )
         else:
             on_cols = [label for label in self.group_by.values()] + ["label"]
-            default_pivot = default_df.pivot(
-                index=index_cols,
-                columns=on_cols,
-                values="value",
-                aggregate_function="first",
-            )
+            if index_cols:
+                default_pivot = default_df.pivot(
+                    index=index_cols,
+                    on=on_cols,
+                    values="value",
+                    aggregate_function="first",
+                )
+            else:
+                default_pivot = (
+                    default_df
+                    .with_row_index("_idx")
+                    .pivot(
+                        index=["_idx"],
+                        on=on_cols,
+                        values="value",
+                        aggregate_function="first",
+                    )
+                    .drop("_idx")
+                )
+            default_cols_created = [col for col in default_pivot.columns if col not in index_cols]
 
         global_df = long_df.filter(pl.col("scope") == "global")
         if not global_df.is_empty():
-            global_pivot = global_df.pivot(
-                index=index_cols,
-                columns=["label"],
-                values="value",
-                aggregate_function="first",
-            )
-            default_pivot = default_pivot.join(global_pivot, on=index_cols, how="left")
+            if index_cols:
+                global_pivot = global_df.pivot(
+                    index=index_cols,
+                    on=["label"],
+                    values="value",
+                    aggregate_function="first",
+                )
+            else:
+                global_pivot = (
+                    global_df
+                    .with_row_index("_idx")
+                    .pivot(
+                        index=["_idx"],
+                        on=["label"],
+                        values="value",
+                        aggregate_function="first",
+                    )
+                    .drop("_idx")
+                )
+            global_cols_created = [col for col in global_pivot.columns if col not in index_cols]
+            if not index_cols:
+                if default_pivot.is_empty():
+                    default_pivot = global_pivot
+                else:
+                    default_pivot = pl.concat([default_pivot, global_pivot], how="horizontal")
+            elif default_pivot.is_empty():
+                default_pivot = global_pivot
+            else:
+                default_pivot = default_pivot.join(global_pivot, on=index_cols, how="left")
 
         group_df = long_df.filter(pl.col("scope") == "group")
         if not group_df.is_empty():
-            group_pivot = group_df.pivot(
-                index=index_cols,
-                columns=[label for label in self.group_by.values()],
-                values="value",
-                aggregate_function="first",
+            if index_cols:
+                group_pivot = group_df.pivot(
+                    index=index_cols,
+                    on=[*self.group_by.values(), "label"],
+                    values="value",
+                    aggregate_function="first",
+                )
+            else:
+                group_pivot = (
+                    group_df
+                    .with_row_index("_idx")
+                    .pivot(
+                        index=["_idx"],
+                        on=[*self.group_by.values(), "label"],
+                        values="value",
+                        aggregate_function="first",
+                    )
+                    .drop("_idx")
+                )
+            group_cols_created = [col for col in group_pivot.columns if col not in index_cols]
+            if not index_cols:
+                if default_pivot.is_empty():
+                    default_pivot = group_pivot
+                else:
+                    default_pivot = pl.concat([default_pivot, group_pivot], how="horizontal")
+            elif default_pivot.is_empty():
+                default_pivot = group_pivot
+            else:
+                default_pivot = default_pivot.join(group_pivot, on=index_cols, how="left")
+
+        if "estimate" in default_pivot.columns:
+            default_pivot = default_pivot.with_columns(
+                pl.col("estimate")
+                .replace(self._estimate_label_lookup)
+                .alias("estimate_label")
             )
-            default_pivot = default_pivot.join(group_pivot, on=index_cols, how="left")
+
+        if "subgroup_value" in default_pivot.columns:
+            if self._subgroup_categories and all(
+                isinstance(cat, str) for cat in self._subgroup_categories
+            ):
+                default_pivot = default_pivot.with_columns(
+                    pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
+                )
+            else:
+                default_pivot = default_pivot.with_columns(
+                    pl.col("subgroup_value").cast(pl.Utf8)
+                )
+
+        ordered = (
+            [col for col in index_cols if col in default_pivot.columns]
+            + [col for col in global_cols_created if col in default_pivot.columns]
+            + [col for col in group_cols_created if col in default_pivot.columns]
+            + [col for col in default_cols_created if col in default_pivot.columns]
+        )
+
+        remaining = [col for col in default_pivot.columns if col not in ordered]
+        ordered.extend(remaining)
+
+        default_pivot = default_pivot.select(ordered)
+
+        sort_columns: list[str] = []
+        if "subgroup_value" in default_pivot.columns:
+            sort_columns.append("subgroup_value")
+        if "estimate" in default_pivot.columns:
+            sort_columns.append("estimate")
+        for label in self.group_by.values():
+            if label in default_pivot.columns:
+                sort_columns.append(label)
+        if sort_columns:
+            default_pivot = default_pivot.sort(sort_columns)
 
         return default_pivot
 
@@ -647,10 +892,20 @@ class MetricEvaluator:
             value_name="estimate_value",
         )
 
-        # Replace estimate names with their display labels and rename columns
-        df_long = df_long.with_columns(
-            [pl.col("estimate_name").replace(self.estimates).alias("estimate")]
-        ).rename({self.ground_truth: "ground_truth"})
+        # Preserve canonical estimate key alongside optional display label
+        df_long = (
+            df_long
+            .rename({self.ground_truth: "ground_truth"})
+            .with_columns(
+                [
+                    pl.col("estimate_name").alias("estimate"),
+                    pl.col("estimate_name")
+                    .replace(self._estimate_label_lookup)
+                    .alias("estimate_label"),
+                ]
+            )
+            .drop("estimate_name")
+        )
 
         return df_long
 
@@ -857,13 +1112,19 @@ class MetricEvaluator:
 
         # Subgroup columns
         if "subgroup_name" in schema.names():
-            exprs.append(pl.col("subgroup_name").cast(pl.Utf8))
+            exprs.append(pl.col("subgroup_name"))
         if "subgroup_value" in schema.names():
-            exprs.append(pl.col("subgroup_value").cast(pl.Utf8))
+            exprs.append(pl.col("subgroup_value"))
 
         # Estimate / metric / label columns
         if "estimate" in schema.names():
             exprs.append(pl.col("estimate").cast(pl.Utf8))
+            exprs.append(
+                pl.col("estimate")
+                .cast(pl.Utf8)
+                .replace(self._estimate_label_lookup)
+                .alias("estimate_label")
+            )
         if "metric" in schema.names():
             exprs.append(pl.col("metric").cast(pl.Utf8))
         if "label" in schema.names():
@@ -1015,6 +1276,15 @@ class MetricEvaluator:
                 fields.append(pl.col(field).cast(pl.Utf8).alias(field))
             else:
                 fields.append(null_utf8.alias(field))
+        if "estimate" in schema.names():
+            fields.append(
+                pl.col("estimate")
+                .cast(pl.Utf8)
+                .replace(self._estimate_label_lookup)
+                .alias("estimate_label")
+            )
+        else:
+            fields.append(null_utf8.alias("estimate_label"))
         return pl.struct(fields).alias("context")
 
     def _expr_estimate(self, schema: pl.Schema) -> pl.Expr:
@@ -1045,15 +1315,9 @@ class MetricEvaluator:
         )
 
     def _expr_label_enum(self) -> pl.Expr:
-        label_lookup = {metric.name: metric.label or metric.name for metric in self.metrics}
-        label_categories = list(dict.fromkeys(label_lookup.values()))
-        return (
-            pl.col("metric")
-            .cast(pl.Utf8)
-            .replace(label_lookup)
-            .cast(pl.Enum(label_categories))
-            .alias("label")
-        )
+        label_categories = [metric.label or metric.name for metric in self.metrics]
+        unique_labels = list(dict.fromkeys(label_categories))
+        return pl.col("label").cast(pl.Enum(unique_labels)).alias("label")
 
     # ========================================
     # INPUT PROCESSING METHODS - Pure Logic
@@ -1084,6 +1348,46 @@ class MetricEvaluator:
             return {col: col for col in (grouping or [])}
         else:
             return {}
+
+    def _compute_subgroup_categories(self) -> list[str]:
+        if not self.subgroup_by:
+            return []
+
+        categories: list[str] = []
+        seen: set[str] = set()
+        schema = self.df_raw.collect_schema()
+
+        for column in self.subgroup_by.keys():
+            if column not in schema.names():
+                continue
+
+            dtype = schema[column]
+
+            if isinstance(dtype, pl.Enum):
+                for value in dtype.categories.to_list():
+                    if value not in seen:
+                        seen.add(value)
+                        categories.append(value)
+                continue
+
+            series = self.df_raw.select(pl.col(column)).collect()[column]
+            non_null = [value for value in series.to_list() if value is not None]
+
+            if not non_null:
+                continue
+
+            if dtype.is_numeric():
+                ordered_values = sorted(set(non_null))
+            else:
+                ordered_values = sorted({str(value) for value in non_null})
+
+            for value in ordered_values:
+                if value in seen:
+                    continue
+                seen.add(value)
+                categories.append(value)
+
+        return categories
 
     # ========================================
     # VALIDATION METHODS - Centralized Logic
@@ -1122,3 +1426,66 @@ class MetricEvaluator:
         ]
         if missing_subgroups:
             raise ValueError(f"Subgroup columns not found in data: {missing_subgroups}")
+class EvaluationResult(pl.DataFrame):
+    """DataFrame-like wrapper around ARD results with convenience accessors."""
+
+    def __init__(self, ard: ARD) -> None:
+        long_df = ard.to_long()
+
+        group_sort_cols = list(ard._group_fields)
+        subgroup_struct_cols = list(ard._subgroup_fields)
+        sort_cols: list[str] = []
+
+        for col in group_sort_cols:
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        for col in ("subgroup_name", "subgroup_value"):
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        for col in subgroup_struct_cols:
+            if col in long_df.columns and col not in sort_cols:
+                sort_cols.append(col)
+
+        for col in ("metric", "estimate"):
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        if sort_cols:
+            long_df = long_df.sort(sort_cols)
+
+        super().__init__(long_df)
+        self._ard = ard
+
+    def collect(self) -> pl.DataFrame:
+        """Return the canonical ARD table with struct columns."""
+        return self._ard.collect()
+
+    def get_stats(self, include_metadata: bool = False) -> pl.DataFrame:
+        """Delegate to the underlying ARD ``get_stats`` helper."""
+        return self._ard.get_stats(include_metadata=include_metadata)
+
+    def to_ard(self) -> ARD:
+        """Expose the underlying ARD object."""
+        return self._ard
+
+    def to_long(self) -> pl.DataFrame:
+        """Return a copy of the flattened DataFrame representation."""
+        return pl.DataFrame(self)
+
+    def unnest(self, columns, *args, **kwargs) -> pl.DataFrame:
+        """Delegate unnest operations to the structured ARD representation."""
+        df = self._ard.collect()
+        cols = [columns] if isinstance(columns, str) else list(columns)
+        safe_cols = []
+        schema = df.schema
+        for col in cols:
+            dtype = schema.get(col)
+            if dtype is None or dtype == pl.Null:
+                continue
+            safe_cols.append(col)
+
+        if safe_cols:
+            return df.unnest(safe_cols, *args, **kwargs)
+        return df

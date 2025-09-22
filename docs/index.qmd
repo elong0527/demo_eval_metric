@@ -36,7 +36,12 @@ evaluator = MetricEvaluator(
 )
 
 results = evaluator.evaluate()
+results  # EvaluationResult behaves like a Polars DataFrame
 ```
+
+`MetricEvaluator.evaluate()` returns an `EvaluationResult`, a Polars
+`DataFrame` subclass that still exposes helpers such as `collect()` and
+`get_stats()` when you need the structured ARD representation.
 
 ## Custom Metrics
 

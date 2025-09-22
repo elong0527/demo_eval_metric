@@ -12,6 +12,10 @@ format:
 The `MetricEvaluator` class is the main evaluation engine that executes metric computations on your data. 
 It handles hierarchical aggregations, grouping, filtering, and manages the entire evaluation pipeline using Polars' lazy evaluation for optimal performance.
 
+`MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
+Polars `DataFrame` while exposing helpers (`collect()`, `get_stats()`,
+`to_ard()`) for retrieving the canonical ARD representation when needed.
+
 # Example Data
 
 ```{python}
