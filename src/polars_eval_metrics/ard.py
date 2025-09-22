@@ -23,12 +23,10 @@ class ARD:
     _id_fields: tuple[str, ...]
 
     def __init__(
-        self, data: pl.DataFrame | pl.LazyFrame | list[dict[str, Any]] | None = None
+        self, data: pl.DataFrame | pl.LazyFrame | None = None
     ) -> None:
         if data is None:
             self._lf = self._empty_frame()
-        elif isinstance(data, list):
-            self._lf = self._from_records(data)
         elif isinstance(data, pl.DataFrame):
             self._validate_schema(data)
             self._lf = data.lazy()
@@ -57,7 +55,6 @@ class ARD:
                 pl.Field("value_int", pl.Int64),
                 pl.Field("value_bool", pl.Boolean),
                 pl.Field("value_str", pl.Utf8),
-                pl.Field("value_json", pl.Utf8),
                 pl.Field("value_struct", pl.Struct([])),
                 pl.Field("format", pl.Utf8),
                 pl.Field("unit", pl.Utf8),
@@ -77,174 +74,6 @@ class ARD:
             }
         )
         return frame.lazy()
-
-    @staticmethod
-    def _from_records(records: list[dict[str, Any]]) -> pl.LazyFrame:
-        if not records:
-            return ARD._empty_frame()
-
-        group_fields = ARD._collect_struct_keys(records, "groups")
-        subgroup_fields = ARD._collect_struct_keys(records, "subgroups")
-        context_fields = ARD._collect_struct_keys(records, "context")
-        id_fields = ARD._collect_struct_keys(records, "id")
-
-        normalised: list[dict[str, Any]] = []
-        for row in records:
-            normalised.append(
-                {
-                    "groups": ARD._normalise_mapping(row.get("groups"), group_fields),
-                    "subgroups": ARD._normalise_mapping(
-                        row.get("subgroups"), subgroup_fields
-                    ),
-                    "estimate": row.get("estimate"),
-                    "metric": row.get("metric"),
-                    "label": row.get("label"),
-                    "stat": ARD._normalise_stat(row.get("stat")),
-                    "context": ARD._normalise_mapping(
-                        row.get("context"), context_fields
-                    ),
-                    "id": ARD._normalise_mapping(row.get("id"), id_fields),
-                }
-            )
-
-        return pl.DataFrame(normalised).lazy()
-
-    @staticmethod
-    def _collect_struct_keys(
-        records: Iterable[Mapping[str, Any]], key: str
-    ) -> tuple[str, ...]:
-        keys: set[str] = set()
-        for record in records:
-            mapping = record.get(key)
-            if isinstance(mapping, Mapping):
-                keys.update(str(name) for name in mapping.keys())
-        return tuple(sorted(keys))
-
-    @staticmethod
-    def _normalise_mapping(
-        mapping: Any, keys: tuple[str, ...]
-    ) -> dict[str, Any] | None:
-        if not keys:
-            return (
-                None
-                if mapping in (None, {})
-                else dict(mapping)
-                if isinstance(mapping, Mapping)
-                else mapping
-            )
-
-        result = {field: None for field in keys}
-        if isinstance(mapping, Mapping):
-            for field in keys:
-                if field in mapping:
-                    result[field] = mapping[field]
-        elif mapping not in (None, {}):
-            raise TypeError(
-                "groups, subgroups, and context values must be dictionaries"
-            )
-
-        return None if all(value is None for value in result.values()) else result
-
-    @staticmethod
-    def _normalise_stat(value: Any) -> dict[str, Any]:
-        if isinstance(value, Mapping) and {"type", "value"}.issubset(value.keys()):
-            stat = ARD._populate_stat(
-                value.get("value"),
-                type_hint=value.get("type"),
-                fmt=value.get("format"),
-                unit=value.get("unit"),
-            )
-            if "extras" in value:
-                stat["extras"] = value.get("extras")
-            return stat
-
-        return ARD._populate_stat(value)
-
-    @staticmethod
-    def _populate_stat(
-        raw_value: Any,
-        *,
-        type_hint: str | None = None,
-        fmt: str | None = None,
-        unit: str | None = None,
-    ) -> dict[str, Any]:
-        stat: dict[str, Any] = {
-            "type": None,
-            "value_float": None,
-            "value_int": None,
-            "value_bool": None,
-            "value_str": None,
-            "value_json": None,
-            "value_struct": None,
-            "format": fmt,
-            "unit": unit,
-            "extras": None,
-        }
-
-        if raw_value is None:
-            stat["type"] = type_hint.lower() if isinstance(type_hint, str) else None
-            return stat
-
-        hint = type_hint.lower() if isinstance(type_hint, str) else None
-
-        if isinstance(raw_value, Mapping):
-            if hint == "struct" or hint is None:
-                stat["value_struct"] = dict(raw_value)
-                stat["type"] = "struct"
-                return stat
-
-        if hint == "struct" and isinstance(raw_value, Mapping):
-            stat["value_struct"] = dict(raw_value)
-            stat["type"] = "struct"
-            return stat
-
-        def assign(field: str, value: Any, label: str) -> dict[str, Any]:
-            stat[field] = value
-            stat["type"] = label
-            return stat
-
-        if hint in {"float", "double", "numeric"}:
-            return assign("value_float", float(raw_value), "float")
-        if hint in {"int", "integer", "count"}:
-            return assign("value_int", int(raw_value), "int")
-        if hint in {"bool", "boolean"}:
-            return assign("value_bool", bool(raw_value), "bool")
-        if hint in {"string", "str", "text"}:
-            return assign("value_str", str(raw_value), "string")
-        if hint == "struct":
-            return assign("value_struct", raw_value, "struct")
-        if hint in {"json", "list"}:
-            return assign("value_json", ARD._encode_json(raw_value), "json")
-
-        if isinstance(raw_value, bool):
-            return assign("value_bool", raw_value, "bool")
-        if isinstance(raw_value, int):
-            return assign("value_int", raw_value, "int")
-        if isinstance(raw_value, float):
-            return assign("value_float", raw_value, "float")
-        if isinstance(raw_value, str):
-            return assign("value_str", raw_value, "string")
-        if isinstance(raw_value, (dict, list, tuple)):
-            if isinstance(raw_value, Mapping) and "values" in raw_value:
-                stat["extras"] = raw_value
-                return assign(
-                    "value_json",
-                    ARD._encode_json(raw_value),
-                    hint or "json",
-                )
-            return assign("value_json", ARD._encode_json(raw_value), "json")
-
-        if isinstance(raw_value, Mapping):
-            return assign("value_struct", raw_value, "struct")
-
-        return assign("value_str", str(raw_value), hint or "string")
-
-    @staticmethod
-    def _encode_json(value: Any) -> str:
-        try:
-            return json.dumps(value)
-        except TypeError:
-            return json.dumps(value, default=str)
 
     @staticmethod
     def _extract_struct_fields(
@@ -344,14 +173,6 @@ class ARD:
             return stat.get("value_bool")
         if type_label == "string":
             return stat.get("value_str")
-        if type_label == "json":
-            encoded = stat.get("value_json")
-            if encoded is None:
-                return None
-            try:
-                return json.loads(encoded)
-            except json.JSONDecodeError:
-                return encoded
         if type_label == "struct":
             return stat.get("value_struct")
 
@@ -360,16 +181,10 @@ class ARD:
             "value_int",
             "value_bool",
             "value_str",
-            "value_json",
             "value_struct",
         ]:
             candidate = stat.get(field)
             if candidate is not None:
-                if field == "value_json":
-                    try:
-                        return json.loads(candidate)
-                    except json.JSONDecodeError:
-                        return candidate
                 if field == "value_struct":
                     return candidate
                 return candidate
