@@ -106,24 +106,12 @@ MetricEvaluator(
 ```
 
 ```{python}
-res.filter(pl.col("scope") == "global").pivot( 
-    on = ["label"], 
-    index = "treatment",
-    values = "value")
+# Built-in helpers make it easy to pivot by group or model
+evaluator.pivot_by_group()
 ```
 
 ```{python}
-res.filter(pl.col("scope") == "group").pivot( 
-    on = ["label"], 
-    index = "treatment",
-    values = "value")
-```
-
-```{python}
-res.filter(pl.col("scope").is_null()).pivot( 
-    on = ["estimate", "label"], 
-    index = "treatment",
-    values = "value")
+evaluator.pivot_by_model()
 ```
 
 # Subject-level Metrics

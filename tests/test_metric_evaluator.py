@@ -5,9 +5,35 @@ Tests cover core functionality, all scope types, grouping strategies,
 and edge cases based on examples from metric_evaluator.qmd
 """
 
+from typing import Any
+
 import pytest
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricScope, MetricType
+
+
+def _evaluate_metric_set(
+    data: pl.DataFrame,
+    metrics: list[MetricDefine],
+    *,
+    estimates: list[str] | None = None,
+    ground_truth: str = "actual",
+) -> tuple[Any, pl.DataFrame]:
+    """Evaluate metrics and return both the result and flattened stats."""
+
+    evaluator = MetricEvaluator(
+        df=data,
+        metrics=metrics,
+        ground_truth=ground_truth,
+        estimates=estimates or ["model_a"],
+    )
+
+    result = evaluator.evaluate()
+    collected = result.collect()
+    assert set(collected["metric"]) == {metric.name for metric in metrics}
+
+    stats = result.to_ard().get_stats()
+    return result, stats
 
 
 class TestMetricEvaluatorBasic:
@@ -323,22 +349,13 @@ class TestMetricEvaluatorTypes:
             ),
         ]
 
-        evaluator = MetricEvaluator(
-            df=hierarchical_metric_df,
-            metrics=metrics,
-            ground_truth="actual",
-            estimates=["model_a"],
+        result, stats = _evaluate_metric_set(
+            hierarchical_metric_df, metrics, estimates=["model_a"]
         )
 
-        result = evaluator.evaluate()
-
-        # Check we have all metrics
         assert len(result) == 4
-        df = result.collect()
-        assert set(df["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
 
         # Check count equals number of visits (9 = 3 subjects x 3 visits)
-        stats = result.to_ard().get_stats()
         count_result = stats.filter(pl.col("metric") == "mae_count")
         assert count_result["value"][0] == 9.0
 
@@ -377,26 +394,13 @@ class TestMetricEvaluatorTypes:
             ),
         ]
 
-        evaluator = MetricEvaluator(
-            df=hierarchical_metric_df,
-            metrics=metrics,
-            ground_truth="actual",
-            estimates=["model_a"],
+        result, stats = _evaluate_metric_set(
+            hierarchical_metric_df, metrics, estimates=["model_a"]
         )
 
-        result = evaluator.evaluate()
-
-        # Check we have all metrics
         assert len(result) == 3
-        df = result.collect()
-        assert set(df["metric"]) == {
-            "mae_count_subj",
-            "mae_median_subj",
-            "mae_std_subj",
-        }
 
         # Check count equals number of subjects (3)
-        stats = result.to_ard().get_stats()
         count_result = stats.filter(pl.col("metric") == "mae_count_subj")
         assert count_result["value"][0] == 3.0
 
@@ -584,24 +588,15 @@ class TestMetricEvaluatorAdvancedScenarios:
 
     def test_group_subgroup_overlap_raises(self, metric_sample_df):
         """Using the same column for group and subgroup should raise a clear error."""
-        evaluator = MetricEvaluator(
-            df=metric_sample_df,
-            metrics=[MetricDefine(name="mae")],
-            ground_truth="actual",
-            estimates=["model_a"],
-            group_by=["treatment"],
-            subgroup_by=["treatment"],
-        )
-
-        possible_errors = [
-            pl.exceptions.ColumnNotFoundError,
-            pl.exceptions.ComputeError,
-        ]
-        if hasattr(pl.exceptions, "InvalidOperationError"):
-            possible_errors.append(pl.exceptions.InvalidOperationError)
-
-        with pytest.raises(tuple(possible_errors)):
-            evaluator.evaluate()
+        with pytest.raises(ValueError, match="Group and subgroup columns must be distinct"):
+            MetricEvaluator(
+                df=metric_sample_df,
+                metrics=[MetricDefine(name="mae")],
+                ground_truth="actual",
+                estimates=["model_a"],
+                group_by=["treatment"],
+                subgroup_by=["treatment"],
+            )
 
     def test_enum_subgroup_inputs(self, metric_sample_df):
         """Pre-typed Enum subgroup columns should preserve their category order."""

@@ -114,6 +114,9 @@ class MetricEvaluator:
         # Initialize evaluation cache
         self._evaluation_cache = {}
 
+        # Validate configuration eagerly so errors surface early
+        self._validate_inputs()
+
     def _apply_base_filter(self) -> pl.LazyFrame:
         """Apply initial filter if provided"""
         if self.filter_expr is not None:
@@ -314,6 +317,101 @@ class MetricEvaluator:
 
         return ARD(ard_frame)
 
+    def _pivot_frame(
+        self,
+        df: pl.DataFrame,
+        *,
+        index_cols: Sequence[str],
+        on_cols: Sequence[str],
+    ) -> pl.DataFrame:
+        """Pivot helper that respects empty indexes and preserves column order."""
+        if df.is_empty():
+            if index_cols:
+                return pl.DataFrame({col: [] for col in index_cols})
+            return pl.DataFrame()
+
+        if index_cols:
+            return df.pivot(
+                index=list(index_cols),
+                on=list(on_cols),
+                values="value",
+                aggregate_function="first",
+            )
+
+        with_idx = df.with_row_index("_idx")
+        return (
+            with_idx.pivot(
+                index=["_idx"],
+                on=list(on_cols),
+                values="value",
+                aggregate_function="first",
+            )
+            .drop("_idx")
+        )
+
+    def _merge_pivot_frames(
+        self,
+        base: pl.DataFrame,
+        candidate: pl.DataFrame,
+        index_cols: Sequence[str],
+    ) -> pl.DataFrame:
+        """Combine pivot sections, broadcasting singleton scopes when needed."""
+        if base.is_empty():
+            return candidate
+        if candidate.is_empty():
+            return base
+
+        if not index_cols:
+            return pl.concat([base, candidate], how="horizontal")
+
+        if candidate.height == 1:
+            broadcast_cols = [
+                col for col in candidate.columns if col not in index_cols
+            ]
+            if not broadcast_cols:
+                return base
+            row_values = candidate.row(0, named=True)
+            return base.with_columns(
+                [pl.lit(row_values[col]).alias(col) for col in broadcast_cols]
+            )
+
+        return base.join(candidate, on=list(index_cols), how="left")
+
+    def _build_pivot_table(
+        self,
+        long_df: pl.DataFrame,
+        *,
+        index_cols: list[str],
+        default_on: Sequence[str],
+        scoped_on: Sequence[tuple[str, Sequence[str]]],
+    ) -> tuple[pl.DataFrame, list[tuple[str, list[str]]]]:
+        """Construct pivot table across default/global/group scopes."""
+
+        default_df = long_df.filter(pl.col("scope").is_null())
+        pivot = self._pivot_frame(
+            default_df, index_cols=index_cols, on_cols=default_on
+        )
+        sections: list[tuple[str, list[str]]] = [
+            ("default", [col for col in pivot.columns if col not in index_cols])
+        ]
+
+        for scope_name, on_cols in scoped_on:
+            scoped_df = long_df.filter(pl.col("scope") == scope_name)
+            scoped_pivot = self._pivot_frame(
+                scoped_df, index_cols=index_cols, on_cols=on_cols
+            )
+            if scoped_pivot.is_empty():
+                continue
+            sections.append(
+                (
+                    scope_name,
+                    [col for col in scoped_pivot.columns if col not in index_cols],
+                )
+            )
+            pivot = self._merge_pivot_frames(pivot, scoped_pivot, index_cols)
+
+        return pivot, sections
+
     def pivot_by_group(
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
@@ -349,97 +447,17 @@ class MetricEvaluator:
             index_cols = group_cols + (
                 ["subgroup_name", "subgroup_value"] if subgroup_present else []
             )
+        display_col = (
+            "estimate_label" if "estimate_label" in long_df.columns else "estimate"
+        )
+        result, sections = self._build_pivot_table(
+            long_df,
+            index_cols=index_cols,
+            default_on=[display_col, "label"],
+            scoped_on=[("global", ["label"]), ("group", ["label"])],
+        )
 
-        def pivot_default(df: pl.DataFrame) -> pl.DataFrame:
-            default_df = df.filter(pl.col("scope").is_null())
-            if default_df.is_empty():
-                return (
-                    pl.DataFrame({col: [] for col in index_cols})
-                    if index_cols
-                    else pl.DataFrame()
-                )
-
-            display_col = (
-                "estimate_label"
-                if "estimate_label" in default_df.columns
-                else "estimate"
-            )
-            on_cols = [display_col, "label"]
-
-            if index_cols:
-                pivoted = default_df.pivot(
-                    index=index_cols,
-                    on=on_cols,
-                    values="value",
-                    aggregate_function="first",
-                )
-            else:
-                with_idx = default_df.with_row_index("_idx")
-                pivoted = with_idx.pivot(
-                    index=["_idx"],
-                    on=on_cols,
-                    values="value",
-                    aggregate_function="first",
-                ).drop("_idx")
-
-            return pivoted
-
-        def pivot_scope(
-            df: pl.DataFrame, scope_value: str, columns: list[str]
-        ) -> tuple[pl.DataFrame, list[str]]:
-            scoped = df.filter(pl.col("scope") == scope_value)
-            if scoped.is_empty():
-                return pl.DataFrame(), []
-
-            if index_cols:
-                pivoted = scoped.pivot(
-                    index=index_cols,
-                    on=columns,
-                    values="value",
-                    aggregate_function="first",
-                )
-            else:
-                with_idx = scoped.with_row_index("_idx")
-                pivoted = with_idx.pivot(
-                    index=["_idx"],
-                    on=columns,
-                    values="value",
-                    aggregate_function="first",
-                ).drop("_idx")
-
-            value_cols = [col for col in pivoted.columns if col not in index_cols]
-            return pivoted, value_cols
-
-        result = pivot_default(long_df)
-
-        group_pivot, group_cols_created = pivot_scope(long_df, "group", ["label"])
-        if not group_pivot.is_empty():
-            if result.is_empty():
-                result = group_pivot
-            else:
-                result = result.join(group_pivot, on=index_cols, how="left")
-
-        global_pivot, global_cols_created = pivot_scope(long_df, "global", ["label"])
-        if not global_pivot.is_empty():
-            if not index_cols:
-                if result.is_empty():
-                    result = global_pivot
-                else:
-                    result = pl.concat([result, global_pivot], how="horizontal")
-            elif index_cols and global_pivot.height == 1:
-                broadcast_values = {
-                    col: global_pivot[col][0] for col in global_cols_created
-                }
-                result = result.with_columns(
-                    [
-                        pl.lit(broadcast_values[col]).alias(col)
-                        for col in broadcast_values
-                    ]
-                )
-            elif result.is_empty():
-                result = global_pivot
-            else:
-                result = result.join(global_pivot, on=index_cols, how="left")
+        section_lookup = {name: cols for name, cols in sections}
 
         if result.is_empty():
             if index_cols:
@@ -448,11 +466,10 @@ class MetricEvaluator:
 
         # Reorder columns: index -> global -> group -> default
         value_cols = [col for col in result.columns if col not in index_cols]
-        default_cols = (
-            [col for col in value_cols if col.startswith('{"') and col.endswith('"}')]
-            if value_cols
-            else []
-        )
+        default_cols = section_lookup.get("default", [])
+        default_cols = [
+            col for col in default_cols if col.startswith('{"') and col.endswith('"}')
+        ]
 
         estimate_order_lookup: dict[str, int] = self._estimate_label_order
         metric_label_order_lookup: dict[str, int] = self._metric_label_order
@@ -490,8 +507,8 @@ class MetricEvaluator:
 
         ordered = (
             index_cols
-            + global_cols_created
-            + group_cols_created
+            + section_lookup.get("global", [])
+            + section_lookup.get("group", [])
             + sort_default(default_cols)
         )
 
@@ -604,117 +621,17 @@ class MetricEvaluator:
             if estimate_series is None or estimate_series.is_null().all():
                 index_cols = [col for col in index_cols if col != "estimate"]
 
-        default_cols_created: list[str] = []
-        global_cols_created: list[str] = []
-        group_cols_created: list[str] = []
+        result, sections = self._build_pivot_table(
+            long_df,
+            index_cols=index_cols,
+            default_on=[*self.group_by.values(), "label"],
+            scoped_on=[("global", ["label"]), ("group", [*self.group_by.values(), "label"])],
+        )
 
-        default_df = long_df.filter(pl.col("scope").is_null())
-        if default_df.is_empty():
-            default_pivot = (
-                pl.DataFrame({col: [] for col in index_cols})
-                if index_cols
-                else pl.DataFrame()
-            )
-        else:
-            on_cols = [label for label in self.group_by.values()] + ["label"]
-            if index_cols:
-                default_pivot = default_df.pivot(
-                    index=index_cols,
-                    on=on_cols,
-                    values="value",
-                    aggregate_function="first",
-                )
-            else:
-                default_pivot = (
-                    default_df.with_row_index("_idx")
-                    .pivot(
-                        index=["_idx"],
-                        on=on_cols,
-                        values="value",
-                        aggregate_function="first",
-                    )
-                    .drop("_idx")
-                )
-            default_cols_created = [
-                col for col in default_pivot.columns if col not in index_cols
-            ]
+        section_lookup = {name: cols for name, cols in sections}
 
-        global_df = long_df.filter(pl.col("scope") == "global")
-        if not global_df.is_empty():
-            if index_cols:
-                global_pivot = global_df.pivot(
-                    index=index_cols,
-                    on=["label"],
-                    values="value",
-                    aggregate_function="first",
-                )
-            else:
-                global_pivot = (
-                    global_df.with_row_index("_idx")
-                    .pivot(
-                        index=["_idx"],
-                        on=["label"],
-                        values="value",
-                        aggregate_function="first",
-                    )
-                    .drop("_idx")
-                )
-            global_cols_created = [
-                col for col in global_pivot.columns if col not in index_cols
-            ]
-            if not index_cols:
-                if default_pivot.is_empty():
-                    default_pivot = global_pivot
-                else:
-                    default_pivot = pl.concat(
-                        [default_pivot, global_pivot], how="horizontal"
-                    )
-            elif default_pivot.is_empty():
-                default_pivot = global_pivot
-            else:
-                default_pivot = default_pivot.join(
-                    global_pivot, on=index_cols, how="left"
-                )
-
-        group_df = long_df.filter(pl.col("scope") == "group")
-        if not group_df.is_empty():
-            if index_cols:
-                group_pivot = group_df.pivot(
-                    index=index_cols,
-                    on=[*self.group_by.values(), "label"],
-                    values="value",
-                    aggregate_function="first",
-                )
-            else:
-                group_pivot = (
-                    group_df.with_row_index("_idx")
-                    .pivot(
-                        index=["_idx"],
-                        on=[*self.group_by.values(), "label"],
-                        values="value",
-                        aggregate_function="first",
-                    )
-                    .drop("_idx")
-                )
-            group_cols_created = [
-                col for col in group_pivot.columns if col not in index_cols
-            ]
-            if not index_cols:
-                if default_pivot.is_empty():
-                    default_pivot = group_pivot
-                else:
-                    default_pivot = pl.concat(
-                        [default_pivot, group_pivot], how="horizontal"
-                    )
-            elif default_pivot.is_empty():
-                default_pivot = group_pivot
-            else:
-                default_pivot = default_pivot.join(
-                    group_pivot, on=index_cols, how="left"
-                )
-
-        if "estimate" in default_pivot.columns:
-            default_pivot = default_pivot.with_columns(
+        if "estimate" in result.columns:
+            result = result.with_columns(
                 pl.col("estimate")
                 .map_elements(
                     lambda val, mapping=self._estimate_label_lookup: mapping.get(
@@ -725,42 +642,46 @@ class MetricEvaluator:
                 .alias("estimate_label")
             )
 
-        if "subgroup_value" in default_pivot.columns:
+        if "subgroup_value" in result.columns:
             if self._subgroup_categories and all(
                 isinstance(cat, str) for cat in self._subgroup_categories
             ):
-                default_pivot = default_pivot.with_columns(
+                result = result.with_columns(
                     pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
                 )
             else:
-                default_pivot = default_pivot.with_columns(
+                result = result.with_columns(
                     pl.col("subgroup_value").cast(pl.Utf8)
                 )
 
         ordered = (
-            [col for col in index_cols if col in default_pivot.columns]
-            + [col for col in global_cols_created if col in default_pivot.columns]
-            + [col for col in group_cols_created if col in default_pivot.columns]
-            + [col for col in default_cols_created if col in default_pivot.columns]
+            [col for col in index_cols if col in result.columns]
+            + [col for col in section_lookup.get("global", []) if col in result.columns]
+            + [col for col in section_lookup.get("group", []) if col in result.columns]
+            + [
+                col
+                for col in section_lookup.get("default", [])
+                if col in result.columns
+            ]
         )
 
-        remaining = [col for col in default_pivot.columns if col not in ordered]
+        remaining = [col for col in result.columns if col not in ordered]
         ordered.extend(remaining)
 
-        default_pivot = default_pivot.select(ordered)
+        result = result.select(ordered)
 
         sort_columns: list[str] = []
-        if "subgroup_value" in default_pivot.columns:
+        if "subgroup_value" in result.columns:
             sort_columns.append("subgroup_value")
-        if "estimate" in default_pivot.columns:
+        if "estimate" in result.columns:
             sort_columns.append("estimate")
         for label in self.group_by.values():
-            if label in default_pivot.columns:
+            if label in result.columns:
                 sort_columns.append(label)
         if sort_columns:
-            default_pivot = default_pivot.sort(sort_columns)
+            result = result.sort(sort_columns)
 
-        return default_pivot
+        return result
 
     def _resolve_metrics(
         self, metrics: MetricDefine | list[MetricDefine] | None
@@ -839,25 +760,18 @@ class MetricEvaluator:
         estimates: list[str],
     ) -> pl.LazyFrame:
         """Evaluate metrics with marginal subgroup analysis using vectorized operations"""
-        original_subgroup_by = self.subgroup_by
-
         # Create all subgroup combinations using vectorized unpivot
         subgroup_data = self._prepare_subgroup_data_vectorized(
-            df_with_errors, original_subgroup_by
+            df_with_errors, self.subgroup_by
         )
 
         # Evaluate all metrics across all subgroups in a vectorized manner
         results = []
         for metric in metrics:
-            # Temporarily clear subgroup_by to use the vectorized subgroup columns instead
-            self.subgroup_by = {}
-            try:
-                metric_result = self._evaluate_metric_vectorized(
-                    subgroup_data, metric, estimates
-                )
-                results.append(metric_result)
-            finally:
-                self.subgroup_by = original_subgroup_by
+            metric_result = self._evaluate_metric_vectorized(
+                subgroup_data, metric, estimates
+            )
+            results.append(metric_result)
 
         # Combine results (no schema harmonization needed with fixed evaluation structure)
         return pl.concat(results, how="diagonal")
@@ -943,130 +857,184 @@ class MetricEvaluator:
     ) -> pl.LazyFrame:
         """Evaluate a single metric using vectorized operations"""
 
-        # Determine grouping columns based on metric scope
         group_cols = self._get_vectorized_grouping_columns(metric, df_with_errors)
-
-        # Compile metric expressions
         within_infos, across_info = metric.compile_expressions()
-
-        # Apply metric-specific filtering if needed
         df_filtered = self._apply_metric_scope_filter(df_with_errors, metric, estimates)
 
-        # Perform the evaluation with appropriate grouping
-        if metric.type == MetricType.ACROSS_SAMPLE:
-            if across_info is None:
-                raise ValueError(
-                    f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
-                )
+        handlers = {
+            MetricType.ACROSS_SAMPLE: self._evaluate_across_sample_metric,
+            MetricType.WITHIN_SUBJECT: self._evaluate_within_entity_metric,
+            MetricType.WITHIN_VISIT: self._evaluate_within_entity_metric,
+            MetricType.ACROSS_SUBJECT: self._evaluate_two_stage_metric,
+            MetricType.ACROSS_VISIT: self._evaluate_two_stage_metric,
+        }
 
-            result_info = across_info
-            agg_exprs = self._metric_agg_expressions(result_info)
-            if group_cols:
-                result = df_filtered.group_by(group_cols).agg(agg_exprs)
-            else:
-                result = df_filtered.select(*agg_exprs)
-
-        elif metric.type in [MetricType.WITHIN_SUBJECT, MetricType.WITHIN_VISIT]:
-            # Within-entity aggregation
-            entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-
-            # Use the appropriate expression for within-entity aggregation
-            if within_infos:
-                result_info = within_infos[0]
-            elif across_info is not None:
-                result_info = across_info
-            else:
-                raise ValueError(f"No valid expression for metric {metric.name}")
-
-            agg_exprs = self._metric_agg_expressions(result_info)
-            result = df_filtered.group_by(entity_groups).agg(agg_exprs)
-
-        elif metric.type in [MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT]:
-            # Two-level aggregation: within entities, then across
-            entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-
-            # First level: within entities
-            if within_infos:
-                base_info = within_infos[0]
-            elif across_info is not None:
-                base_info = across_info
-            else:
-                raise ValueError(
-                    f"No valid expression for first level of metric {metric.name}"
-                )
-
-            intermediate = df_filtered.group_by(entity_groups).agg(
-                self._metric_agg_expressions(base_info, include_extras=False)
-            )
-
-            # Second level: across entities
-            if across_info is not None and within_infos:
-                result_info = across_info
-                agg_exprs = self._metric_agg_expressions(result_info)
-                if group_cols:
-                    result = intermediate.group_by(group_cols).agg(agg_exprs)
-                else:
-                    result = intermediate.select(*agg_exprs)
-            else:
-                result_info = base_info
-                agg_exprs = [pl.col("value").mean().alias("value")]
-                if group_cols:
-                    result = intermediate.group_by(group_cols).agg(agg_exprs)
-                else:
-                    result = intermediate.select(*agg_exprs)
-
-        else:
+        handler = handlers.get(metric.type)
+        if handler is None:
             raise ValueError(f"Unknown metric type: {metric.type}")
 
-        # Add metadata columns and attach entity identifiers when needed
+        result, result_info = handler(
+            df_filtered,
+            metric,
+            group_cols,
+            within_infos,
+            across_info,
+        )
+
         return self._add_metadata_vectorized(result, metric, result_info)
+
+    def _evaluate_across_sample_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        _within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        if across_info is None:
+            raise ValueError(
+                f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
+            )
+
+        agg_exprs = self._metric_agg_expressions(across_info)
+        result = self._aggregate_lazyframe(df, group_cols, agg_exprs)
+        return result, across_info
+
+    def _evaluate_within_entity_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        entity_groups = self._merge_group_columns(
+            self._get_entity_grouping_columns(metric.type), group_cols
+        )
+
+        result_info = self._resolve_metric_info(
+            metric,
+            primary=within_infos,
+            fallback=across_info,
+            error_message=f"No valid expression for metric {metric.name}",
+        )
+
+        agg_exprs = self._metric_agg_expressions(result_info)
+        result = self._aggregate_lazyframe(df, entity_groups, agg_exprs)
+        return result, result_info
+
+    def _evaluate_two_stage_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        entity_groups = self._merge_group_columns(
+            self._get_entity_grouping_columns(metric.type), group_cols
+        )
+
+        base_info = self._resolve_metric_info(
+            metric,
+            primary=within_infos,
+            fallback=across_info,
+            error_message=(
+                f"No valid expression for first level of metric {metric.name}"
+            ),
+        )
+
+        intermediate = self._aggregate_lazyframe(
+            df,
+            entity_groups,
+            self._metric_agg_expressions(base_info, include_extras=False),
+        )
+
+        if across_info is not None and within_infos:
+            result_info = across_info
+            agg_exprs = self._metric_agg_expressions(result_info)
+        else:
+            result_info = base_info
+            agg_exprs = [pl.col("value").mean().alias("value")]
+
+        result = self._aggregate_lazyframe(intermediate, group_cols, agg_exprs)
+        return result, result_info
+
+    @staticmethod
+    def _merge_group_columns(
+        *column_groups: Sequence[str],
+    ) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for columns in column_groups:
+            for col in columns:
+                if col not in seen:
+                    seen.add(col)
+                    ordered.append(col)
+        return ordered
+
+    def _resolve_metric_info(
+        self,
+        metric: MetricDefine,
+        *,
+        primary: Sequence[MetricInfo] | None,
+        fallback: MetricInfo | None,
+        error_message: str,
+    ) -> MetricInfo:
+        if primary:
+            return primary[0]
+        if fallback is not None:
+            return fallback
+        raise ValueError(error_message)
+
+    @staticmethod
+    def _aggregate_lazyframe(
+        df: pl.LazyFrame, group_cols: Sequence[str], agg_exprs: Sequence[pl.Expr]
+    ) -> pl.LazyFrame:
+        columns = [col for col in group_cols if col]
+        if columns:
+            return df.group_by(columns).agg(agg_exprs)
+        return df.select(*agg_exprs)
 
     def _get_vectorized_grouping_columns(
         self, metric: MetricDefine, df: pl.LazyFrame | None = None
     ) -> list[str]:
         """Get grouping columns for vectorized evaluation based on metric scope"""
-        group_cols = []
 
-        # Check if we're in vectorized subgroup mode (data has subgroup_name/subgroup_value columns)
+        schema_names: set[str]
         if df is not None:
-            schema_names = df.collect_schema().names()
-            using_vectorized_subgroups = (
-                "subgroup_name" in schema_names and "subgroup_value" in schema_names
-            )
+            schema_names = set(df.collect_schema().names())
         else:
-            using_vectorized_subgroups = False
+            schema_names = set(self.df.collect_schema().names())
 
-        # Handle scope-based grouping
+        using_vectorized_subgroups = {
+            "subgroup_name",
+            "subgroup_value",
+        }.issubset(schema_names)
+
+        def existing(columns: Sequence[str]) -> list[str]:
+            return [col for col in columns if col in schema_names]
+
+        group_cols: list[str] = []
+
         if metric.scope == MetricScope.GLOBAL:
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
         elif metric.scope == MetricScope.MODEL:
-            group_cols.append("estimate")
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            model_cols = existing(["estimate"])
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(model_cols + subgroup_cols)
         elif metric.scope == MetricScope.GROUP:
-            group_cols.extend(list(self.group_by.keys()))
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            group_cols.extend(existing(self.group_by.keys()))
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
         else:
-            # Default: estimate + groups + subgroups
-            group_cols.append("estimate")
-            group_cols.extend(list(self.group_by.keys()))
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
+            group_cols.extend(existing(["estimate"]))
+            group_cols.extend(existing(self.group_by.keys()))
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
 
-        return group_cols
+        return self._merge_group_columns(group_cols)
 
     def _apply_metric_scope_filter(
         self, df: pl.LazyFrame, metric: MetricDefine, estimates: list[str]
@@ -1584,6 +1552,13 @@ class MetricEvaluator:
         ]
         if missing_subgroups:
             raise ValueError(f"Subgroup columns not found in data: {missing_subgroups}")
+
+        overlap = set(self.group_by.keys()) & set(self.subgroup_by.keys())
+        if overlap:
+            raise ValueError(
+                "Group and subgroup columns must be distinct; found duplicates: "
+                f"{sorted(overlap)}"
+            )
 
 
 class EvaluationResult(pl.DataFrame):
