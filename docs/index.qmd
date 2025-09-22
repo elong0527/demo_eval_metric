@@ -73,3 +73,6 @@ pip install -e .
 ## Documentation
 
 - [Quick Start](quickstart.qmd) - Installation and basic concepts
+- [Metric Definitions](metric_define.qmd) - Detailed examples and use cases
+- [Metric Evaluator](metric_evaluator.qmd) - End-to-end evaluation pipeline
+- [Pivot Helpers](metric_pivot.qmd) - Wide-format reporting utilities
