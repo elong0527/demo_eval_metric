@@ -19,6 +19,9 @@ sys.path.append('../src')
 
 import polars as pl 
 
+pl.Config.set_fmt_str_lengths(200)
+pl.Config.set_tbl_rows(-1)
+
 from polars_eval_metrics import MetricDefine
 ```
 
@@ -57,8 +60,6 @@ The framework provides many common metrics out of the box. Here's the complete l
 #| code-fold: true
 
 from polars_eval_metrics import MetricRegistry
-
-pl.Config.set_fmt_str_lengths(200)
 
 # Access built-in metrics from the global registry
 
