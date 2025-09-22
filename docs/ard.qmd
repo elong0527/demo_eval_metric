@@ -33,7 +33,7 @@ ARD uses exactly 7 columns in every dataset:
 
 The `stat` struct contains:
 - `type`: Data type hint ("int", "float", "string", "struct" …)
-- `value_float`, `value_int`, `value_bool`, `value_str`, `value_json`, `value_struct`: Typed value channels
+- `value_float`, `value_int`, `value_bool`, `value_str`, `value_struct`: Typed value channels
 - `format`: Optional format string for display
 - `unit`: Optional unit of measurement
 - `extras`: Optional structured payload for metric-specific attachments

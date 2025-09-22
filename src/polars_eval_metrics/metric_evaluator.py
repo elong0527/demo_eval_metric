@@ -307,7 +307,6 @@ class MetricEvaluator:
             "_value_int",
             "_value_bool",
             "_value_str",
-            "_value_json",
             "_value_struct",
         ]
         schema_names = set(schema.names())
@@ -1094,7 +1093,6 @@ class MetricEvaluator:
             pl.lit(None, dtype=pl.Int64).alias("_value_int"),
             pl.lit(None, dtype=pl.Boolean).alias("_value_bool"),
             pl.lit(None, dtype=pl.Utf8).alias("_value_str"),
-            pl.lit(None, dtype=pl.Utf8).alias("_value_json"),
             pl.lit(None).alias("_value_struct"),
         ]
         result = result.with_columns(helper_columns)
@@ -1118,16 +1116,6 @@ class MetricEvaluator:
         elif value_kind == "string":
             result = result.with_columns(
                 pl.col("value").cast(pl.Utf8, strict=False).alias("_value_str"),
-                pl.lit(None, dtype=pl.Float64).alias("value"),
-            )
-        elif value_kind == "json":
-            result = result.with_columns(
-                pl.col("value")
-                .map_elements(
-                    lambda v: ARD._encode_json(v) if v is not None else None,
-                    return_dtype=pl.Utf8,
-                )
-                .alias("_value_json"),
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
         elif value_kind == "struct":
@@ -1334,9 +1322,6 @@ class MetricEvaluator:
         string_value = (
             pl.col("_value_str") if "_value_str" in schema.names() else null_utf8
         )
-        json_value = (
-            pl.col("_value_json") if "_value_json" in schema.names() else null_utf8
-        )
         struct_value = (
             pl.col("_value_struct")
             if "_value_struct" in schema.names()
@@ -1369,7 +1354,7 @@ class MetricEvaluator:
             elif isinstance(inferred_type, pl.Struct):
                 inferred_kind = "struct"
             else:
-                inferred_kind = "json"
+                inferred_kind = "string"
             kind_expr = pl.lit(inferred_kind, dtype=pl.Utf8)
 
         type_label = pl.when(kind_expr.is_null()).then(null_utf8).otherwise(kind_expr)
@@ -1381,7 +1366,6 @@ class MetricEvaluator:
                 int_value.alias("value_int"),
                 bool_value.alias("value_bool"),
                 string_value.alias("value_str"),
-                json_value.alias("value_json"),
                 struct_value.alias("value_struct"),
                 format_col.alias("format"),
                 unit_col.alias("unit"),

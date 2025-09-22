@@ -149,12 +149,12 @@ def _get_cached_evaluation(self, metrics=None, estimates=None) -> ARD:
 ```python
 # Multi-field stat storage for type safety
 stat = {
-    "type": "float",           # Type indicator: float, int, bool, string, json
+    "type": "float",           # Type indicator: float, int, bool, string, struct
     "value_float": 3.14,       # Float values
     "value_int": None,         # Integer values
     "value_bool": None,        # Boolean values
     "value_str": None,         # String values
-    "value_json": None,        # JSON-serialized complex values
+    "value_struct": None,      # Structured payloads
     "format": "{:.2f}",        # Optional format string
     "unit": "seconds"          # Optional unit
 }
