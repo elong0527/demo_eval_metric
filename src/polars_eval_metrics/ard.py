@@ -86,10 +86,10 @@ class ARD:
         for row in records:
             normalised.append(
                 {
-                   "groups": ARD._normalise_mapping(row.get("groups"), group_fields),
-                   "subgroups": ARD._normalise_mapping(
-                       row.get("subgroups"), subgroup_fields
-                   ),
+                    "groups": ARD._normalise_mapping(row.get("groups"), group_fields),
+                    "subgroups": ARD._normalise_mapping(
+                        row.get("subgroups"), subgroup_fields
+                    ),
                     "estimate": row.get("estimate"),
                     "metric": row.get("metric"),
                     "label": row.get("label"),
@@ -282,9 +282,7 @@ class ARD:
             return self._lf.select(pl.col(key)).collect()[key]
         raise KeyError(key)
 
-    def iter_rows(
-        self, *args: Any, **kwargs: Any
-    ) -> Iterable[tuple[Any, ...]]:
+    def iter_rows(self, *args: Any, **kwargs: Any) -> Iterable[tuple[Any, ...]]:
         """Iterate over rows of the eagerly collected DataFrame."""
         return self.collect().iter_rows(*args, **kwargs)
 
@@ -434,7 +432,9 @@ class ARD:
                     )
 
             if "estimate" in preview.columns:
-                display_exprs.append(pl.col("estimate").fill_null("--").alias("estimate"))
+                display_exprs.append(
+                    pl.col("estimate").fill_null("--").alias("estimate")
+                )
             if "metric" in preview.columns:
                 display_exprs.append(pl.col("metric"))
 
@@ -674,11 +674,13 @@ class ARD:
 
         # Handle stat column specially to extract value
         if "stat" in lf.collect_schema().names():
-            lf = lf.with_columns([
-                pl.col("stat").map_elements(
-                    ARD._stat_value, return_dtype=pl.Float64
-                ).alias("value")
-            ]).drop("stat")
+            lf = lf.with_columns(
+                [
+                    pl.col("stat")
+                    .map_elements(ARD._stat_value, return_dtype=pl.Float64)
+                    .alias("value")
+                ]
+            ).drop("stat")
 
         return lf.collect()
 
@@ -706,20 +708,14 @@ class ARD:
         if index is None:
             # Use all remaining columns except the pivot columns and values
             on_list = [on] if isinstance(on, str) else on
-            index = [
-                col for col in df.columns
-                if col not in on_list + [values]
-            ]
+            index = [col for col in df.columns if col not in on_list + [values]]
 
         # Ensure index is a list
         if isinstance(index, str):
             index = [index]
 
         return df.pivot(
-            on=on,
-            index=index,
-            values=values,
-            aggregate_function=aggregate_function
+            on=on, index=index, values=values, aggregate_function=aggregate_function
         )
 
     def get_stats(self, include_metadata: bool = False) -> pl.DataFrame:

@@ -492,18 +492,22 @@ class TestMetricEvaluatorAdvancedScenarios:
             pl.col("context").struct.field("scope").alias("scope"),
         )
 
-        assert context_scope.filter(pl.col("metric") == "n_sample")["scope"].to_list() == [
-            "global"
-        ]
+        assert context_scope.filter(pl.col("metric") == "n_sample")[
+            "scope"
+        ].to_list() == ["global"]
         assert set(
             context_scope.filter(pl.col("metric") == "n_subject")["scope"].to_list()
         ) == {"group"}
         assert set(
-            context_scope.filter(pl.col("metric") == "n_sample_with_data")["scope"].to_list()
+            context_scope.filter(pl.col("metric") == "n_sample_with_data")[
+                "scope"
+            ].to_list()
         ) == {"model"}
         assert all(
             value is None
-            for value in context_scope.filter(pl.col("metric") == "mae")["scope"].to_list()
+            for value in context_scope.filter(pl.col("metric") == "mae")[
+                "scope"
+            ].to_list()
         )
 
         global_rows = df.filter(pl.col("metric") == "n_sample")
@@ -579,9 +583,7 @@ class TestMetricEvaluatorAdvancedScenarios:
         assert isinstance(subgroup_values.dtype, pl.Enum)
         assert subgroup_values.dtype.categories.to_list() == enum_order
         assert set(subgroup_values.drop_nulls().to_list()) == set(enum_order)
-        assert set(
-            subgroups["subgroup_name"].drop_nulls().to_list()
-        ) == {"age_group"}
+        assert set(subgroups["subgroup_name"].drop_nulls().to_list()) == {"age_group"}
 
 
 class TestMetricEvaluatorEdgeCases:
@@ -721,4 +723,3 @@ class TestMetricEvaluatorEdgeCases:
         df = result.collect()
         stats = result.get_stats()
         assert stats["value"][0] == 2.375  # MAE should be 2.375
-

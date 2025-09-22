@@ -87,14 +87,12 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
     expected_a = expected_bias["model_a_bias"].drop_nulls().mean()
     expected_b = expected_bias["model_b_bias"].drop_nulls().mean()
 
-    actual_a = (
-        detailed.filter(pl.col("estimate") == "model_a")
-        .filter(pl.col("metric") == metric_name)["value_float"][0]
-    )
-    actual_b = (
-        detailed.filter(pl.col("estimate") == "model_b")
-        .filter(pl.col("metric") == metric_name)["value_float"][0]
-    )
+    actual_a = detailed.filter(pl.col("estimate") == "model_a").filter(
+        pl.col("metric") == metric_name
+    )["value_float"][0]
+    actual_b = detailed.filter(pl.col("estimate") == "model_b").filter(
+        pl.col("metric") == metric_name
+    )["value_float"][0]
 
     assert actual_a == pytest.approx(expected_a)
     assert actual_b == pytest.approx(expected_b)
