@@ -1,0 +1,204 @@
+---
+title: "Analysis Results Data (ARD)"
+subtitle: "Fixed-schema container for evaluation metrics"
+---
+
+# Setup
+
+```{python}
+#| echo: false
+import sys
+import os
+sys.path.insert(0, os.path.abspath("../src"))
+```
+
+# ARD Overview
+
+The Analysis Results Data (ARD) container holds every evaluation result produced by
+`MetricEvaluator`. Each ARD instance wraps a Polars `LazyFrame` so results stay lazy
+until you explicitly collect them. The container standardises the schema for downstream
+processing, keeps metric metadata attached, and preserves display-friendly ordering
+through enum-backed columns.
+
+## Why ARD?
+
+- **Canonical layout**: every result set shares the same structured columns, regardless of
+  metric mix or grouping configuration.
+- **Type preservation**: statistical values live in a typed struct that keeps floats,
+  integers, booleans, strings, and nested payloads distinct.
+- **Lazy by default**: filters and joins can be composed on the underlying lazy frame and
+  collected only when needed.
+- **Display metadata**: columns such as `metric`, `label`, and `estimate` use `Enum` types
+  so tables respect the metric definition order instead of alphabetical sorting.
+
+## Canonical Columns
+
+The minimum schema that every ARD provides is shown below. Calling `ARD.schema` exposes
+these columns even if `collect()` omits some of them for backward compatibility.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `groups` | `pl.Struct` | Primary grouping keys (e.g. treatment, site). |
+| `subgroups` | `pl.Struct` | Subgroup breakdowns (e.g. gender, race). |
+| `estimate` | `pl.Utf8` or `pl.Enum` | Estimate identifier for the model or prediction column. |
+| `metric` | `pl.Utf8` or `pl.Enum` | Metric name registered in the metric registry. |
+| `label` | `pl.Utf8` or `pl.Enum` | Human-readable display label; hidden by `collect()` but present on the lazy frame. |
+| `stat` | `pl.Struct` | Typed value container (see below). |
+| `context` | `pl.Struct` | Metadata describing how the metric was computed. |
+| `id` | `pl.Struct` or `pl.Null` | Entity identifiers for within-subject / visit metrics. |
+
+Some evaluation configurations also add helper columns to the lazy frame:
+`subgroup_name` / `subgroup_value` for vectorised subgroup outputs, `metric_type` and
+`scope` for provenance, and `value` for preformatted display strings.
+
+The `stat` struct splits the stored result across typed channels:
+
+- `type`: value hint such as `"float"`, `"int"`, `"bool"`, `"string"`, or `"struct"`
+- `value_float`, `value_int`, `value_bool`, `value_str`, `value_struct`: mutually exclusive
+  slots for the actual statistic
+- `format`: optional Python format string used when rendering
+- `unit`: optional unit label (e.g. `%`, `ms`)
+- `extras`: structured payload for metric-specific attachments (confidence intervals, etc.)
+
+# Producing ARD from an Evaluation
+
+The evaluator returns an `EvaluationResult`, a thin Polars `DataFrame` subclass that keeps
+`label`, `metric`, `estimate`, and `value` columns ready for display. You can always obtain
+its backing ARD via `to_ard()`.
+
+```{python}
+import polars as pl
+from polars_eval_metrics import MetricDefine, MetricEvaluator
+from polars_eval_metrics.ard import ARD
+from data_generator import generate_sample_data
+
+pl.Config.set_tbl_rows(8)
+
+# Sample data with two estimates, grouped by treatment and gender
+raw = generate_sample_data(n_subjects=4, n_visits=2, n_groups=2)
+metrics = [
+    MetricDefine(name="mae", label="Mean Absolute Error"),
+    MetricDefine(name="rmse", label="Root Mean Squared Error"),
+]
+
+evaluator = MetricEvaluator(
+    df=raw,
+    metrics=metrics,
+    ground_truth="actual",
+    estimates=["model1", "model2"],
+    group_by=["treatment"],
+    subgroup_by=["gender"],
+)
+
+result = evaluator.evaluate()
+result.head()  # EvaluationResult behaves like a Polars DataFrame
+```
+
+Enum-backed columns preserve the user-specified ordering of metrics, labels, and estimates:
+
+```{python}
+result.schema["metric"], result.schema["label"], result.schema["estimate"]
+```
+
+# Inspecting the ARD Container
+
+Convert the evaluation result back to its canonical container:
+
+```{python}
+ard = result.to_ard()
+list(ard.schema.keys())  # Columns available on the lazy frame
+```
+
+Collecting produces the backward-compatible table with struct columns:
+
+```{python}
+canonical = ard.collect()
+canonical.head()
+```
+
+You can always re-wrap the canonical frame if you need an ARD stripped to the minimum
+columns:
+
+```{python}
+minimal_ard = ARD(canonical)
+minimal_ard.schema
+```
+
+The typed `stat` payload is preserved even though the `value` column is purely presentational:
+
+```{python}
+first_stat = canonical["stat"][0]
+first_stat
+```
+
+Structured columns can be unnested to inspect individual components:
+
+```{python}
+canonical.select([
+    pl.col("groups").struct.field("treatment").alias("treatment"),
+    pl.col("subgroups").struct.field("gender").alias("gender"),
+    pl.col("stat").struct.field("value_float").alias("value_float"),
+    pl.col("stat").struct.field("format").alias("format"),
+])
+```
+
+`ARD.get_stats()` offers a quick way to access raw values with optional metadata:
+
+```{python}
+ard.get_stats(include_metadata=True).head()
+```
+
+# Lazy Filtering and Transformation
+
+Because ARD wraps a lazy frame you can compose Polars expressions directly:
+
+```{python}
+filtered = ARD(
+    ard.lazy.filter(
+        (pl.col("groups").struct.field("treatment") == "A")
+        & (pl.col("stat").struct.field("value_float") > 1.0)
+        & (pl.col("metric") == "mae")
+    )
+)
+filtered.collect()
+```
+
+Re-wrapping the canonical frame avoids duplicate column names when performing structural
+transformations:
+
+```{python}
+wide = minimal_ard.to_wide(index=["treatment", "gender"], columns=["estimate", "metric"])
+wide
+```
+
+```{python}
+minimal_ard.to_long().head()
+```
+
+```{python}
+minimal_ard.unnest(["groups", "subgroups"]).head()
+```
+
+ARD also includes helpers for handling empty strings and nulls in struct columns:
+
+```{python}
+minimal_ard.with_null_as_empty().collect().head()
+```
+
+# Summaries
+
+Use `summary()` for a quick diagnostic of the collected dataset or `describe()` for a
+formatted printout:
+
+```{python}
+ard.summary()
+```
+
+```{python}
+ard.describe()
+```
+
+ARD keeps evaluation outputs consistent, typed, and lazily transformable while still
+supporting convenient display tooling through the `EvaluationResult` wrapper. Whenever
+you need the structured representation, convert back to ARD and operate with standard
+Polars expressions.

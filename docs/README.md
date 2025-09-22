@@ -4,13 +4,14 @@ This directory contains the documentation for the polars-eval-metrics package.
 
 ## Structure
 
-- `index.qmd` - Main documentation page
-- `quickstart.qmd` - Installation and basic concepts
-- `examples/` - Detailed usage examples
-  - `basic_usage.qmd` - Common use cases
-  - `metric_creation.qmd` - Creating metrics from configuration
-  - `advanced_usage.qmd` - Advanced features
-- `data_generator.py` - Sample data generation for examples
+- `index.qmd` - Main documentation landing page and navigation links
+- `quickstart.qmd` - Installation steps and the core evaluation workflow
+- `metric_define.qmd` - Detailed MetricDefine usage and configuration examples
+- `metric_evaluator.qmd` - End-to-end evaluation pipeline walkthroughs
+- `metric_pivot.qmd` - Pivot helper guides for reporting outputs
+- `developer_notes.qmd` - Additional reference notes for contributors
+- `data_generator.py` - Sample data generation helpers used across notebooks
+- `styles.css` - Custom styling overrides for the rendered site
 
 ## Running the Examples
 
@@ -43,7 +44,7 @@ python -c "
 import sys, os
 sys.path.insert(0, os.path.abspath('../src'))
 
-from polars_eval_metrics import MetricDefine, create_metrics
+from polars_eval_metrics import MetricDefine, MetricEvaluator, create_metrics
 from data_generator import generate_sample_data
 
 # Your example code here
@@ -65,22 +66,30 @@ This will create an HTML website in the `_site` directory.
 The main pattern demonstrated across all examples:
 
 ```python
-# 1. Create metrics from configuration
+import polars as pl
+from polars_eval_metrics import MetricEvaluator, create_metrics
+from data_generator import generate_sample_data
+
+# 1. Create metrics from configuration or names
 config = [
-    {'name': 'mae', 'label': 'Mean Absolute Error'},
-    {'name': 'rmse', 'label': 'Root Mean Squared Error'}
+    {"name": "mae", "label": "Mean Absolute Error"},
+    {"name": "rmse", "label": "Root Mean Squared Error"},
 ]
 metrics = create_metrics(config)
 
-# 2. Initialize evaluator with complete context
+# 2. Initialize the evaluator with the full evaluation context
+data = generate_sample_data()
 evaluator = MetricEvaluator(
     df=data,
     metrics=metrics,
     ground_truth="actual",
     estimates=["model1", "model2"],
-    group_by=["treatment"]
+    group_by=["treatment"],
+    # Optional filters and registry overrides are also supported:
+    # filter_expr=pl.col("visit_id") <= 2,
+    # registry=my_custom_registry,
 )
 
-# 3. Evaluate
-results = evaluator.evaluate_all()
+# 3. Evaluate and collect results
+results = evaluator.evaluate()
 ```

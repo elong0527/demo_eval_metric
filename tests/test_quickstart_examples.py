@@ -34,8 +34,10 @@ class TestQuickstartSingleMetric:
         assert result["metric"][0] == "mae"
         assert result["estimate"][0] == "model1"
         assert result["label"][0] == "mae"
-        assert isinstance(result["value"][0], float)
-        assert result["value"][0] >= 0  # MAE is non-negative
+        formatted_value = result["value"][0]
+        assert isinstance(formatted_value, str)
+        assert formatted_value != ""
+        assert result["stat"][0]["value_float"] >= 0  # MAE is non-negative
 
 
 class TestQuickstartGroupedEvaluation:
@@ -68,6 +70,7 @@ class TestQuickstartGroupedEvaluation:
             "metric",
             "label",
             "value",
+            "stat",
             "metric_type",
         ]
         for col in expected_cols:
@@ -79,7 +82,13 @@ class TestQuickstartGroupedEvaluation:
         assert set(result["metric"]) == {"mae", "rmse"}
 
         # Check that all values are valid
-        assert all(result["value"] >= 0)  # Both MAE and RMSE are non-negative
+        non_null_values = [
+            row["value_float"]
+            for row in result["stat"]
+            if row["value_float"] is not None
+        ]
+        if non_null_values:
+            assert min(non_null_values) >= 0
 
 
 class TestQuickstartSubgroupEvaluation:
@@ -201,41 +210,39 @@ class TestQuickstartErrorHandling:
         """Test error when required columns are missing."""
         df = generate_test_data().drop("actual")  # Remove ground truth column
 
-        evaluator = MetricEvaluator(
-            df=df,
-            metrics=MetricDefine(name="mae"),
-            ground_truth="actual",
-            estimates="model1",
-        )
-
-        with pytest.raises(Exception):  # Should raise error for missing column
-            evaluator.evaluate()
+        with pytest.raises(
+            ValueError, match="Ground truth column 'actual' not found in data"
+        ):
+            MetricEvaluator(
+                df=df,
+                metrics=MetricDefine(name="mae"),
+                ground_truth="actual",
+                estimates="model1",
+            )
 
     def test_empty_estimates_error(self):
         """Test error when no estimates are provided."""
         df = generate_test_data()
 
-        with pytest.raises(ValueError, match="No metrics or estimates to evaluate"):
-            evaluator = MetricEvaluator(
+        with pytest.raises(ValueError, match="No estimates provided"):
+            MetricEvaluator(
                 df=df,
                 metrics=MetricDefine(name="mae"),
                 ground_truth="actual",
                 estimates=[],  # Empty estimates
             )
-            evaluator.evaluate()
 
     def test_empty_metrics_error(self):
         """Test error when no metrics are provided."""
         df = generate_test_data()
 
-        with pytest.raises(ValueError, match="No metrics or estimates to evaluate"):
-            evaluator = MetricEvaluator(
+        with pytest.raises(ValueError, match="No metrics provided"):
+            MetricEvaluator(
                 df=df,
                 metrics=[],  # Empty metrics
                 ground_truth="actual",
                 estimates="model1",
             )
-            evaluator.evaluate()
 
 
 class TestQuickstartEquivalentCalculations:
@@ -253,7 +260,7 @@ class TestQuickstartEquivalentCalculations:
             estimates="model1",
         )
         framework_result = evaluator.evaluate()
-        framework_mae = framework_result["value"][0]
+        framework_mae = framework_result["stat"][0]["value_float"]
 
         # Direct Polars calculation (from quickstart.qmd)
         direct_result = df.select(
@@ -289,6 +296,6 @@ class TestQuickstartEquivalentCalculations:
 
         # Compare values for each treatment group
         for i in range(len(framework_result)):
-            framework_mae = framework_result["value"][i]
+            framework_mae = framework_result["stat"][i]["value_float"]
             direct_mae = direct_result["mae_model1"][i]
             assert abs(framework_mae - direct_mae) < 1e-10

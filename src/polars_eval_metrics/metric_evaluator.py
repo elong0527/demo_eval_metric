@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Unified Metric Evaluation Pipeline
 
@@ -5,14 +7,19 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
-from typing import Any
+from collections.abc import Collection, Iterable
+from typing import TYPE_CHECKING, Any, Sequence
 
 # pyre-strict
 
 import polars as pl
 
+if TYPE_CHECKING:
+    from polars.selectors import Selector
+
+from .ard import ARD
 from .metric_define import MetricDefine, MetricScope, MetricType
-from .metric_registry import MetricRegistry
+from .metric_registry import MetricRegistry, MetricInfo
 
 
 class MetricEvaluator:
@@ -28,7 +35,15 @@ class MetricEvaluator:
     filter_expr: pl.Expr | None
     error_params: dict[str, dict[str, Any]]
     df: pl.LazyFrame
-    _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], pl.DataFrame]
+    _evaluation_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], ARD]
+    _estimate_keys: list[str]
+    _estimate_label_lookup: dict[str, str]
+    _estimate_label_reverse: dict[str, str]
+    _estimate_label_order: dict[str, int]
+    _estimate_key_order: dict[str, int]
+    _metric_label_order: dict[str, int]
+    _metric_name_order: dict[str, int]
+    _subgroup_categories: list[str]
 
     def __init__(
         self,
@@ -69,8 +84,27 @@ class MetricEvaluator:
 
         # Process inputs using dedicated methods
         self.estimates = self._process_estimates(estimates)
+        # Preserve insertion order for deterministic display and sorting
+        self._estimate_keys = list(self.estimates.keys())
+        self._estimate_label_lookup = dict(self.estimates)
+        self._estimate_label_reverse = {
+            label: key for key, label in self._estimate_label_lookup.items()
+        }
+        self._estimate_label_order = {
+            label: idx for idx, label in enumerate(self._estimate_label_lookup.values())
+        }
+        self._estimate_key_order = {
+            key: idx for idx, key in enumerate(self._estimate_keys)
+        }
+        self._metric_label_order = {
+            metric.label or metric.name: idx for idx, metric in enumerate(self.metrics)
+        }
+        self._metric_name_order = {
+            metric.name: idx for idx, metric in enumerate(self.metrics)
+        }
         self.group_by = self._process_grouping(group_by)
         self.subgroup_by = self._process_grouping(subgroup_by)
+        self._subgroup_categories = self._compute_subgroup_categories()
         self.filter_expr = filter_expr
         self.error_params = error_params or {}
 
@@ -79,6 +113,9 @@ class MetricEvaluator:
 
         # Initialize evaluation cache
         self._evaluation_cache = {}
+
+        # Validate configuration eagerly so errors surface early
+        self._validate_inputs()
 
     def _apply_base_filter(self) -> pl.LazyFrame:
         """Apply initial filter if provided"""
@@ -105,22 +142,19 @@ class MetricEvaluator:
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
-    ) -> pl.DataFrame:
+    ) -> ARD:
         """Get cached evaluation result or compute and cache if not exists"""
         cache_key = self._get_cache_key(metrics, estimates)
 
         if cache_key not in self._evaluation_cache:
-            # Compute and cache the result
-            result_data = self.evaluate(
-                metrics=metrics, estimates=estimates, collect=True
-            )
-            # Ensure we have a DataFrame for caching
-            result = (
-                result_data
-                if isinstance(result_data, pl.DataFrame)
-                else result_data.collect()
-            )
-            self._evaluation_cache[cache_key] = result
+            if metrics is not None or estimates is not None:
+                filtered_evaluator = self.filter(metrics=metrics, estimates=estimates)
+                ard_result = filtered_evaluator._evaluate_ard(
+                    metrics=metrics, estimates=estimates
+                )
+            else:
+                ard_result = self._evaluate_ard(metrics=metrics, estimates=estimates)
+            self._evaluation_cache[cache_key] = ard_result
 
         return self._evaluation_cache[cache_key]
 
@@ -128,147 +162,254 @@ class MetricEvaluator:
         """Clear the evaluation cache"""
         self._evaluation_cache.clear()
 
-    def _build_index_cols(
-        self, long_df: pl.DataFrame, include_estimate: bool = False
-    ) -> list[str]:
-        """Build index columns for pivot operations"""
-        index_cols = []
-        # Put subgroup columns first when they exist
-        if "subgroup_name" in long_df.columns:
-            index_cols.extend(["subgroup_name", "subgroup_value"])
-        if not include_estimate and self.group_by:
-            index_cols.extend(list(self.group_by.keys()))
-        if include_estimate:
-            index_cols.append("estimate")
-        return index_cols
-
-    def _add_group_columns(
-        self, result: pl.DataFrame, group_data: pl.DataFrame
-    ) -> pl.DataFrame:
-        """Add group scope columns by broadcasting group x metric combinations"""
-        if group_data.is_empty():
-            return result
-
-        # Pivot group data to get JSON-like column names
-        # Add a dummy index column for pivoting
-        group_data_with_index = group_data.with_columns(pl.lit(1).alias("_dummy_index"))
-
-        if self.group_by:
-            # Use the group_by columns plus label for pivot
-            pivot_cols = list(self.group_by.keys()) + ["label"]
-            group_pivoted = group_data_with_index.pivot(
-                on=pivot_cols,
-                values="value",
-                index=["_dummy_index"],
-                aggregate_function="first",  # Take first value if duplicates
-            )
-        else:
-            # Pivot by label only when no group_by
-            group_pivoted = group_data_with_index.pivot(
-                on="label",
-                values="value",
-                index=["_dummy_index"],
-                aggregate_function="first",
-            )
-
-        # Remove the dummy index column
-        group_pivoted = group_pivoted.drop("_dummy_index")
-
-        # Broadcast the pivoted columns to all rows in result
-        for col in group_pivoted.columns:
-            result = result.with_columns(pl.lit(group_pivoted[col][0]).alias(col))
-
-        return result
-
-    def _add_global_columns(
-        self, result: pl.DataFrame, global_data: pl.DataFrame
-    ) -> pl.DataFrame:
-        """Add global scope columns by broadcasting values"""
-        if global_data.is_empty():
-            return result
-        for row in global_data.iter_rows(named=True):
-            col_name = row["label"]
-            value = row["value"]
-            result = result.with_columns(pl.lit(value).alias(col_name))
-        return result
-
-    def _reorder_columns(
+    def filter(
         self,
-        result: pl.DataFrame,
-        index_cols: list[str],
-        global_data: pl.DataFrame,
-        group_data: pl.DataFrame,
-    ) -> pl.DataFrame:
-        """Reorder columns: index -> global -> group -> default"""
-        if result.is_empty():
-            return result
+        *,
+        metrics: MetricDefine | list[MetricDefine] | None = None,
+        estimates: str | list[str] | None = None,
+    ) -> "MetricEvaluator":
+        """Return a new evaluator scoped to the requested metrics or estimates."""
 
-        all_cols = result.columns
-        global_cols = []
-        group_cols = []
-        default_cols = []
+        filtered_metrics = (
+            self._resolve_metrics(metrics) if metrics is not None else self.metrics
+        )
+        filtered_estimate_keys = (
+            self._resolve_estimates(estimates)
+            if estimates is not None
+            else list(self.estimates.keys())
+        )
+        filtered_estimates = {
+            key: self.estimates[key] for key in filtered_estimate_keys
+        }
 
-        # Get scope information from the original data
-        global_labels = []
-        if not global_data.is_empty():
-            global_labels = global_data.select("label").unique().to_series().to_list()
-
-        group_labels = []
-        if not group_data.is_empty():
-            group_labels = group_data.select("label").unique().to_series().to_list()
-
-        for col in all_cols:
-            if col in index_cols:
-                continue
-            elif col in global_labels:
-                global_cols.append(col)
-            elif any(col.endswith(f"_{label}") for label in group_labels):
-                group_cols.append(col)
-            else:
-                default_cols.append(col)
-
-        # Build ordered column list
-        ordered_cols = (
-            index_cols + sorted(global_cols) + sorted(group_cols) + sorted(default_cols)
+        return MetricEvaluator(
+            df=self.df,
+            metrics=filtered_metrics,
+            ground_truth=self.ground_truth,
+            estimates=filtered_estimates,
+            group_by=self.group_by,
+            subgroup_by=self.subgroup_by,
+            filter_expr=None,
+            error_params=self.error_params,
         )
 
-        # Only reorder if we have all columns (safety check)
-        if len(ordered_cols) == len(all_cols):
-            result = result.select(ordered_cols)
-
-        return result
-
-    def evaluate(
+    def _evaluate_ard(
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
-        collect: bool = True,
-    ) -> pl.DataFrame | pl.LazyFrame:
-        """
-        Unified evaluation method for all metrics and combinations
+    ) -> ARD:
+        """Internal helper that returns evaluation results as ARD."""
 
-        Args:
-            metrics: Subset of metrics to evaluate (None = use all configured)
-            estimates: Subset of estimates to evaluate (None = use all configured)
-            collect: Whether to collect result to DataFrame
-
-        Returns:
-            Evaluation results
-        """
-        # Determine evaluation targets
         target_metrics = self._resolve_metrics(metrics)
         target_estimates = self._resolve_estimates(estimates)
 
         if not target_metrics or not target_estimates:
             raise ValueError("No metrics or estimates to evaluate")
 
-        # Vectorized evaluation - single Polars operation
         combined = self._vectorized_evaluate(target_metrics, target_estimates)
-
-        # Format final result
         formatted = self._format_result(combined)
+        return self._convert_to_ard(formatted)
 
-        return formatted.collect() if collect else formatted
+    def evaluate(
+        self,
+        metrics: MetricDefine | list[MetricDefine] | None = None,
+        estimates: str | list[str] | None = None,
+        *,
+        collect: bool = True,
+    ) -> ARD | pl.LazyFrame | "EvaluationResult":
+        """
+        Unified evaluation method returning ARD format.
+
+        Args:
+            metrics: Subset of metrics to evaluate (None = use all configured)
+            estimates: Subset of estimates to evaluate (None = use all configured)
+            collect: When False, return a ``LazyFrame`` rather than an ``ARD`` instance
+
+        Returns:
+            :class:`EvaluationResult` (subclass of ``polars.DataFrame``), or a ``LazyFrame``
+            when ``collect`` is False.
+        """
+
+        ard = self._evaluate_ard(metrics=metrics, estimates=estimates)
+
+        if not collect:
+            return ard.lazy
+
+        return EvaluationResult(ard)
+
+    def _convert_to_ard(self, result_lf: pl.LazyFrame) -> ARD:
+        """Convert the evaluator output into the canonical ARD columns lazily."""
+
+        schema = result_lf.collect_schema()
+
+        # Groups -----------------------------------------------------------------
+        group_cols = [col for col in self.group_by.keys() if col in schema]
+        if group_cols:
+            group_struct_dtype = pl.Struct(
+                [pl.Field(col, schema[col]) for col in group_cols]
+            )
+            groups_expr = (
+                pl.when(
+                    pl.all_horizontal([pl.col(col).is_null() for col in group_cols])
+                )
+                .then(pl.lit(None, dtype=group_struct_dtype))
+                .otherwise(pl.struct([pl.col(col).alias(col) for col in group_cols]))
+                .alias("groups")
+            )
+        else:
+            groups_expr = pl.lit(None).alias("groups")
+
+        # Subgroups ---------------------------------------------------------------
+        subgroup_labels = list(self.subgroup_by.values()) if self.subgroup_by else []
+        has_subgroup_columns = "subgroup_name" in schema and "subgroup_value" in schema
+        if subgroup_labels and has_subgroup_columns:
+            subgroup_struct_dtype = pl.Struct(
+                [pl.Field(label, pl.Utf8) for label in subgroup_labels]
+            )
+            subgroup_fields = [
+                pl.when(pl.col("subgroup_name") == pl.lit(label))
+                .then(pl.col("subgroup_value").cast(pl.Utf8))
+                .otherwise(pl.lit(None, dtype=pl.Utf8))
+                .alias(label)
+                for label in subgroup_labels
+            ]
+            subgroups_expr = (
+                pl.when(
+                    pl.col("subgroup_name").is_null()
+                    | pl.col("subgroup_value").is_null()
+                )
+                .then(pl.lit(None, dtype=subgroup_struct_dtype))
+                .otherwise(pl.struct(subgroup_fields))
+                .alias("subgroups")
+            )
+        else:
+            subgroups_expr = pl.lit(None, dtype=pl.Struct([])).alias("subgroups")
+
+        # Stat --------------------------------------------------------------------
+        ard_frame = result_lf.with_columns(
+            [
+                self._expr_groups(schema),
+                self._expr_subgroups(schema),
+                self._expr_estimate(schema),
+                self._expr_metric_enum(),
+                self._expr_label_enum(),
+                self._expr_stat_struct(schema),
+                self._expr_context_struct(schema),
+            ]
+        )
+
+        cleanup_cols = [
+            "_value_kind",
+            "_value_format",
+            "_value_unit",
+            "_extras_struct",
+            "_value_float",
+            "_value_int",
+            "_value_bool",
+            "_value_str",
+            "_value_struct",
+        ]
+        schema_names = set(schema.names())
+        drop_cols = [col for col in cleanup_cols if col in schema_names]
+        if drop_cols:
+            ard_frame = ard_frame.drop(drop_cols)
+
+        return ARD(ard_frame)
+
+    def _pivot_frame(
+        self,
+        df: pl.DataFrame,
+        *,
+        index_cols: Sequence[str],
+        on_cols: Sequence[str],
+    ) -> pl.DataFrame:
+        """Pivot helper that respects empty indexes and preserves column order."""
+        if df.is_empty():
+            if index_cols:
+                return pl.DataFrame({col: [] for col in index_cols})
+            return pl.DataFrame()
+
+        if index_cols:
+            return df.pivot(
+                index=list(index_cols),
+                on=list(on_cols),
+                values="value",
+                aggregate_function="first",
+            )
+
+        with_idx = df.with_row_index("_idx")
+        return (
+            with_idx.pivot(
+                index=["_idx"],
+                on=list(on_cols),
+                values="value",
+                aggregate_function="first",
+            )
+            .drop("_idx")
+        )
+
+    def _merge_pivot_frames(
+        self,
+        base: pl.DataFrame,
+        candidate: pl.DataFrame,
+        index_cols: Sequence[str],
+    ) -> pl.DataFrame:
+        """Combine pivot sections, broadcasting singleton scopes when needed."""
+        if base.is_empty():
+            return candidate
+        if candidate.is_empty():
+            return base
+
+        if not index_cols:
+            return pl.concat([base, candidate], how="horizontal")
+
+        if candidate.height == 1:
+            broadcast_cols = [
+                col for col in candidate.columns if col not in index_cols
+            ]
+            if not broadcast_cols:
+                return base
+            row_values = candidate.row(0, named=True)
+            return base.with_columns(
+                [pl.lit(row_values[col]).alias(col) for col in broadcast_cols]
+            )
+
+        return base.join(candidate, on=list(index_cols), how="left")
+
+    def _build_pivot_table(
+        self,
+        long_df: pl.DataFrame,
+        *,
+        index_cols: list[str],
+        default_on: Sequence[str],
+        scoped_on: Sequence[tuple[str, Sequence[str]]],
+    ) -> tuple[pl.DataFrame, list[tuple[str, list[str]]]]:
+        """Construct pivot table across default/global/group scopes."""
+
+        default_df = long_df.filter(pl.col("scope").is_null())
+        pivot = self._pivot_frame(
+            default_df, index_cols=index_cols, on_cols=default_on
+        )
+        sections: list[tuple[str, list[str]]] = [
+            ("default", [col for col in pivot.columns if col not in index_cols])
+        ]
+
+        for scope_name, on_cols in scoped_on:
+            scoped_df = long_df.filter(pl.col("scope") == scope_name)
+            scoped_pivot = self._pivot_frame(
+                scoped_df, index_cols=index_cols, on_cols=on_cols
+            )
+            if scoped_pivot.is_empty():
+                continue
+            sections.append(
+                (
+                    scope_name,
+                    [col for col in scoped_pivot.columns if col not in index_cols],
+                )
+            )
+            pivot = self._merge_pivot_frames(pivot, scoped_pivot, index_cols)
+
+        return pivot, sections
 
     def pivot_by_group(
         self,
@@ -283,293 +424,157 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
-            column_order_by: Column ordering strategy ("metrics" or "estimates"). Default: "metrics"
-                     - "metrics": Order columns by metric first, then estimate (metric1_model1, metric1_model2, metric2_model1, ...)
-                     - "estimates": Order columns by estimate first, then metric (model1_metric1, model1_metric2, model2_metric1, ...)
-            row_order_by: Row ordering strategy ("group" or "subgroup"). Default: "group"
-                     - "group": Order rows by group columns first, then subgroup
-                     - "subgroup": Order rows by subgroup columns first, then group
+            column_order_by: Column ordering strategy ("metrics" or "estimates")
+            row_order_by: Row ordering strategy ("group" or "subgroup")
 
         Returns:
-            DataFrame with group combinations as rows
+            DataFrame with group combinations as rows and metric columns
         """
-        long_df = self._get_cached_evaluation(metrics=metrics, estimates=estimates)
+        long_df = self._collect_long_dataframe(metrics=metrics, estimates=estimates)
 
-        # Build index columns
-        index_cols = self._build_index_cols(long_df, include_estimate=False)
-
-        # Separate data by scope
-        default_data = long_df.filter(pl.col("scope").is_null())
-        group_data = long_df.filter(pl.col("scope") == "group")
-        global_data = long_df.filter(pl.col("scope") == "global")
-
-        # Handle each scope separately
-        result_parts = []
-
-        # 1. Default scope: model x metric columns
-        if not default_data.is_empty():
-            # Use multiple columns directly in pivot
-            if index_cols:
-                default_result = default_data.pivot(
-                    on=["estimate", "label"], values="value", index=index_cols
-                )
-            else:
-                default_result = default_data.pivot(
-                    on=["estimate", "label"],
-                    values="value",
-                    index=pl.lit(1).alias("_row"),
-                )
-                if "_row" in default_result.columns:
-                    default_result = default_result.drop("_row")
-            result_parts.append(default_result)
-
-        # 2. Group scope: metric label as column
-        if not group_data.is_empty():
-            if index_cols:
-                group_result = group_data.pivot(
-                    on="label", values="value", index=index_cols
-                )
-            else:
-                group_result = group_data.pivot(
-                    on="label", values="value", index=pl.lit(1).alias("_row")
-                )
-                if "_row" in group_result.columns:
-                    group_result = group_result.drop("_row")
-            result_parts.append(group_result)
-
-        # Combine results
-        if result_parts:
-            result = result_parts[0]
-            for part in result_parts[1:]:
-                if index_cols:
-                    result = result.join(part, on=index_cols, how="full")
-                    # Clean up duplicate columns from join
-                    for col in index_cols:
-                        if f"{col}_right" in result.columns:
-                            result = result.drop(f"{col}_right")
-                else:
-                    # Add columns that don't already exist
-                    for col in part.columns:
-                        if col not in result.columns:
-                            result = result.with_columns(part.select(col))
-        else:
-            # Create result with proper index structure
-            if index_cols:
-                # For global scope only, get unique combinations from original data
-                available_cols = [
-                    col
-                    for col in index_cols
-                    if col in self.df_raw.collect_schema().names()
-                ]
-                if available_cols:
-                    # Get unique combinations from the original data
-                    result = self.df_raw.select(available_cols).unique().collect()
-                else:
-                    # If no group columns available, create single row
-                    result = pl.DataFrame({col: [None] for col in index_cols})
-            else:
-                result = pl.DataFrame({})
-
-        # Add global columns and reorder
-        result = self._add_global_columns(result, global_data)
-        result = self._reorder_columns_pivot_by_group(
-            result,
-            index_cols,
-            global_data,
-            group_data,
-            metrics,
-            estimates,
-            column_order_by,
-            row_order_by,
+        group_cols = [
+            label for label in self.group_by.values() if label in long_df.columns
+        ]
+        subgroup_present = (
+            "subgroup_name" in long_df.columns and "subgroup_value" in long_df.columns
         )
 
-        # Replace group_by column names with their display labels in final output
-        if self.group_by:
-            group_rename_mapping = {}
-            for col_name, label in self.group_by.items():
-                if col_name != label and col_name in result.columns:
-                    group_rename_mapping[col_name] = label
-            if group_rename_mapping:
-                result = result.rename(group_rename_mapping)
+        index_cols: list[str]
+        if row_order_by == "subgroup" and subgroup_present:
+            index_cols = ["subgroup_name", "subgroup_value"] + group_cols
+        else:
+            index_cols = group_cols + (
+                ["subgroup_name", "subgroup_value"] if subgroup_present else []
+            )
+        display_col = (
+            "estimate_label" if "estimate_label" in long_df.columns else "estimate"
+        )
+        result, sections = self._build_pivot_table(
+            long_df,
+            index_cols=index_cols,
+            default_on=[display_col, "label"],
+            scoped_on=[("global", ["label"]), ("group", ["label"])],
+        )
 
-        return result
+        section_lookup = {name: cols for name, cols in sections}
 
-    def _reorder_columns_pivot_by_group(
-        self,
-        result: pl.DataFrame,
-        index_cols: list[str],
-        global_data: pl.DataFrame,
-        group_data: pl.DataFrame,
-        metrics: MetricDefine | list[MetricDefine] | None,
-        estimates: str | list[str] | None,
-        column_order_by: str,
-        row_order_by: str,
-    ) -> pl.DataFrame:
-        """Reorder columns for pivot_by_group with proper metric/estimate ordering"""
         if result.is_empty():
-            return result
+            if index_cols:
+                return pl.DataFrame({col: [] for col in index_cols})
+            return pl.DataFrame()
 
-        # Validate parameters
-        self._validate_evaluation_params(column_order_by, row_order_by)
+        # Reorder columns: index -> global -> group -> default
+        value_cols = [col for col in result.columns if col not in index_cols]
+        default_cols = section_lookup.get("default", [])
+        default_cols = [
+            col for col in default_cols if col.startswith('{"') and col.endswith('"}')
+        ]
 
-        # Get the ordered metrics and estimates based on original configuration
-        target_metrics = self._resolve_metrics(metrics)
-        target_estimates = self._resolve_estimates(estimates)
+        estimate_order_lookup: dict[str, int] = self._estimate_label_order
+        metric_label_order_lookup: dict[str, int] = self._metric_label_order
+        metric_name_order_lookup: dict[str, int] = self._metric_name_order
 
-        # Extract labels in order
-        metric_labels = [m.label or m.name for m in target_metrics]
-        # Get estimate labels for column ordering (use labels if available, otherwise names)
-        estimate_labels = [self.estimates.get(est, est) for est in target_estimates]
+        def metric_order(label: str) -> int:
+            if label in metric_label_order_lookup:
+                return metric_label_order_lookup[label]
+            return metric_name_order_lookup.get(label, len(metric_label_order_lookup))
 
-        all_cols = result.columns
-        global_cols = []
-        group_cols = []
-        default_cols = []
+        def estimate_order(label: str) -> int:
+            return estimate_order_lookup.get(label, len(estimate_order_lookup))
 
-        # Get scope information from the original data
-        global_labels = []
-        if not global_data.is_empty():
-            global_labels = global_data.select("label").unique().to_series().to_list()
+        def sort_default(columns: list[str]) -> list[str]:
+            def parse(col: str) -> tuple[str, str]:
+                inner = col[2:-2]
+                parts = inner.split('","')
+                return (parts[0], parts[1]) if len(parts) == 2 else (col, "")
 
-        group_labels = []
-        if not group_data.is_empty():
-            group_labels = group_data.select("label").unique().to_series().to_list()
+            if column_order_by == "metrics":
+                return sorted(
+                    columns,
+                    key=lambda c: (
+                        metric_order(parse(c)[1]),
+                        estimate_order(parse(c)[0]),
+                    ),
+                )
+            return sorted(
+                columns,
+                key=lambda c: (
+                    estimate_order(parse(c)[0]),
+                    metric_order(parse(c)[1]),
+                ),
+            )
 
-        # Separate columns by scope
-        for col in all_cols:
-            if col in index_cols:
-                continue
-            # Check if this column contains a global metric label
-            elif any(label in col for label in global_labels):
-                global_cols.append(col)
-            # Check if this column contains a group metric label
-            elif any(label in col for label in group_labels):
-                group_cols.append(col)
+        ordered = (
+            index_cols
+            + section_lookup.get("global", [])
+            + section_lookup.get("group", [])
+            + sort_default(default_cols)
+        )
+
+        remaining = [col for col in value_cols if col not in ordered]
+        ordered.extend(remaining)
+
+        ordered = [col for col in ordered if col in result.columns]
+
+        if "subgroup_value" in result.columns:
+            if self._subgroup_categories and all(
+                isinstance(cat, str) for cat in self._subgroup_categories
+            ):
+                result = result.with_columns(
+                    pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
+                )
             else:
-                default_cols.append(col)
+                result = result.with_columns(pl.col("subgroup_value").cast(pl.Utf8))
 
-        # Order ALL value columns (default, global, group) based on metric definition order
-        # Note: Polars pivot creates column names in JSON format: '{"estimate","label"}'
-        ordered_value_cols = []
+        sort_columns: list[str] = []
+        temp_sort_columns: list[str] = []
+        subgroup_order_map = {
+            label: idx for idx, label in enumerate(self.subgroup_by.values())
+        }
 
-        # Combine all value columns (non-index columns)
-        all_value_cols = global_cols + group_cols + default_cols
-
-        if column_order_by == "metrics":
-            # Order by metric first, then estimate: metric1_model1, metric1_model2, metric2_model1, ...
-            for metric_label in metric_labels:
-                # First add global scope metrics (they don't vary by estimate)
-                if (
-                    metric_label in global_cols
-                    and metric_label not in ordered_value_cols
-                ):
-                    ordered_value_cols.append(metric_label)
-                    continue
-
-                # Then add group scope metrics (they also don't vary by estimate)
-                if (
-                    metric_label in group_cols
-                    and metric_label not in ordered_value_cols
-                ):
-                    ordered_value_cols.append(metric_label)
-                    continue
-
-                # Then add estimate-specific metrics (model/default scope)
-                for estimate_label in estimate_labels:
-                    # Check for different column name formats
-                    possible_col_names = [
-                        f'{{"{estimate_label}","{metric_label}"}}',  # JSON format
-                        f"{estimate_label}_{metric_label}",  # Simple format
-                        f"{metric_label}_{estimate_label}",  # Alternative format
-                    ]
-
-                    for col_name in possible_col_names:
-                        if (
-                            col_name in all_value_cols
-                            and col_name not in ordered_value_cols
-                        ):
-                            ordered_value_cols.append(col_name)
-                            break
-        else:  # column_order_by == "estimates":
-            # Order by estimate first, then metric: model1_metric1, model1_metric2, model2_metric1, ...
-            for estimate_label in estimate_labels:
-                for metric_label in metric_labels:
-                    # Skip global and group scope metrics in this loop - they'll be added at the end
-                    if metric_label in global_cols or metric_label in group_cols:
-                        continue
-
-                    # Check for different column name formats
-                    possible_col_names = [
-                        f'{{"{estimate_label}","{metric_label}"}}',  # JSON format
-                        f"{estimate_label}_{metric_label}",  # Simple format
-                        f"{metric_label}_{estimate_label}",  # Alternative format
-                    ]
-
-                    for col_name in possible_col_names:
-                        if (
-                            col_name in all_value_cols
-                            and col_name not in ordered_value_cols
-                        ):
-                            ordered_value_cols.append(col_name)
-                            break
-
-            # Add global and group scope metrics at the end (they don't vary by estimate)
-            for metric_label in metric_labels:
-                if (
-                    metric_label in global_cols or metric_label in group_cols
-                ) and metric_label not in ordered_value_cols:
-                    ordered_value_cols.append(metric_label)
-
-        # Add any remaining value columns that weren't matched (fallback)
-        for col in all_value_cols:
-            if col not in ordered_value_cols:
-                ordered_value_cols.append(col)
-
-        # Build final column order: index -> ordered value columns
-        ordered_cols = index_cols + ordered_value_cols
-
-        # Only reorder if we have all columns (safety check)
-        if len(ordered_cols) == len(all_cols):
-            result = result.select(ordered_cols)
-
-        # Apply row sorting based on row_order_by parameter
-        if row_order_by == "subgroup":
-            # Sort by subgroup columns first, then group columns
-            sort_cols = []
+        if row_order_by == "group":
+            sort_columns.extend([col for col in group_cols if col in result.columns])
+            if "subgroup_name" in result.columns and self.subgroup_by:
+                result = result.with_columns(
+                    pl.col("subgroup_name")
+                    .replace(subgroup_order_map)
+                    .fill_null(len(subgroup_order_map))
+                    .cast(pl.Int32)
+                    .alias("__subgroup_name_order")
+                )
+                sort_columns.append("__subgroup_name_order")
+                temp_sort_columns.append("__subgroup_name_order")
             if "subgroup_value" in result.columns:
-                sort_cols.append("subgroup_value")
-            if "subgroup_name" in result.columns:
-                sort_cols.append("subgroup_name")
-            # Add group columns
-            sort_cols.extend(
-                [
-                    col
-                    for col in index_cols
-                    if col not in ["subgroup_name", "subgroup_value"]
-                ]
-            )
-        else:  # row_order_by == "group" (default)
-            # Sort by group columns first, then subgroup columns
-            sort_cols = []
-            # Add group columns first
-            sort_cols.extend(
-                [
-                    col
-                    for col in index_cols
-                    if col not in ["subgroup_name", "subgroup_value"]
-                ]
-            )
-            # Then add subgroup columns
-            if "subgroup_name" in result.columns:
-                sort_cols.append("subgroup_name")
+                sort_columns.append("subgroup_value")
+        else:
+            if "subgroup_name" in result.columns and self.subgroup_by:
+                result = result.with_columns(
+                    pl.col("subgroup_name")
+                    .replace(subgroup_order_map)
+                    .fill_null(len(subgroup_order_map))
+                    .cast(pl.Int32)
+                    .alias("__subgroup_name_order")
+                )
+                sort_columns.append("__subgroup_name_order")
+                temp_sort_columns.append("__subgroup_name_order")
             if "subgroup_value" in result.columns:
-                sort_cols.append("subgroup_value")
+                sort_columns.append("subgroup_value")
+            sort_columns.extend([col for col in group_cols if col in result.columns])
 
-        # Convert group and subgroup columns to enums first so sorting respects enum order
-        result = self._convert_pivot_columns_to_enums(result)
+        if sort_columns:
+            result = result.sort(sort_columns)
 
-        if sort_cols:
-            result = result.sort(sort_cols)
+        if temp_sort_columns:
+            result = result.drop(temp_sort_columns)
+
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for col in ordered:
+            if col not in seen:
+                deduped.append(col)
+                seen.add(col)
+
+        result = result.select(deduped)
 
         return result
 
@@ -577,7 +582,7 @@ class MetricEvaluator:
         self,
         metrics: MetricDefine | list[MetricDefine] | None = None,
         estimates: str | list[str] | None = None,
-        column_order_by: str = "metrics",
+        column_order_by: str = "estimates",
         row_order_by: str = "group",
     ) -> pl.DataFrame:
         """
@@ -586,381 +591,96 @@ class MetricEvaluator:
         Args:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
-            column_order_by: Column ordering strategy - "metrics" (default) or "groups"
-                     "metrics": Order by metric definition order first, then groups
-                     "groups": Order by group combinations first, then metrics
-            row_order_by: Row ordering strategy - "group" (default) or "subgroup"
-                     "group": Order rows by group columns first, then subgroup
-                     "subgroup": Order rows by subgroup columns first, then group
+            column_order_by: Column ordering strategy ("estimates" or "metrics")
+            row_order_by: Row ordering strategy ("group" or "subgroup")
 
         Returns:
-            DataFrame with models as rows
+            DataFrame with model combinations as rows and group+metric columns
         """
-        long_df = self._get_cached_evaluation(metrics=metrics, estimates=estimates)
+        long_df = self._collect_long_dataframe(metrics=metrics, estimates=estimates)
 
-        # Build index columns
-        index_cols = self._build_index_cols(long_df, include_estimate=True)
-
-        # Separate data by scope
-        model_default_data = long_df.filter(
-            (pl.col("scope").is_in(["model", "default"])) | (pl.col("scope").is_null())
+        subgroup_present = (
+            "subgroup_name" in long_df.columns and "subgroup_value" in long_df.columns
         )
-        global_data = long_df.filter(pl.col("scope") == "global")
-        group_data = long_df.filter(pl.col("scope") == "group")
 
-        # Create pivot result from model/default data
-        if not model_default_data.is_empty():
-            # Use metric labels instead of metric names for pivot column headers
-            # Use multiple columns directly in pivot
-            if self.group_by:
-                pivot_on_cols = list(self.group_by.keys()) + ["label"]
-            else:
-                # Add a constant column for pivoting when no group_by
-                model_default_data = model_default_data.with_columns(
-                    pl.lit("ALL").alias("_group")
-                )
-                pivot_on_cols = ["_group", "label"]
-
-            result = model_default_data.pivot(
-                on=pivot_on_cols, values="value", index=index_cols
-            )
+        index_cols: list[str]
+        if row_order_by == "subgroup" and subgroup_present:
+            index_cols = ["estimate", "subgroup_name", "subgroup_value"]
         else:
-            # Create empty result with index columns
-            result = pl.DataFrame().with_columns(
-                [pl.lit(None, dtype=pl.Utf8).alias(col) for col in index_cols]
+            index_cols = ["estimate"] + (
+                ["subgroup_name", "subgroup_value"] if subgroup_present else []
             )
 
-        # Add global and group columns, then reorder
-        result = self._add_global_columns(result, global_data)
-        result = self._add_group_columns(result, group_data)
-        result = self._reorder_columns_pivot_by_model(
-            result,
-            index_cols,
-            global_data,
-            group_data,
-            metrics,
-            column_order_by,
-            row_order_by,
+        if "estimate" in index_cols:
+            estimate_series = (
+                long_df.get_column("estimate")
+                if "estimate" in long_df.columns
+                else None
+            )
+            if estimate_series is None or estimate_series.is_null().all():
+                index_cols = [col for col in index_cols if col != "estimate"]
+
+        result, sections = self._build_pivot_table(
+            long_df,
+            index_cols=index_cols,
+            default_on=[*self.group_by.values(), "label"],
+            scoped_on=[("global", ["label"]), ("group", [*self.group_by.values(), "label"])],
         )
 
-        # Replace group_by column names with their display labels in final output
-        if self.group_by:
-            group_rename_mapping = {}
-            for col_name, label in self.group_by.items():
-                if col_name != label and col_name in result.columns:
-                    group_rename_mapping[col_name] = label
-            if group_rename_mapping:
-                result = result.rename(group_rename_mapping)
+        section_lookup = {name: cols for name, cols in sections}
 
-        return result
-
-    def _reorder_columns_pivot_by_model(
-        self,
-        result: pl.DataFrame,
-        index_cols: list[str],
-        global_data: pl.DataFrame,
-        group_data: pl.DataFrame,
-        metrics: MetricDefine | list[MetricDefine] | None,
-        column_order_by: str,
-        row_order_by: str,
-    ) -> pl.DataFrame:
-        """Reorder columns for pivot_by_model with proper metric/group ordering"""
-        if result.is_empty():
-            return result
-
-        # Validate column_order_by parameter
-        if column_order_by not in ["metrics", "groups"]:
-            raise ValueError(
-                f"column_order_by must be 'metrics' or 'groups', got '{column_order_by}'"
+        if "estimate" in result.columns:
+            result = result.with_columns(
+                pl.col("estimate")
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
+                .alias("estimate_label")
             )
 
-        # Validate row_order_by parameter
-        if row_order_by not in ["group", "subgroup"]:
-            raise ValueError(
-                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
-            )
-
-        # Get the ordered metrics based on original configuration
-        target_metrics = self._resolve_metrics(metrics)
-
-        # Extract names and labels for ordering
-        # Use labels for column matching (since columns now contain metric labels)
-        # Use labels for scope detection (since scope data contains metric labels)
-        metric_names = [m.name for m in target_metrics]
-        metric_labels = [m.label or m.name for m in target_metrics]
-
-        all_cols = result.columns
-        global_cols = []
-        group_cols = []
-        default_cols = []
-
-        # Get scope information from the original data
-        global_labels = []
-        if not global_data.is_empty():
-            global_labels = global_data.select("label").unique().to_series().to_list()
-
-        group_labels = []
-        if not group_data.is_empty():
-            group_labels = group_data.select("label").unique().to_series().to_list()
-
-        # Separate columns by scope
-        for col in all_cols:
-            if col in index_cols:
-                continue
-            # Check if this column contains a global metric label
-            elif any(label in col for label in global_labels):
-                global_cols.append(col)
-            # Check if this column contains a group metric label
-            elif any(label in col for label in group_labels):
-                group_cols.append(col)
-            else:
-                default_cols.append(col)
-
-        # Order ALL value columns (default, global, group) based on metric definition order
-        # Note: pivot_by_model creates columns like '{"group1","group2","metric"}' format
-        ordered_value_cols = []
-
-        # Combine all value columns (non-index columns)
-        all_value_cols = global_cols + group_cols + default_cols
-
-        # Get unique group combinations for ordering
-        group_combinations = set()
-        for col in default_cols:
-            # Extract group combinations from JSON format columns
-            # Format: '{"group1","group2","metric"}'
-            if col.startswith("{") and col.endswith("}"):
-                # Parse the JSON-like format to extract group parts
-                # Remove outer braces and split by quotes and commas
-                inner = col[1:-1]  # Remove { and }
-                parts = [part.strip('"') for part in inner.split('","')]
-                if len(parts) > 1:
-                    # Get all parts except the last (which is the metric label)
-                    group_parts = parts[:-1]
-                    # Reconstruct the group combination in the same format
-                    group_combo = '","'.join(group_parts)
-                    group_combinations.add(group_combo)
-
-        group_combinations = sorted(list(group_combinations))
-
-        if column_order_by == "metrics":
-            # Order by metric first, then groups: metric1_group1, metric1_group2, metric2_group1, ...
-            for i, metric_label in enumerate(metric_labels):
-                # First add global scope metrics (they don't vary by group)
-                if (
-                    metric_label in global_cols
-                    and metric_label not in ordered_value_cols
-                ):
-                    ordered_value_cols.append(metric_label)
-                    continue
-
-                # Then add group scope metrics (they also don't vary by group combinations)
-                if (
-                    metric_label in group_cols
-                    and metric_label not in ordered_value_cols
-                ):
-                    ordered_value_cols.append(metric_label)
-                    continue
-
-                # Then add group-specific metrics (model/default scope) for this metric across all groups
-                for group_combo in group_combinations:
-                    # Check for different column name formats using metric labels
-                    possible_col_names = [
-                        f'{{"{group_combo}","{metric_label}"}}',  # JSON format with metric label
-                        f"{group_combo}_{metric_label}",  # Simple format with metric label
-                        f"{metric_label}_{group_combo}",  # Alternative format with metric label
-                    ]
-
-                    for col_name in possible_col_names:
-                        if (
-                            col_name in all_value_cols
-                            and col_name not in ordered_value_cols
-                        ):
-                            ordered_value_cols.append(col_name)
-                            break
-        else:  # column_order_by == "groups"
-            # Order by groups first, then metric: group1_metric1, group1_metric2, group2_metric1, ...
-            for group_combo in group_combinations:
-                for i, metric_label in enumerate(metric_labels):
-                    # Skip global and group scope metrics in this loop - they'll be added at the end
-                    if metric_label in global_cols or metric_label in group_cols:
-                        continue
-
-                    # Check for different column name formats using metric labels
-                    possible_col_names = [
-                        f'{{"{group_combo}","{metric_label}"}}',  # JSON format with metric label
-                        f"{group_combo}_{metric_label}",  # Simple format with metric label
-                        f"{metric_label}_{group_combo}",  # Alternative format with metric label
-                    ]
-
-                    for col_name in possible_col_names:
-                        if (
-                            col_name in all_value_cols
-                            and col_name not in ordered_value_cols
-                        ):
-                            ordered_value_cols.append(col_name)
-                            break
-
-            # Add global and group scope metrics at the end (they don't vary by group combinations)
-            for metric_label in metric_labels:
-                if (
-                    metric_label in global_cols or metric_label in group_cols
-                ) and metric_label not in ordered_value_cols:
-                    ordered_value_cols.append(metric_label)
-
-        # Add any remaining value columns that weren't matched (fallback)
-        for col in all_value_cols:
-            if col not in ordered_value_cols:
-                ordered_value_cols.append(col)
-
-        # Build final column order: index -> ordered value columns
-        ordered_cols = index_cols + ordered_value_cols
-
-        # Only reorder if we have all columns (safety check)
-        if len(ordered_cols) == len(all_cols):
-            result = result.select(ordered_cols)
-
-        # Apply row sorting based on row_order_by parameter
-        if row_order_by == "subgroup":
-            # Sort by subgroup columns first, then group columns
-            sort_cols = []
-            if "subgroup_value" in result.columns:
-                sort_cols.append("subgroup_value")
-            if "subgroup_name" in result.columns:
-                sort_cols.append("subgroup_name")
-            # Add group columns (excluding estimate and subgroup columns)
-            sort_cols.extend(
-                [
-                    col
-                    for col in index_cols
-                    if col not in ["estimate", "subgroup_name", "subgroup_value"]
-                ]
-            )
-            # Finally add estimate
-            if "estimate" in result.columns:
-                sort_cols.append("estimate")
-        else:  # row_order_by == "group" (default)
-            # Sort by group columns first, then subgroup columns, then estimate
-            sort_cols = []
-            # Add group columns first (excluding estimate and subgroup columns)
-            sort_cols.extend(
-                [
-                    col
-                    for col in index_cols
-                    if col not in ["estimate", "subgroup_name", "subgroup_value"]
-                ]
-            )
-            # Then add subgroup columns
-            if "subgroup_name" in result.columns:
-                sort_cols.append("subgroup_name")
-            if "subgroup_value" in result.columns:
-                sort_cols.append("subgroup_value")
-            # Finally add estimate
-            if "estimate" in result.columns:
-                sort_cols.append("estimate")
-
-        # Convert group and subgroup columns to enums first so sorting respects enum order
-        result = self._convert_pivot_columns_to_enums(result)
-
-        if sort_cols:
-            result = result.sort(sort_cols)
-
-        return result
-
-    def _convert_pivot_columns_to_enums(self, result: pl.DataFrame) -> pl.DataFrame:
-        """Convert group and subgroup columns to enums, preserving original enum ordering when available"""
-
-        # Convert group columns to enums based on their labels
-        for col_name, label in self.group_by.items():
-            target_col = None
-            if col_name in result.columns:
-                target_col = col_name
-            elif label in result.columns and label != col_name:
-                target_col = label
-
-            if target_col:
-                # Check if original data had enum type for this column and preserve its ordering
-                original_enum_categories = self._get_original_enum_categories(col_name)
-                if original_enum_categories is not None:
-                    # Use original enum categories, filtered to only include values present in result
-                    result_values = set(
-                        result.get_column(target_col).unique().to_list()
-                    )
-                    filtered_categories = [
-                        cat for cat in original_enum_categories if cat in result_values
-                    ]
-                    if len(filtered_categories) > 1:
-                        enum_type = pl.Enum(filtered_categories)
-                        result = result.with_columns(pl.col(target_col).cast(enum_type))
-                else:
-                    # Fallback to display order if no original enum found
-                    unique_values = (
-                        result.get_column(target_col)
-                        .unique(maintain_order=True)
-                        .to_list()
-                    )
-                    if len(unique_values) > 1:
-                        enum_type = pl.Enum(unique_values)
-                        result = result.with_columns(pl.col(target_col).cast(enum_type))
-
-        # Convert subgroup columns to enums
-        if "subgroup_name" in result.columns:
-            unique_names = (
-                result.get_column("subgroup_name").unique(maintain_order=True).to_list()
-            )
-            if len(unique_names) > 1:
-                enum_type = pl.Enum(unique_names)
-                result = result.with_columns(pl.col("subgroup_name").cast(enum_type))
-
-        # Convert subgroup_value to enum (values from all subgroups combined)
         if "subgroup_value" in result.columns:
-            # Get all unique values actually present in the result
-            result_values = (
-                result.get_column("subgroup_value")
-                .unique(maintain_order=True)
-                .to_list()
-            )
-
-            # Try to build an ordered list from original enum categories for each subgroup
-            ordered_categories = []
-            remaining_values = set(result_values)
-
-            # First, add values from enum subgroups in their original order
-            for col_name, label in self.subgroup_by.items():
-                original_enum_categories = self._get_original_enum_categories(col_name)
-                if original_enum_categories is not None:
-                    # Add enum categories that are present in result, maintaining original order
-                    for cat in original_enum_categories:
-                        if cat in remaining_values:
-                            ordered_categories.append(cat)
-                            remaining_values.remove(cat)
-
-            # Then add any remaining values (from non-enum subgroups) in their display order
-            remaining_ordered = [
-                val for val in result_values if val in remaining_values
-            ]
-            ordered_categories.extend(remaining_ordered)
-
-            # Create enum with the combined ordered categories (convert to strings)
-            if len(ordered_categories) > 1:
-                string_categories = [str(cat) for cat in ordered_categories]
-                enum_type = pl.Enum(string_categories)
+            if self._subgroup_categories and all(
+                isinstance(cat, str) for cat in self._subgroup_categories
+            ):
                 result = result.with_columns(
-                    pl.col("subgroup_value").cast(pl.Utf8).cast(enum_type)
+                    pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
+                )
+            else:
+                result = result.with_columns(
+                    pl.col("subgroup_value").cast(pl.Utf8)
                 )
 
-        return result
+        ordered = (
+            [col for col in index_cols if col in result.columns]
+            + [col for col in section_lookup.get("global", []) if col in result.columns]
+            + [col for col in section_lookup.get("group", []) if col in result.columns]
+            + [
+                col
+                for col in section_lookup.get("default", [])
+                if col in result.columns
+            ]
+        )
 
-    def _get_original_enum_categories(self, col_name: str) -> list[str] | None:
-        """Get original enum categories from the source data if the column was an enum"""
-        try:
-            # Check if the column exists in the original dataframe
-            if col_name in self.df_raw.collect_schema().names():
-                col_dtype = self.df_raw.collect_schema()[col_name]
-                if isinstance(col_dtype, pl.Enum):
-                    return col_dtype.categories.to_list()
-        except Exception:
-            pass
-        return None
+        remaining = [col for col in result.columns if col not in ordered]
+        ordered.extend(remaining)
+
+        result = result.select(ordered)
+
+        sort_columns: list[str] = []
+        if "subgroup_value" in result.columns:
+            sort_columns.append("subgroup_value")
+        if "estimate" in result.columns:
+            sort_columns.append("estimate")
+        for label in self.group_by.values():
+            if label in result.columns:
+                sort_columns.append(label)
+        if sort_columns:
+            result = result.sort(sort_columns)
+
+        return result
 
     def _resolve_metrics(
         self, metrics: MetricDefine | list[MetricDefine] | None
@@ -1026,10 +746,9 @@ class MetricEvaluator:
             )
             results.append(metric_result)
 
-        # Harmonize schemas before combining
+        # Combine results (no schema harmonization needed with fixed evaluation structure)
         if results:
-            harmonized_results = self._harmonize_result_schemas(results)
-            return pl.concat(harmonized_results, how="diagonal")
+            return pl.concat(results, how="diagonal")
         else:
             return pl.DataFrame().lazy()
 
@@ -1040,29 +759,21 @@ class MetricEvaluator:
         estimates: list[str],
     ) -> pl.LazyFrame:
         """Evaluate metrics with marginal subgroup analysis using vectorized operations"""
-        original_subgroup_by = self.subgroup_by
-
         # Create all subgroup combinations using vectorized unpivot
         subgroup_data = self._prepare_subgroup_data_vectorized(
-            df_with_errors, original_subgroup_by
+            df_with_errors, self.subgroup_by
         )
 
         # Evaluate all metrics across all subgroups in a vectorized manner
         results = []
         for metric in metrics:
-            # Temporarily clear subgroup_by to use the vectorized subgroup columns instead
-            self.subgroup_by = {}
-            try:
-                metric_result = self._evaluate_metric_vectorized(
-                    subgroup_data, metric, estimates
-                )
-                results.append(metric_result)
-            finally:
-                self.subgroup_by = original_subgroup_by
+            metric_result = self._evaluate_metric_vectorized(
+                subgroup_data, metric, estimates
+            )
+            results.append(metric_result)
 
-        # Combine results
-        harmonized_results = self._harmonize_result_schemas(results)
-        return pl.concat(harmonized_results, how="diagonal")
+        # Combine results (no schema harmonization needed with fixed evaluation structure)
+        return pl.concat(results, how="diagonal")
 
     def _prepare_subgroup_data_vectorized(
         self, df_with_errors: pl.LazyFrame, subgroup_by: dict[str, str]
@@ -1104,10 +815,25 @@ class MetricEvaluator:
             value_name="estimate_value",
         )
 
-        # Replace estimate names with their display labels and rename columns
-        df_long = df_long.with_columns(
-            [pl.col("estimate_name").replace(self.estimates).alias("estimate")]
-        ).rename({self.ground_truth: "ground_truth"})
+        # Preserve canonical estimate key alongside optional display label
+        df_long = (
+            df_long.rename({self.ground_truth: "ground_truth"})
+            .with_columns(
+                [
+                    pl.col("estimate_name").alias("estimate"),
+                    pl.col("estimate_name")
+                    .cast(pl.Utf8)
+                    .map_elements(
+                        lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                            val, val
+                        ),
+                        return_dtype=pl.Utf8,
+                    )
+                    .alias("estimate_label"),
+                ]
+            )
+            .drop("estimate_name")
+        )
 
         return df_long
 
@@ -1130,126 +856,184 @@ class MetricEvaluator:
     ) -> pl.LazyFrame:
         """Evaluate a single metric using vectorized operations"""
 
-        # Determine grouping columns based on metric scope
         group_cols = self._get_vectorized_grouping_columns(metric, df_with_errors)
-
-        # Compile metric expressions
-        within_exprs, across_expr = metric.compile_expressions()
-
-        # Apply metric-specific filtering if needed
+        within_infos, across_info = metric.compile_expressions()
         df_filtered = self._apply_metric_scope_filter(df_with_errors, metric, estimates)
 
-        # Perform the evaluation with appropriate grouping
-        if metric.type == MetricType.ACROSS_SAMPLE:
-            if across_expr is None:
-                raise ValueError(
-                    f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
-                )
+        handlers = {
+            MetricType.ACROSS_SAMPLE: self._evaluate_across_sample_metric,
+            MetricType.WITHIN_SUBJECT: self._evaluate_within_entity_metric,
+            MetricType.WITHIN_VISIT: self._evaluate_within_entity_metric,
+            MetricType.ACROSS_SUBJECT: self._evaluate_two_stage_metric,
+            MetricType.ACROSS_VISIT: self._evaluate_two_stage_metric,
+        }
 
-            if group_cols:
-                result = df_filtered.group_by(group_cols).agg(
-                    across_expr.alias("value").cast(pl.Float64)
-                )
-            else:
-                result = df_filtered.select(across_expr.alias("value").cast(pl.Float64))
-
-        elif metric.type in [MetricType.WITHIN_SUBJECT, MetricType.WITHIN_VISIT]:
-            # Within-entity aggregation
-            entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-
-            # Use the appropriate expression for within-entity aggregation
-            if within_exprs:
-                agg_expr = within_exprs[0].alias("value").cast(pl.Float64)
-            elif across_expr is not None:
-                agg_expr = across_expr.alias("value").cast(pl.Float64)
-            else:
-                raise ValueError(f"No valid expression for metric {metric.name}")
-
-            result = df_filtered.group_by(entity_groups).agg(agg_expr)
-
-        elif metric.type in [MetricType.ACROSS_SUBJECT, MetricType.ACROSS_VISIT]:
-            # Two-level aggregation: within entities, then across
-            entity_groups = self._get_entity_grouping_columns(metric.type) + group_cols
-
-            # First level: within entities
-            if within_exprs:
-                first_level_expr = within_exprs[0].alias("value")
-            elif across_expr is not None:
-                first_level_expr = across_expr.alias("value")
-            else:
-                raise ValueError(
-                    f"No valid expression for first level of metric {metric.name}"
-                )
-
-            intermediate = df_filtered.group_by(entity_groups).agg(first_level_expr)
-
-            # Second level: across entities
-            if across_expr is not None and within_exprs:
-                # True two-level case - use the across_expr directly since we named the column 'value'
-                second_level_expr = across_expr.alias("value").cast(pl.Float64)
-            else:
-                # Default aggregation across entities when no across_expr specified
-                second_level_expr = (
-                    pl.col("value").mean().alias("value").cast(pl.Float64)
-                )
-
-            if group_cols:
-                result = intermediate.group_by(group_cols).agg(second_level_expr)
-            else:
-                result = intermediate.select(second_level_expr)
-
-        else:
+        handler = handlers.get(metric.type)
+        if handler is None:
             raise ValueError(f"Unknown metric type: {metric.type}")
 
-        # Add metadata columns
-        return self._add_metadata_vectorized(result, metric)
+        result, result_info = handler(
+            df_filtered,
+            metric,
+            group_cols,
+            within_infos,
+            across_info,
+        )
+
+        return self._add_metadata_vectorized(result, metric, result_info)
+
+    def _evaluate_across_sample_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        _within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        if across_info is None:
+            raise ValueError(
+                f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
+            )
+
+        agg_exprs = self._metric_agg_expressions(across_info)
+        result = self._aggregate_lazyframe(df, group_cols, agg_exprs)
+        return result, across_info
+
+    def _evaluate_within_entity_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        entity_groups = self._merge_group_columns(
+            self._get_entity_grouping_columns(metric.type), group_cols
+        )
+
+        result_info = self._resolve_metric_info(
+            metric,
+            primary=within_infos,
+            fallback=across_info,
+            error_message=f"No valid expression for metric {metric.name}",
+        )
+
+        agg_exprs = self._metric_agg_expressions(result_info)
+        result = self._aggregate_lazyframe(df, entity_groups, agg_exprs)
+        return result, result_info
+
+    def _evaluate_two_stage_metric(
+        self,
+        df: pl.LazyFrame,
+        metric: MetricDefine,
+        group_cols: list[str],
+        within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> tuple[pl.LazyFrame, MetricInfo]:
+        entity_groups = self._merge_group_columns(
+            self._get_entity_grouping_columns(metric.type), group_cols
+        )
+
+        base_info = self._resolve_metric_info(
+            metric,
+            primary=within_infos,
+            fallback=across_info,
+            error_message=(
+                f"No valid expression for first level of metric {metric.name}"
+            ),
+        )
+
+        intermediate = self._aggregate_lazyframe(
+            df,
+            entity_groups,
+            self._metric_agg_expressions(base_info, include_extras=False),
+        )
+
+        if across_info is not None and within_infos:
+            result_info = across_info
+            agg_exprs = self._metric_agg_expressions(result_info)
+        else:
+            result_info = base_info
+            agg_exprs = [pl.col("value").mean().alias("value")]
+
+        result = self._aggregate_lazyframe(intermediate, group_cols, agg_exprs)
+        return result, result_info
+
+    @staticmethod
+    def _merge_group_columns(
+        *column_groups: Sequence[str],
+    ) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for columns in column_groups:
+            for col in columns:
+                if col not in seen:
+                    seen.add(col)
+                    ordered.append(col)
+        return ordered
+
+    def _resolve_metric_info(
+        self,
+        metric: MetricDefine,
+        *,
+        primary: Sequence[MetricInfo] | None,
+        fallback: MetricInfo | None,
+        error_message: str,
+    ) -> MetricInfo:
+        if primary:
+            return primary[0]
+        if fallback is not None:
+            return fallback
+        raise ValueError(error_message)
+
+    @staticmethod
+    def _aggregate_lazyframe(
+        df: pl.LazyFrame, group_cols: Sequence[str], agg_exprs: Sequence[pl.Expr]
+    ) -> pl.LazyFrame:
+        columns = [col for col in group_cols if col]
+        if columns:
+            return df.group_by(columns).agg(agg_exprs)
+        return df.select(*agg_exprs)
 
     def _get_vectorized_grouping_columns(
         self, metric: MetricDefine, df: pl.LazyFrame | None = None
     ) -> list[str]:
         """Get grouping columns for vectorized evaluation based on metric scope"""
-        group_cols = []
 
-        # Check if we're in vectorized subgroup mode (data has subgroup_name/subgroup_value columns)
+        schema_names: set[str]
         if df is not None:
-            schema_names = df.collect_schema().names()
-            using_vectorized_subgroups = (
-                "subgroup_name" in schema_names and "subgroup_value" in schema_names
-            )
+            schema_names = set(df.collect_schema().names())
         else:
-            using_vectorized_subgroups = False
+            schema_names = set(self.df.collect_schema().names())
 
-        # Handle scope-based grouping
+        using_vectorized_subgroups = {
+            "subgroup_name",
+            "subgroup_value",
+        }.issubset(schema_names)
+
+        def existing(columns: Iterable[str]) -> list[str]:
+            return [col for col in columns if col in schema_names]
+
+        group_cols: list[str] = []
+
         if metric.scope == MetricScope.GLOBAL:
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
         elif metric.scope == MetricScope.MODEL:
-            group_cols.append("estimate")
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            model_cols = existing(["estimate"])
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(model_cols + subgroup_cols)
         elif metric.scope == MetricScope.GROUP:
-            group_cols.extend(list(self.group_by.keys()))
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
-
+            group_cols.extend(existing(self.group_by.keys()))
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
         else:
-            # Default: estimate + groups + subgroups
-            group_cols.append("estimate")
-            group_cols.extend(list(self.group_by.keys()))
-            if using_vectorized_subgroups:
-                group_cols.extend(["subgroup_name", "subgroup_value"])
-            else:
-                group_cols.extend(list(self.subgroup_by.keys()))
+            group_cols.extend(existing(["estimate"]))
+            group_cols.extend(existing(self.group_by.keys()))
+            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            group_cols.extend(subgroup_cols)
 
-        return group_cols
+        return self._merge_group_columns(group_cols)
 
     def _apply_metric_scope_filter(
         self, df: pl.LazyFrame, metric: MetricDefine, estimates: list[str]
@@ -1259,6 +1043,16 @@ class MetricEvaluator:
         # Future: could add estimate filtering for specific scopes
         _ = metric, estimates  # Suppress unused parameter warnings
         return df
+
+    @staticmethod
+    def _metric_agg_expressions(
+        info: MetricInfo, *, include_extras: bool = True
+    ) -> list[pl.Expr]:
+        expressions = [info.expr.alias("value")]
+        if include_extras and info.extras:
+            for name, expr in info.extras.items():
+                expressions.append(expr.alias(f"_extra_{name}"))
+        return expressions
 
     def _get_entity_grouping_columns(self, metric_type: MetricType) -> list[str]:
         """Get entity-level grouping columns (subject_id, visit_id)"""
@@ -1270,211 +1064,370 @@ class MetricEvaluator:
             return []
 
     def _add_metadata_vectorized(
-        self, result: pl.LazyFrame, metric: MetricDefine
+        self, result: pl.LazyFrame, metric: MetricDefine, info: MetricInfo
     ) -> pl.LazyFrame:
         """Add metadata columns to vectorized result"""
 
-        metadata = [
-            pl.lit(metric.name).alias("metric"),
-            pl.lit(metric.label).alias("label"),
-            pl.lit(metric.type.value).alias("metric_type"),
-            pl.lit(metric.scope.value if metric.scope else None).alias("scope"),
+        value_kind = (info.value_kind or "float").lower()
+
+        metadata_columns = [
+            pl.lit(metric.name).cast(pl.Utf8).alias("metric"),
+            pl.lit(metric.label).cast(pl.Utf8).alias("label"),
+            pl.lit(metric.type.value).cast(pl.Utf8).alias("metric_type"),
+            pl.lit(metric.scope.value if metric.scope else None)
+            .cast(pl.Utf8)
+            .alias("scope"),
+            pl.lit(value_kind).cast(pl.Utf8).alias("_value_kind"),
+            pl.lit(info.format).cast(pl.Utf8).alias("_value_format"),
+            pl.lit(info.unit).cast(pl.Utf8).alias("_value_unit"),
         ]
 
-        # Add metadata columns
-        result_with_metadata = result.with_columns(metadata)
+        result = result.with_columns(metadata_columns)
 
-        return result_with_metadata
+        # Attach entity identifiers for within-entity metrics
+        result = self._attach_entity_identifier(result, metric)
 
-    def _format_result(self, combined: pl.LazyFrame) -> pl.LazyFrame:
-        """Format final result with proper column ordering and sorting"""
+        # Helper columns for stat struct construction
+        helper_columns = [
+            pl.lit(None, dtype=pl.Float64).alias("_value_float"),
+            pl.lit(None, dtype=pl.Int64).alias("_value_int"),
+            pl.lit(None, dtype=pl.Boolean).alias("_value_bool"),
+            pl.lit(None, dtype=pl.Utf8).alias("_value_str"),
+            pl.lit(None).alias("_value_struct"),
+        ]
+        result = result.with_columns(helper_columns)
 
-        # Determine available columns
-        try:
-            available_columns = combined.collect_schema().names()
-        except Exception:
-            available_columns = combined.limit(1).collect().columns
+        if value_kind == "int":
+            result = result.with_columns(
+                pl.col("value").cast(pl.Int64, strict=False).alias("_value_int"),
+                pl.col("value").cast(pl.Float64, strict=False).alias("_value_float"),
+                pl.col("value").cast(pl.Float64, strict=False),
+            )
+        elif value_kind == "float":
+            result = result.with_columns(
+                pl.col("value").cast(pl.Float64, strict=False).alias("_value_float"),
+                pl.col("value").cast(pl.Float64, strict=False),
+            )
+        elif value_kind == "bool":
+            result = result.with_columns(
+                pl.col("value").cast(pl.Boolean, strict=False).alias("_value_bool"),
+                pl.lit(None, dtype=pl.Float64).alias("value"),
+            )
+        elif value_kind == "string":
+            result = result.with_columns(
+                pl.col("value").cast(pl.Utf8, strict=False).alias("_value_str"),
+                pl.lit(None, dtype=pl.Float64).alias("value"),
+            )
+        elif value_kind == "struct":
+            result = result.with_columns(
+                pl.col("value").alias("_value_struct"),
+                pl.lit(None, dtype=pl.Float64).alias("value"),
+            )
+        else:
+            result = result.with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
 
-        # Extract ordered values for enum columns from definitions
-        ordered_metrics = []
-        ordered_labels = []
-        for metric in self.metrics:
-            if metric.name not in ordered_metrics:
-                ordered_metrics.append(metric.name)
-            label = metric.label
-            if label not in ordered_labels:
-                ordered_labels.append(label)
-
-        # Convert metric column to enum with definition-based ordering
-        if "metric" in available_columns and ordered_metrics:
-            metric_enum = pl.Enum(ordered_metrics)
-            combined = combined.with_columns(pl.col("metric").cast(metric_enum))
-
-        # Convert label column to enum with definition-based ordering
-        if "label" in available_columns and ordered_labels:
-            label_enum = pl.Enum(ordered_labels)
-            combined = combined.with_columns(pl.col("label").cast(label_enum))
-
-        # Convert estimate column to enum with input-based ordering
-        if "estimate" in available_columns and self.estimates:
-            # Use estimate labels for enum ordering, maintaining original estimate order
-            estimate_labels_ordered = [
-                self.estimates.get(est, est) for est in self.estimates.keys()
+        # Handle extras as structured payloads
+        if info.extras:
+            extra_cols = [f"_extra_{name}" for name in info.extras.keys()]
+            struct_fields = [
+                pl.col(col_name).alias(col_name.removeprefix("_extra_"))
+                for col_name in extra_cols
             ]
-            estimate_enum = pl.Enum(estimate_labels_ordered)
-            combined = combined.with_columns(pl.col("estimate").cast(estimate_enum))
-
-        # Define column order
-        column_order = []
-
-        # ID columns
-        for col in ["subject_id", "visit_id"]:
-            if col in available_columns:
-                column_order.append(col)
-
-        # Group columns
-        for col in self.group_by.keys():
-            if col in available_columns and col not in column_order:
-                column_order.append(col)
-
-        # Subgroup columns
-        if "subgroup_name" in available_columns:
-            column_order.extend(["subgroup_name", "subgroup_value"])
-
-        # Core result columns - only include estimate if it exists
-        core_columns = []
-        if "estimate" in available_columns:
-            core_columns.append("estimate")
-        core_columns.extend(["metric", "label", "value", "metric_type", "scope"])
-        column_order.extend(core_columns)
-
-        # Sort columns - prioritize subgroup_value first, then other columns
-        sort_cols = []
-
-        # Build sort order: subgroup_value first (when present), then others
-        if "subgroup_value" in available_columns:
-            sort_cols.append("subgroup_value")
-        if "subgroup_name" in available_columns:
-            sort_cols.append("subgroup_name")
-
-        # Add group columns
-        for col in self.group_by.keys():
-            if col in available_columns and col not in sort_cols:
-                sort_cols.append(col)
-
-        # Add other columns
-        other_cols = ["label"]
-        if "estimate" in available_columns:
-            other_cols.append("estimate")
-
-        for col in other_cols:
-            if col in available_columns and col not in sort_cols:
-                sort_cols.append(col)
-
-        # Apply sorting - subgroup_value first priority
-        result = combined
-        if sort_cols:
-            result = result.sort(sort_cols)
-
-        # Select columns in order (only those that exist)
-        existing_order = [col for col in column_order if col in available_columns]
-        result = result.select(existing_order)
+            result = result.with_columns(
+                pl.struct(struct_fields).alias("_extras_struct")
+            )
+            if value_kind != "struct":
+                result = result.with_columns(
+                    pl.struct(struct_fields).alias("_value_struct")
+                )
+            result = result.drop(extra_cols)
+        else:
+            result = result.with_columns(
+                pl.lit(None).alias("_extras_struct")
+            )
 
         return result
 
-    def _harmonize_result_schemas(
-        self, results: list[pl.LazyFrame]
-    ) -> list[pl.LazyFrame]:
-        """
-        Harmonize schemas of result DataFrames to ensure they can be concatenated.
+    def _attach_entity_identifier(
+        self, result: pl.LazyFrame, metric: MetricDefine
+    ) -> pl.LazyFrame:
+        """Attach a canonical id struct for within-entity metrics."""
 
-        This addresses the issue where different scopes produce different column structures
-        (e.g., some have 'estimate' column, others don't; some have string 'scope', others null).
-        """
-        if not results:
-            return results
+        entity_cols = self._get_entity_grouping_columns(metric.type)
+        if not entity_cols:
+            if "id" in result.collect_schema().names():
+                return result
+            return result.with_columns(pl.lit(None).alias("id"))
 
-        # Collect all unique columns across all results
-        all_columns = set()
-        schemas = []
+        schema = result.collect_schema()
+        available = set(schema.names())
+        present = [col for col in entity_cols if col in available]
 
-        for result in results:
-            try:
-                schema = result.collect_schema()
-                schemas.append(schema)
-                all_columns.update(schema.names())
-            except Exception:
-                # Fallback: collect a small sample to get schema
-                sample = result.limit(1).collect()
-                schema = sample.schema
-                schemas.append(schema)
-                all_columns.update(schema.names())
+        if not present:
+            if "id" in available:
+                return result
+            return result.with_columns(pl.lit(None).alias("id"))
 
-        # Define the target column order and types
-        target_columns = []
+        id_struct = pl.struct([pl.col(col).alias(col) for col in present]).alias("id")
+        cleaned = result.with_columns(id_struct)
 
-        # Standard columns that should always be present
-        standard_cols = [
-            "subject_id",
-            "visit_id",  # Entity columns
-        ]
-        # Add dynamic group_by columns
-        standard_cols.extend(list(self.group_by.keys()))
-        # Add remaining standard columns
-        standard_cols.extend(
-            [
-                "estimate",  # Model column (may be missing for some scopes)
-                "metric",
-                "label",
-                "value",
-                "metric_type",
-                "scope",  # Core metric columns
-                "subgroup_name",
-                "subgroup_value",  # Subgroup columns (may be missing)
-            ]
+        # Drop entity columns to avoid polluting downstream schema
+        return cleaned.drop(present)
+
+    def _format_result(self, combined: pl.LazyFrame) -> pl.LazyFrame:
+        """Minimal formatting - ARD handles all presentation concerns"""
+        return combined
+
+    # ------------------------------------------------------------------
+    # Result shaping helpers
+    # ------------------------------------------------------------------
+
+    def _collect_long_dataframe(
+        self,
+        metrics: MetricDefine | list[MetricDefine] | None = None,
+        estimates: str | list[str] | None = None,
+    ) -> pl.DataFrame:
+        """Collect evaluation results as a flat DataFrame for pivoting."""
+
+        ard = self._get_cached_evaluation(metrics=metrics, estimates=estimates)
+        lf = ard.lazy
+        schema = lf.collect_schema()
+
+        exprs: list[pl.Expr] = []
+
+        # Group columns with display labels
+        for col, label in self.group_by.items():
+            if col in schema.names():
+                exprs.append(pl.col(col).alias(label))
+
+        # Subgroup columns
+        if "subgroup_name" in schema.names():
+            exprs.append(pl.col("subgroup_name"))
+        if "subgroup_value" in schema.names():
+            exprs.append(pl.col("subgroup_value"))
+
+        # Estimate / metric / label columns
+        if "estimate" in schema.names():
+            exprs.append(pl.col("estimate").cast(pl.Utf8))
+            exprs.append(
+                pl.col("estimate")
+                .cast(pl.Utf8)
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
+                .alias("estimate_label")
+            )
+        if "metric" in schema.names():
+            exprs.append(pl.col("metric").cast(pl.Utf8))
+        if "label" in schema.names():
+            exprs.append(pl.col("label").cast(pl.Utf8))
+        else:
+            exprs.append(pl.col("metric").cast(pl.Utf8).alias("label"))
+
+        if "stat" in schema.names():
+            exprs.append(pl.col("stat"))
+            exprs.append(
+                pl.col("stat")
+                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                .alias("value")
+            )
+
+        if "id" in schema.names():
+            exprs.append(pl.col("id"))
+
+        # Scope metadata
+        if "metric_type" in schema.names():
+            exprs.append(pl.col("metric_type").cast(pl.Utf8))
+        if "scope" in schema.names():
+            exprs.append(pl.col("scope").cast(pl.Utf8))
+
+        return lf.select(exprs).collect()
+
+    def _expr_groups(self, schema: pl.Schema) -> pl.Expr:
+        group_cols = [col for col in self.group_by.keys() if col in schema.names()]
+        if not group_cols:
+            return pl.lit(None).alias("groups")
+
+        dtype = pl.Struct([pl.Field(col, schema[col]) for col in group_cols])
+        return (
+            pl.when(pl.all_horizontal([pl.col(col).is_null() for col in group_cols]))
+            .then(pl.lit(None, dtype=dtype))
+            .otherwise(pl.struct([pl.col(col).alias(col) for col in group_cols]))
+            .alias("groups")
         )
 
-        # Add columns in preferred order
-        for col in standard_cols:
-            if col in all_columns:
-                target_columns.append(col)
+    def _expr_subgroups(self, schema: pl.Schema) -> pl.Expr:
+        if (
+            not self.subgroup_by
+            or "subgroup_name" not in schema.names()
+            or "subgroup_value" not in schema.names()
+        ):
+            return pl.lit(None).alias("subgroups")
 
-        # Add any remaining columns (group_by columns that aren't standard)
-        for col in sorted(all_columns):
-            if col not in target_columns:
-                target_columns.append(col)
+        labels = list(self.subgroup_by.values())
+        dtype = pl.Struct([pl.Field(label, pl.Utf8) for label in labels])
+        fields = [
+            pl.when(pl.col("subgroup_name") == pl.lit(label))
+            .then(pl.col("subgroup_value").cast(pl.Utf8))
+            .otherwise(pl.lit(None, dtype=pl.Utf8))
+            .alias(label)
+            for label in labels
+        ]
+        return (
+            pl.when(
+                pl.col("subgroup_name").is_null() | pl.col("subgroup_value").is_null()
+            )
+            .then(pl.lit(None, dtype=dtype))
+            .otherwise(pl.struct(fields))
+            .alias("subgroups")
+        )
 
-        # Harmonize each result
-        harmonized = []
-        for i, result in enumerate(results):
-            schema = schemas[i]
+    def _expr_stat_struct(self, schema: pl.Schema) -> pl.Expr:
+        null_utf8: pl.Expr = pl.lit(None, dtype=pl.Utf8)
+        null_float: pl.Expr = pl.lit(None, dtype=pl.Float64)
+        null_int: pl.Expr = pl.lit(None, dtype=pl.Int64)
+        null_bool: pl.Expr = pl.lit(None, dtype=pl.Boolean)
+        null_struct_expr: pl.Expr = pl.lit(None, dtype=pl.Struct([]))
+        null_any: pl.Expr = pl.lit(None)
 
-            # Add missing columns with appropriate null values
-            exprs = []
-            for col in target_columns:
-                if col in schema.names():
-                    # Handle scope column type conversion
-                    if col == "scope" and schema[col] == pl.Null:
-                        exprs.append(pl.col(col).cast(pl.Utf8))
-                    else:
-                        exprs.append(pl.col(col))
-                else:
-                    # Add missing column with null value of appropriate type
-                    if col == "estimate":
-                        exprs.append(pl.lit(None, dtype=pl.Utf8).alias(col))
-                    elif col == "scope":
-                        exprs.append(pl.lit(None, dtype=pl.Utf8).alias(col))
-                    elif col in ["subject_id", "visit_id"]:
-                        exprs.append(pl.lit(None, dtype=pl.Int64).alias(col))
-                    elif col == "value":
-                        exprs.append(pl.lit(None, dtype=pl.Float64).alias(col))
-                    else:
-                        exprs.append(pl.lit(None, dtype=pl.Utf8).alias(col))
+        kind_expr: pl.Expr | None = (
+            pl.col("_value_kind") if "_value_kind" in schema.names() else None
+        )
+        format_col: pl.Expr = (
+            pl.col("_value_format") if "_value_format" in schema.names() else null_utf8
+        )
+        unit_col: pl.Expr = (
+            pl.col("_value_unit") if "_value_unit" in schema.names() else null_utf8
+        )
+        extras_col: pl.Expr = (
+            pl.col("_extras_struct")
+            if "_extras_struct" in schema.names()
+            else null_any
+        )
 
-            harmonized_result = result.select(exprs)
-            harmonized.append(harmonized_result)
+        float_value = (
+            pl.col("_value_float")
+            if "_value_float" in schema.names()
+            else null_float
+        )
+        int_value = (
+            pl.col("_value_int") if "_value_int" in schema.names() else null_int
+        )
+        bool_value = (
+            pl.col("_value_bool") if "_value_bool" in schema.names() else null_bool
+        )
+        string_value = (
+            pl.col("_value_str") if "_value_str" in schema.names() else null_utf8
+        )
+        struct_value = (
+            pl.col("_value_struct")
+            if "_value_struct" in schema.names()
+            else null_struct_expr
+        )
 
-        return harmonized
+        value_col: pl.Expr = (
+            pl.col("value") if "value" in schema.names() else null_any
+        )
+
+        if kind_expr is None:
+            inferred_type = schema.get("value")
+            if inferred_type in (pl.Float32, pl.Float64):
+                inferred_kind = "float"
+            elif inferred_type in {
+                pl.Int8,
+                pl.Int16,
+                pl.Int32,
+                pl.Int64,
+                pl.UInt8,
+                pl.UInt16,
+                pl.UInt32,
+                pl.UInt64,
+            }:
+                inferred_kind = "int"
+            elif inferred_type == pl.Boolean:
+                inferred_kind = "bool"
+            elif inferred_type == pl.Utf8:
+                inferred_kind = "string"
+            elif isinstance(inferred_type, pl.Struct):
+                inferred_kind = "struct"
+            else:
+                inferred_kind = "string"
+            kind_expr = pl.lit(inferred_kind, dtype=pl.Utf8)
+
+        type_label = pl.when(kind_expr.is_null()).then(null_utf8).otherwise(kind_expr)
+
+        return pl.struct(
+            [
+                type_label.alias("type"),
+                float_value.alias("value_float"),
+                int_value.alias("value_int"),
+                bool_value.alias("value_bool"),
+                string_value.alias("value_str"),
+                struct_value.alias("value_struct"),
+                format_col.alias("format"),
+                unit_col.alias("unit"),
+                extras_col.alias("extras"),
+            ]
+        ).alias("stat")
+
+    def _expr_context_struct(self, schema: pl.Schema) -> pl.Expr:
+        null_utf8 = pl.lit(None, dtype=pl.Utf8)
+        fields = []
+        for field in ("metric_type", "scope", "label"):
+            if field in schema.names():
+                fields.append(pl.col(field).cast(pl.Utf8).alias(field))
+            else:
+                fields.append(null_utf8.alias(field))
+        if "estimate" in schema.names():
+            fields.append(
+                pl.col("estimate")
+                .cast(pl.Utf8)
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
+                .alias("estimate_label")
+            )
+        else:
+            fields.append(null_utf8.alias("estimate_label"))
+        return pl.struct(fields).alias("context")
+
+    def _expr_estimate(self, schema: pl.Schema) -> pl.Expr:
+        null_utf8 = pl.lit(None, dtype=pl.Utf8)
+        if "estimate" not in schema.names():
+            return null_utf8.alias("estimate")
+
+        estimate_names = list(self.estimates.keys())
+        if estimate_names:
+            return (
+                pl.col("estimate")
+                .cast(pl.Utf8)
+                .replace({name: name for name in estimate_names})
+                .cast(pl.Enum(estimate_names))
+                .alias("estimate")
+            )
+
+        return pl.col("estimate").cast(pl.Utf8).alias("estimate")
+
+    def _expr_metric_enum(self) -> pl.Expr:
+        metric_categories = list(dict.fromkeys(metric.name for metric in self.metrics))
+        return (
+            pl.col("metric")
+            .cast(pl.Utf8)
+            .replace({name: name for name in metric_categories})
+            .cast(pl.Enum(metric_categories))
+            .alias("metric")
+        )
+
+    def _expr_label_enum(self) -> pl.Expr:
+        label_categories = [metric.label or metric.name for metric in self.metrics]
+        unique_labels = list(dict.fromkeys(label_categories))
+        return pl.col("label").cast(pl.Enum(unique_labels)).alias("label")
 
     # ========================================
     # INPUT PROCESSING METHODS - Pure Logic
@@ -1505,6 +1458,60 @@ class MetricEvaluator:
             return {col: col for col in (grouping or [])}
         else:
             return {}
+
+    def _compute_subgroup_categories(self) -> list[str]:
+        if not self.subgroup_by:
+            return []
+
+        categories: list[Any] = []
+        seen: set[Any] = set()
+        schema = self.df_raw.collect_schema()
+
+        for column in self.subgroup_by.keys():
+            if column not in schema.names():
+                continue
+
+            dtype = schema[column]
+
+            if isinstance(dtype, pl.Enum):
+                for value in dtype.categories.to_list():
+                    if value not in seen:
+                        seen.add(value)
+                        categories.append(value)
+                continue
+
+            ordered_values = self._collect_unique_subgroup_values(column, dtype)
+            for value in ordered_values:
+                if value in seen:
+                    continue
+                seen.add(value)
+                categories.append(value)
+
+        return categories
+
+    def _collect_unique_subgroup_values(
+        self, column: str, dtype: pl.DataType
+    ) -> list[Any]:
+        """Collect sorted unique subgroup values using lazy execution."""
+
+        expr = pl.col(column).drop_nulls()
+
+        if not dtype.is_numeric():
+            expr = expr.cast(pl.Utf8)
+
+        lazy_unique = (
+            self.df_raw.select(expr.alias(column))
+            .unique(subset=[column])
+            .sort(column)
+        )
+
+        df_unique = lazy_unique.collect(engine="streaming")
+        values = df_unique[column].to_list()
+
+        if dtype.is_numeric():
+            return values
+
+        return [str(value) for value in values]
 
     # ========================================
     # VALIDATION METHODS - Centralized Logic
@@ -1544,15 +1551,81 @@ class MetricEvaluator:
         if missing_subgroups:
             raise ValueError(f"Subgroup columns not found in data: {missing_subgroups}")
 
-    @staticmethod
-    def _validate_evaluation_params(column_order_by: str, row_order_by: str) -> None:
-        """Validate evaluation parameters"""
-        if column_order_by not in ["metrics", "estimates"]:
+        overlap = set(self.group_by.keys()) & set(self.subgroup_by.keys())
+        if overlap:
             raise ValueError(
-                f"column_order_by must be 'metrics' or 'estimates', got '{column_order_by}'"
+                "Group and subgroup columns must be distinct; found duplicates: "
+                f"{sorted(overlap)}"
             )
 
-        if row_order_by not in ["group", "subgroup"]:
-            raise ValueError(
-                f"row_order_by must be 'group' or 'subgroup', got '{row_order_by}'"
-            )
+
+class EvaluationResult(pl.DataFrame):
+    """DataFrame-like wrapper around ARD results with convenience accessors."""
+
+    def __init__(self, ard: ARD) -> None:
+        long_df = ard.to_long()
+
+        group_sort_cols = list(ard._group_fields)
+        subgroup_struct_cols = list(ard._subgroup_fields)
+        sort_cols: list[str] = []
+
+        for col in group_sort_cols:
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        for col in ("subgroup_name", "subgroup_value"):
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        for col in subgroup_struct_cols:
+            if col in long_df.columns and col not in sort_cols:
+                sort_cols.append(col)
+
+        for col in ("metric", "estimate"):
+            if col in long_df.columns:
+                sort_cols.append(col)
+
+        if sort_cols:
+            long_df = long_df.sort(sort_cols)
+
+        super().__init__(long_df)
+        self._ard = ard
+
+    def collect(self) -> pl.DataFrame:
+        """Return the canonical ARD table with struct columns."""
+        return self._ard.collect()
+
+    def to_ard(self) -> ARD:
+        """Expose the underlying ARD object."""
+        return self._ard
+
+    def to_long(self) -> pl.DataFrame:
+        """Return a copy of the flattened DataFrame representation."""
+        return pl.DataFrame(self)
+
+    def unnest(
+        self,
+        columns: str | "Selector" | Collection[str | "Selector"],
+        *args: Any,
+        **kwargs: Any,
+    ) -> pl.DataFrame:
+        """Delegate unnest operations to the structured ARD representation."""
+        df = self._ard.collect()
+        if isinstance(columns, str):
+            cols: list[str | "Selector"] = [columns]
+        elif isinstance(columns, Collection):
+            cols = list(columns)
+        else:
+            cols = [columns]
+        safe_cols: list[str | "Selector"] = []
+        schema = df.schema
+        for col in cols:
+            if isinstance(col, str):
+                dtype = schema.get(col)
+                if dtype is None or dtype == pl.Null:
+                    continue
+            safe_cols.append(col)
+
+        if safe_cols:
+            return df.unnest(safe_cols, *args, **kwargs)
+        return df

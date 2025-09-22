@@ -14,7 +14,7 @@ from typing import Self
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .metric_registry import MetricRegistry
+from .metric_registry import MetricRegistry, MetricInfo
 
 
 class MetricType(Enum):
@@ -241,7 +241,7 @@ class MetricDefine(BaseModel):
 
         return self
 
-    def compile_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def compile_expressions(self) -> tuple[list[MetricInfo], MetricInfo | None]:
         """
         Compile this metric's expressions to Polars expressions.
 
@@ -257,14 +257,15 @@ class MetricDefine(BaseModel):
 
         # For ACROSS_SAMPLE, move single expression to selection
         if self.type == MetricType.ACROSS_SAMPLE:
-            agg_exprs, sel_expr = result
-            if agg_exprs and sel_expr is None:
-                # Move aggregation to selection for ACROSS_SAMPLE
-                return [], agg_exprs[0] if len(agg_exprs) == 1 else agg_exprs[0]
+            agg_infos, sel_info = result
+            if agg_infos and sel_info is None:
+                return [], agg_infos[0]
 
         return result
 
-    def _compile_custom_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_custom_expressions(
+        self,
+    ) -> tuple[list[MetricInfo], MetricInfo | None]:
         """Compile custom metric expressions - assumes all inputs are validated"""
         within_exprs = self._resolve_within_expressions()
         across_expr = self._resolve_across_expression()
@@ -275,35 +276,35 @@ class MetricDefine(BaseModel):
 
         return within_exprs, across_expr
 
-    def _resolve_within_expressions(self) -> list[pl.Expr]:
+    def _resolve_within_expressions(self) -> list[MetricInfo]:
         """Pure implementation: resolve within expressions without validation"""
         if self.within_expr is None:
             return []
 
-        return [
-            MetricRegistry.get_metric(item) if isinstance(item, str) else item
-            for item in self.within_expr
-        ]
+        return [self._ensure_metric_info(item) for item in self.within_expr]
 
-    def _resolve_across_expression(self) -> pl.Expr | None:
+    def _resolve_across_expression(self) -> MetricInfo | None:
         """Pure implementation: resolve across expression without validation"""
         if self.across_expr is None:
             return None
 
-        return (
+        expr = (
             MetricRegistry.get_summary(self.across_expr)
             if isinstance(self.across_expr, str)
             else self.across_expr
         )
+        return self._ensure_metric_info(expr)
 
-    def _compile_builtin_expressions(self) -> tuple[list[pl.Expr], pl.Expr | None]:
+    def _compile_builtin_expressions(
+        self,
+    ) -> tuple[list[MetricInfo], MetricInfo | None]:
         """Compile built-in metric expressions"""
         parts = (self.name + ":").split(":")[:2]
         agg_name, select_name = parts[0], parts[1] if parts[1] else None
 
         # Get built-in aggregation expression (already a Polars expression)
         try:
-            agg_expr = MetricRegistry.get_metric(agg_name)
+            agg_info = MetricRegistry.get_metric(agg_name)
         except ValueError:
             raise ValueError(f"Unknown built-in metric: {agg_name}")
 
@@ -315,10 +316,19 @@ class MetricDefine(BaseModel):
             except ValueError:
                 raise ValueError(f"Unknown built-in selector: {select_name}")
             # If there's a selector, return as aggregation + selection
-            return [agg_expr], select_expr
+            return [agg_info], self._ensure_metric_info(select_expr)
 
         # No selector: this is likely ACROSS_SAMPLE, return as selection only
-        return [], agg_expr
+        return [], agg_info
+
+    def _ensure_metric_info(self, value: object) -> MetricInfo:
+        if isinstance(value, MetricInfo):
+            return value
+        if isinstance(value, str):
+            return MetricRegistry.get_metric(value)
+        if isinstance(value, pl.Expr):
+            return MetricInfo(expr=value)
+        raise TypeError(f"Unsupported metric expression type: {type(value)!r}")
 
     def get_pl_chain(self) -> str:
         """
@@ -327,7 +337,9 @@ class MetricDefine(BaseModel):
         Returns:
             String showing the LazyFrame operations that would be executed
         """
-        agg_exprs, select_expr = self.compile_expressions()
+        agg_infos, select_info = self.compile_expressions()
+        agg_exprs = [info.expr for info in agg_infos]
+        select_expr = select_info.expr if select_info is not None else None
 
         chain_lines = ["(", "  pl.LazyFrame"]
 
@@ -348,6 +360,8 @@ class MetricDefine(BaseModel):
         def format_expr(expr: object, max_width: int = 70) -> str:
             """Format a single expression with text wrapping"""
             expr_str = clean_expr(str(expr))
+            if isinstance(expr, pl.Expr) and ".alias(" not in expr_str:
+                expr_str = clean_expr(str(expr.alias("value")))
 
             # If short enough, return as-is
             if len(expr_str) <= max_width:
@@ -467,7 +481,9 @@ class MetricDefine(BaseModel):
             lines.append(f"  Scope: {self.scope.value}")
 
         try:
-            agg_exprs, select_expr = self.compile_expressions()
+            agg_infos, select_info = self.compile_expressions()
+            agg_exprs = [info.expr for info in agg_infos]
+            select_expr = select_info.expr if select_info is not None else None
 
             # Determine base metric and selector names
             if ":" in self.name:

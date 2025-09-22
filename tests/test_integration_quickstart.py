@@ -71,7 +71,10 @@ class TestQuickstartIntegration:
         framework_result = evaluator.evaluate()
 
         # Should match
-        assert abs(framework_result["value"][0] - direct_result["mae"][0]) < 1e-10
+        assert (
+            abs(framework_result["stat"][0]["value_float"] - direct_result["mae"][0])
+            < 1e-10
+        )
 
     def test_grouped_evaluation_example(self):
         """Test grouped evaluation example from quickstart.qmd."""
@@ -133,13 +136,13 @@ class TestQuickstartIntegration:
         # Compare MAE values for each treatment/model combination
         framework_a_m1 = framework_result.filter(
             (pl.col("treatment") == "A") & (pl.col("estimate") == "model1")
-        )["value"][0]
+        )["stat"][0]["value_float"]
         direct_a_m1 = direct_result.filter(pl.col("treatment") == "A")["mae_model1"][0]
         assert abs(framework_a_m1 - direct_a_m1) < 1e-10
 
         framework_a_m2 = framework_result.filter(
             (pl.col("treatment") == "A") & (pl.col("estimate") == "model2")
-        )["value"][0]
+        )["stat"][0]["value_float"]
         direct_a_m2 = direct_result.filter(pl.col("treatment") == "A")["mae_model2"][0]
         assert abs(framework_a_m2 - direct_a_m2) < 1e-10
 

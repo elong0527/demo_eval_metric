@@ -14,18 +14,23 @@ The pivot methods support:
 - **Two pivot orientations**: Group-based rows vs Model-based rows
 - **Subgroup compatibility**: Works with single and multiple subgroup variables
 - **Automatic column ordering**: Index -> Global -> Group -> Default
+- **Custom ordering controls**: `column_order_by` toggles metric-first vs. estimate-first layouts
 
 ## Basic Setup
 
 ```{python}
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, pivot_to_gt
-from data_generator import create_expanded_clinical_data
+from data_generator import generate_sample_data
 
 # Create sample dataset with comprehensive structure for pivot examples
-df = create_expanded_clinical_data()
+df = generate_sample_data(
+    n_subjects=12,
+    n_visits=3,
+    n_groups=2,
+)
 df = df.with_columns(
-    age_group = pl.col("age_group").cast(pl.Enum(["Young", "Middle", "Senior"]))
+    pl.col("age_group").cast(pl.Enum(["Young", "Middle", "Senior"]))
 )
 ```
 
@@ -47,7 +52,7 @@ evaluator_group = MetricEvaluator(
     df=df,
     metrics=mixed_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"]
 )
 
@@ -65,6 +70,21 @@ evaluator_group.pivot_by_group().\
     pipe(pivot_to_gt)
 ```
 
+### Controlling column order
+
+Specify `column_order_by` to switch whether metrics or estimate labels nest first
+in the resulting column hierarchy.
+
+```{python}
+# Make estimates the outer column level, metrics nested inside
+evaluator_group.pivot_by_group(column_order_by="estimates")
+```
+
+```{python}
+evaluator_group.pivot_by_group(column_order_by="estimates").\
+    pipe(pivot_to_gt)
+```
+
 ## Case 2: Pivot by Group (with subgroups)
 
 Adding subgroups creates separate analyses for each subgroup variable, with multiple rows in the wide format.
@@ -75,7 +95,7 @@ evaluator_group_sub = MetricEvaluator(
     df=df,
     metrics=mixed_metrics,
     ground_truth="actual",
-    estimates={"model_1": "Model 1", "model_2": "Model 2"},
+    estimates={"model1": "Model 1", "model2": "Model 2"},
     group_by={"treatment": "Treatment"},
     subgroup_by={"age_group": "Age Group", "region": "Region"}
 )
@@ -112,6 +132,11 @@ evaluator_model.pivot_by_model().\
     pipe(pivot_to_gt)
 ```
 
+```{python}
+# Make estimates the outer column level, metrics nested inside
+evaluator_model.pivot_by_model(column_order_by="estimates")
+```
+
 ## Case 4: Pivot by Model (with subgroups)
 
 ```{python}
@@ -132,9 +157,11 @@ evaluator_model_sub.pivot_by_model().\
 The pivot functionality transforms long-format results to wide-format tables:
 
 - **`pivot_by_group()`**: Creates rows for each group combination, columns for metrics/models
-- **`pivot_by_model()`**: Creates rows for each model, columns for group x metric combinations  
+- **`pivot_by_model()`**: Creates rows for each model, columns for group x metric combinations
 - **Subgroups**: Add `subgroup_by` to stratify analysis by demographic variables
 - **Automatic column ordering**: Index -> Global -> Group -> Default scope columns
+- **Configurable column nesting**: Use `column_order_by` to switch between metric-first or
+  estimate-first layouts
 
 ## Summary
 

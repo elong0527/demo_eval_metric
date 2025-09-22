@@ -1,9 +1,5 @@
 ---
 title: "MetricDefine"
-format: html
-execute:
-  echo: true
-  warning: false
 ---
 
 # MetricDefine
