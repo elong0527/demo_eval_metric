@@ -15,7 +15,8 @@ retrieving the canonical ARD representation when needed.
 
 ```{python}
 import polars as pl
-from polars_eval_metrics import MetricDefine, MetricEvaluator
+from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricRegistry
+from polars_eval_metrics.metric_registry import MetricInfo
 from data_generator import generate_sample_data
 
 # Create sample data using shared generator
@@ -78,6 +79,30 @@ The resulting `DataFrame` keeps the formatted `value` column alongside the under
 res.filter(pl.col("metric") == "n_subject").with_columns(
     pl.col("stat").struct.field("value_int").alias("subject_count")
 )
+```
+
+```{python}
+# Register a metric that surfaces a richer payload as a struct
+MetricRegistry.register_metric(
+    "mae_with_bounds",
+    MetricInfo(
+        expr=pl.struct(
+            [
+                pl.col("absolute_error").mean().alias("mean"),
+                (pl.col("absolute_error").mean() - 0.5).alias("lower"),
+                (pl.col("absolute_error").mean() + 0.5).alias("upper"),
+            ]
+        ),
+        value_kind="struct",
+    ),
+)
+
+MetricEvaluator(
+    df=data,
+    metrics=MetricDefine(name="mae_with_bounds"),
+    ground_truth="actual",
+    estimates=["model1"],
+).evaluate()["stat"].struct.field("value_struct")[0]
 ```
 
 ```{python}

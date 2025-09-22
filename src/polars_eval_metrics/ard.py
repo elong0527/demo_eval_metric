@@ -56,6 +56,9 @@ class ARD:
                 pl.Field("value_bool", pl.Boolean),
                 pl.Field("value_str", pl.Utf8),
                 pl.Field("value_json", pl.Utf8),
+                pl.Field("value_struct", pl.Struct([])),
+                pl.Field("value_vector", pl.List(pl.Float64)),
+                pl.Field("index_vector", pl.List(pl.Utf8)),
                 pl.Field("format", pl.Utf8),
                 pl.Field("unit", pl.Utf8),
             ]
@@ -165,6 +168,9 @@ class ARD:
             "value_bool": None,
             "value_str": None,
             "value_json": None,
+            "value_struct": None,
+            "value_vector": None,
+            "index_vector": None,
             "format": fmt,
             "unit": unit,
         }
@@ -174,6 +180,46 @@ class ARD:
             return stat
 
         hint = type_hint.lower() if isinstance(type_hint, str) else None
+
+        if isinstance(raw_value, Mapping):
+            # Treat dictionaries with vector payload specially
+            if "values" in raw_value or hint == "vector":
+                values_payload = raw_value.get("values")
+                if isinstance(values_payload, Iterable) and not isinstance(
+                    values_payload, (str, bytes)
+                ):
+                    stat["value_vector"] = [
+                        float(value) if isinstance(value, (int, float)) else None
+                        for value in values_payload
+                    ]
+                index_payload = raw_value.get("index")
+                stat["index_vector"] = ARD._encode_index_vector(
+                    index_payload,
+                    tuple(index_payload.keys())
+                    if isinstance(index_payload, Mapping)
+                    else None,
+                )
+                stat["type"] = "vector"
+                return stat
+
+        if hint == "vector":
+            if isinstance(raw_value, Mapping) and "values" in raw_value:
+                return ARD._populate_stat(
+                    raw_value,
+                    type_hint=None,
+                    fmt=fmt,
+                    unit=unit,
+                )
+            if isinstance(raw_value, Iterable) and not isinstance(
+                raw_value, (str, bytes)
+            ):
+                stat["value_vector"] = [
+                    float(value) if isinstance(value, (int, float)) else None
+                    for value in raw_value
+                ]
+                stat["index_vector"] = None
+                stat["type"] = "vector"
+                return stat
 
         def assign(field: str, value: Any, label: str) -> dict[str, Any]:
             stat[field] = value
@@ -188,6 +234,8 @@ class ARD:
             return assign("value_bool", bool(raw_value), "bool")
         if hint in {"string", "str", "text"}:
             return assign("value_str", str(raw_value), "string")
+        if hint == "struct":
+            return assign("value_struct", raw_value, "struct")
         if hint in {"json", "struct", "list"}:
             return assign("value_json", ARD._encode_json(raw_value), "json")
 
@@ -200,7 +248,17 @@ class ARD:
         if isinstance(raw_value, str):
             return assign("value_str", raw_value, "string")
         if isinstance(raw_value, (dict, list, tuple)):
+            if isinstance(raw_value, Mapping) and "values" in raw_value:
+                return ARD._populate_stat(
+                    raw_value,
+                    type_hint="vector",
+                    fmt=fmt,
+                    unit=unit,
+                )
             return assign("value_json", ARD._encode_json(raw_value), "json")
+
+        if isinstance(raw_value, Mapping):
+            return assign("value_struct", raw_value, "struct")
 
         return assign("value_str", str(raw_value), hint or "string")
 
@@ -210,6 +268,55 @@ class ARD:
             return json.dumps(value)
         except TypeError:
             return json.dumps(value, default=str)
+
+    @staticmethod
+    def _encode_index_vector(
+        index: Any, field_order: tuple[str, ...] | None = None
+    ) -> list[str] | None:
+        if index is None:
+            return None
+
+        if isinstance(index, Mapping):
+            keys = list(field_order or index.keys())
+            sequences: list[list[Any]] = []
+            for key in keys:
+                values = index.get(key)
+                if not isinstance(values, Iterable) or isinstance(values, (str, bytes)):
+                    return None
+                sequences.append(list(values))
+
+            encoded: list[str] = []
+            for row in zip(*sequences):
+                payload = {key: value for key, value in zip(keys, row)}
+                encoded.append(ARD._encode_json(payload))
+            return encoded or None
+
+        if isinstance(index, Iterable) and not isinstance(index, (str, bytes)):
+            encoded: list[str] = []
+            for item in index:
+                encoded.append(ARD._encode_json(item))
+            return encoded or None
+
+        return [ARD._encode_json(index)]
+
+    @staticmethod
+    def _decode_index_vector(index_vector: list[str] | None) -> list[Any] | None:
+        if index_vector is None:
+            return None
+
+        decoded: list[Any] = []
+        for item in index_vector:
+            if item is None:
+                decoded.append(None)
+                continue
+            if isinstance(item, str):
+                try:
+                    decoded.append(json.loads(item))
+                except json.JSONDecodeError:
+                    decoded.append(item)
+            else:
+                decoded.append(item)
+        return decoded or None
 
     @staticmethod
     def _extract_struct_fields(
@@ -316,13 +423,22 @@ class ARD:
                 return json.loads(encoded)
             except json.JSONDecodeError:
                 return encoded
+        if type_label == "struct":
+            return stat.get("value_struct")
+        if type_label == "vector":
+            values = stat.get("value_vector")
+            index_raw = stat.get("index_vector")
+            decoded_index = ARD._decode_index_vector(index_raw)
+            return {"values": values, "index": decoded_index}
 
         for field in [
             "value_float",
             "value_int",
             "value_bool",
             "value_str",
+            "value_vector",
             "value_json",
+            "value_struct",
         ]:
             candidate = stat.get(field)
             if candidate is not None:
@@ -331,6 +447,12 @@ class ARD:
                         return json.loads(candidate)
                     except json.JSONDecodeError:
                         return candidate
+                if field == "value_struct":
+                    return candidate
+                if field == "value_vector":
+                    index_raw = stat.get("index_vector")
+                    decoded_index = ARD._decode_index_vector(index_raw)
+                    return {"values": candidate, "index": decoded_index}
                 return candidate
 
         return None
@@ -341,8 +463,41 @@ class ARD:
             return "NULL"
 
         value = ARD._stat_value(stat)
+        type_label = (stat.get("type") or "").lower()
         fmt = stat.get("format")
         unit = stat.get("unit")
+
+        if type_label == "vector":
+            vector = value or {}
+            values = vector.get("values") or []
+            index_list = vector.get("index")
+            pairs: list[str] = []
+            if index_list:
+                for idx, val in zip(index_list, values):
+                    if isinstance(idx, Mapping):
+                        idx_repr = ", ".join(f"{k}={v}" for k, v in idx.items())
+                    else:
+                        idx_repr = "None" if idx is None else str(idx)
+                    if isinstance(val, float):
+                        val_repr = f"{val:.3f}"
+                    elif isinstance(val, int):
+                        val_repr = f"{val}"
+                    else:
+                        val_repr = "" if val is None else str(val)
+                    pairs.append(f"{idx_repr}: {val_repr}")
+            else:
+                for val in values:
+                    if isinstance(val, float):
+                        pairs.append(f"{val:.3f}")
+                    elif isinstance(val, int):
+                        pairs.append(f"{val}")
+                    else:
+                        pairs.append("" if val is None else str(val))
+
+            rendered = f"[{', '.join(pairs)}]" if pairs else "[]"
+            if unit:
+                rendered = f"{rendered} {unit}"
+            return rendered
 
         if fmt and value is not None:
             try:

@@ -7,6 +7,7 @@ from polars_eval_metrics import (
     MetricRegistry,
     MetricScope,
 )
+from polars_eval_metrics.metric_registry import MetricInfo
 
 
 def test_metric_registry_registers_custom_entries() -> None:
@@ -32,10 +33,11 @@ def test_metric_registry_registers_custom_entries() -> None:
     assert metric_name in MetricRegistry.list_metrics()
     assert summary_name in MetricRegistry.list_summaries()
 
-    metric_expr = MetricRegistry.get_metric(metric_name)
+    metric_info = MetricRegistry.get_metric(metric_name)
     summary_expr = MetricRegistry.get_summary(summary_name)
 
-    assert isinstance(metric_expr, pl.Expr)
+    assert isinstance(metric_info, MetricInfo)
+    assert isinstance(metric_info.expr, pl.Expr)
     assert isinstance(summary_expr, pl.Expr)
 
 
@@ -71,7 +73,7 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
     result = evaluator.evaluate()
     stats = result.to_ard().get_stats()
     detailed = result.collect().with_columns(
-        pl.col("stat").struct.field("value_float").alias("value_float")
+        pl.col("stat").struct.field("value_float").alias("_value_float")
     )
 
     expected_bias = (
@@ -89,10 +91,10 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
 
     actual_a = detailed.filter(pl.col("estimate") == "model_a").filter(
         pl.col("metric") == metric_name
-    )["value_float"][0]
+    )["_value_float"][0]
     actual_b = detailed.filter(pl.col("estimate") == "model_b").filter(
         pl.col("metric") == metric_name
-    )["value_float"][0]
+    )["_value_float"][0]
 
     assert actual_a == pytest.approx(expected_a)
     assert actual_b == pytest.approx(expected_b)
@@ -101,3 +103,39 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
         pl.col("context").struct.field("scope").alias("scope")
     )
     assert set(context_scope["scope"].drop_nulls().to_list()) == {"model"}
+
+
+def test_struct_metric_output(metric_sample_df: pl.DataFrame) -> None:
+    """Custom metric can surface structured payloads directly in the stat struct."""
+
+    metric_name = "mae_with_bounds"
+
+    MetricRegistry.register_metric(
+        metric_name,
+        MetricInfo(
+            expr=pl.struct(
+                [
+                    pl.col("absolute_error").mean().alias("mean"),
+                    (pl.col("absolute_error").mean() - 0.5).alias("lower"),
+                    (pl.col("absolute_error").mean() + 0.5).alias("upper"),
+                ]
+            ),
+            value_kind="struct",
+        ),
+    )
+
+    evaluator = MetricEvaluator(
+        df=metric_sample_df,
+        metrics=[MetricDefine(name=metric_name)],
+        ground_truth="actual",
+        estimates={"model_a": "Model A"},
+    )
+
+    result = evaluator.evaluate()
+    stat = result["stat"][0]
+
+    assert stat["type"] == "struct"
+    payload = stat["value_struct"]
+    assert isinstance(payload, dict)
+    assert set(payload.keys()) == {"mean", "lower", "upper"}
+    assert payload["lower"] < payload["upper"]

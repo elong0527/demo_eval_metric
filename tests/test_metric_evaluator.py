@@ -5,6 +5,8 @@ Tests cover core functionality, all scope types, grouping strategies,
 and edge cases based on examples from metric_evaluator.qmd
 """
 
+import json
+
 import pytest
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricScope, MetricType
@@ -199,10 +201,17 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 3  # 3 subjects
+        assert len(result) == 1  # bundled as vector payload
         df = result.collect()
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "within_subject")
+
+        stat = df["stat"][0]
+        assert stat["type"] == "vector"
+        values = stat["value_vector"]
+        assert values is not None and len(values) == 3
+        index_entries = [json.loads(entry) for entry in stat["index_vector"]]
+        assert [entry["subject_id"] for entry in index_entries] == [1, 2, 3]
 
     def test_across_subject(self, hierarchical_metric_df):
         """Test ACROSS_SUBJECT - within subjects then across"""
@@ -238,7 +247,16 @@ class TestMetricEvaluatorTypes:
         )
 
         result = evaluator.evaluate()
-        assert len(result) == 9  # 9 subject-visit combinations
+        assert len(result) == 1  # vector payload covers all visits
+        df = result.collect()
+        stat = df["stat"][0]
+        assert stat["type"] == "vector"
+        values = stat["value_vector"]
+        assert values is not None and len(values) == 9
+        decoded = [json.loads(entry) for entry in stat["index_vector"]]
+        assert {(entry["subject_id"], entry["visit_id"]) for entry in decoded} == {
+            (subject, visit) for subject in [1, 2, 3] for visit in [1, 2, 3]
+        }
 
     def test_across_visit(self, hierarchical_metric_df):
         """Test ACROSS_VISIT - within visits then across"""
@@ -528,8 +546,7 @@ class TestMetricEvaluatorAdvancedScenarios:
         group_counts = {
             row["groups"]["treatment"]: row["stat"]["value_int"]
             for row in group_rows.iter_rows(named=True)
-            if row["groups"] is not None
-            and row["stat"]["type"] == "int"
+            if row["groups"] is not None and row["stat"]["type"] == "int"
         }
         assert group_counts == {"A": 2, "B": 1}
 
@@ -540,7 +557,9 @@ class TestMetricEvaluatorAdvancedScenarios:
             row["stat"]["value_int"] == grouped_metric_df.height
             for row in model_rows.iter_rows(named=True)
         )
-        assert all(row["stat"]["type"] == "int" for row in model_rows.iter_rows(named=True))
+        assert all(
+            row["stat"]["type"] == "int" for row in model_rows.iter_rows(named=True)
+        )
 
         mae_rows = df.filter(pl.col("metric") == "mae")
         combinations = {

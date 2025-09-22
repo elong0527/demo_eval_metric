@@ -9,7 +9,8 @@ This module provides an extensible registry system for all types of expressions:
 Supports both global (class-level) and local (instance-level) registries.
 """
 
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any, Callable, cast
 
 # pyre-strict
 
@@ -31,6 +32,15 @@ class MetricNotFoundError(ValueError):
         )
 
 
+@dataclass(frozen=True)
+class MetricInfo:
+    expr: pl.Expr
+    value_kind: str = "float"
+    format: str | None = None
+    unit: str | None = None
+    extras: dict[str, pl.Expr] | None = None
+
+
 class MetricRegistry:
     """
     Unified registry for all expression types used in metric evaluation.
@@ -41,7 +51,7 @@ class MetricRegistry:
 
     # Class-level registries
     _errors: dict[str, Callable[..., pl.Expr]] = {}
-    _metrics: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
+    _metrics: dict[str, MetricInfo | Callable[[], MetricInfo]] = {}
     _summaries: dict[str, pl.Expr | Callable[[], pl.Expr]] = {}
 
     # ============ Error Expression Methods ============
@@ -131,19 +141,66 @@ class MetricRegistry:
     # ============ Metric Expression Methods ============
 
     @classmethod
-    def register_metric(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
+    def register_metric(
+        cls,
+        name: str,
+        expr: pl.Expr | Callable[[], pl.Expr] | MetricInfo | Callable[[], MetricInfo],
+        *,
+        value_kind: str | None = None,
+        format: str | None = None,
+        unit: str | None = None,
+        extras: dict[str, pl.Expr] | None = None,
+    ) -> None:
         """
         Register a custom metric expression.
 
         Args:
             name: Name of the metric (e.g., 'mae', 'custom_accuracy')
-            expr: Polars expression or callable that returns a Polars expression
-                  The expression should typically reference error columns and produce a 'value' alias
+            expr: Polars expression/MetricInfo or callable returning one.
+                  Expressions reference error columns and define the aggregated result.
+            value_kind: Optional type hint (``float``, ``int``, ``struct`` ...) used to
+                populate the ``stat`` struct. Defaults to ``float``.
+            format: Optional string formatter applied when rendering ``value``.
+            unit: Optional unit label recorded in the ``stat`` struct.
+            extras: Optional mapping of additional aggregations (each expression should be
+                compatible with the aggregation context). Extras are surfaced through
+                ``stat['value_struct']``.
 
         Example:
             MetricRegistry.register_metric('mae', pl.col('absolute_error').mean().alias('value'))
         """
-        cls._metrics[name] = expr
+        if isinstance(expr, MetricInfo):
+            cls._metrics[name] = expr
+            return
+
+        if callable(expr):
+            callable_expr: Callable[[], MetricInfo | pl.Expr] = cast(
+                Callable[[], MetricInfo | pl.Expr], expr
+            )
+
+            def factory() -> MetricInfo:
+                result = callable_expr()
+                if isinstance(result, MetricInfo):
+                    return result
+                return MetricInfo(
+                    expr=result,
+                    value_kind=value_kind or "float",
+                    format=format,
+                    unit=unit,
+                    extras=extras,
+                )
+
+            cls._metrics[name] = factory
+            return
+
+        info = MetricInfo(
+            expr=expr,
+            value_kind=value_kind or "float",
+            format=format,
+            unit=unit,
+            extras=extras,
+        )
+        cls._metrics[name] = info
 
     @classmethod
     def register_summary(cls, name: str, expr: pl.Expr | Callable[[], pl.Expr]) -> None:
@@ -161,7 +218,7 @@ class MetricRegistry:
         cls._summaries[name] = expr
 
     @classmethod
-    def get_metric(cls, name: str) -> pl.Expr:
+    def get_metric(cls, name: str) -> MetricInfo:
         """
         Get a metric expression by name.
 
@@ -178,9 +235,11 @@ class MetricRegistry:
             raise MetricNotFoundError(name, list(cls._metrics.keys()), "metric")
 
         expr = cls._metrics[name]
-        # If it's a callable, call it to get the expression
+        # If it's a callable, call it to get the expression/info
         if callable(expr):
-            return expr()
+            expr = expr()
+        if not isinstance(expr, MetricInfo):
+            expr = MetricInfo(expr=expr)
         return expr
 
     @classmethod
@@ -277,39 +336,35 @@ MetricRegistry.register_error("percent_error", _percent_error)
 MetricRegistry.register_error("absolute_percent_error", _absolute_percent_error)
 
 # Register built-in metrics
-MetricRegistry.register_metric("me", pl.col("error").mean().alias("value"))
+MetricRegistry.register_metric("me", pl.col("error").mean())
 
-MetricRegistry.register_metric("mae", pl.col("absolute_error").mean().alias("value"))
-MetricRegistry.register_metric("mse", pl.col("squared_error").mean().alias("value"))
-MetricRegistry.register_metric(
-    "rmse", pl.col("squared_error").mean().sqrt().alias("value")
-)
-MetricRegistry.register_metric("mpe", pl.col("percent_error").mean().alias("value"))
-MetricRegistry.register_metric(
-    "mape", pl.col("absolute_percent_error").mean().alias("value")
-)
+MetricRegistry.register_metric("mae", pl.col("absolute_error").mean())
+MetricRegistry.register_metric("mse", pl.col("squared_error").mean())
+MetricRegistry.register_metric("rmse", pl.col("squared_error").mean().sqrt())
+MetricRegistry.register_metric("mpe", pl.col("percent_error").mean())
+MetricRegistry.register_metric("mape", pl.col("absolute_percent_error").mean())
 
 MetricRegistry.register_metric(
     "n_subject",
-    pl.col("subject_id").n_unique().cast(pl.Int64).alias("value"),
+    pl.col("subject_id").n_unique(),
+    value_kind="int",
 )
 MetricRegistry.register_metric(
     "n_visit",
-    pl.struct(["subject_id", "visit_id"]).n_unique().cast(pl.Int64).alias("value"),
+    pl.struct(["subject_id", "visit_id"]).n_unique(),
+    value_kind="int",
 )
 MetricRegistry.register_metric(
     "n_sample",
-    pl.col("sample_index").n_unique().cast(pl.Int64).alias("value"),
+    pl.col("sample_index").n_unique(),
+    value_kind="int",
 )
 
 # Metrics for subjects with data (non-null ground truth or estimates)
 MetricRegistry.register_metric(
     "n_subject_with_data",
-    pl.col("subject_id")
-    .filter(pl.col("error").is_not_null())
-    .n_unique()
-    .cast(pl.Int64)
-    .alias("value"),
+    pl.col("subject_id").filter(pl.col("error").is_not_null()).n_unique(),
+    value_kind="int",
 )
 MetricRegistry.register_metric(
     "pct_subject_with_data",
@@ -325,9 +380,8 @@ MetricRegistry.register_metric(
     "n_visit_with_data",
     pl.struct(["subject_id", "visit_id"])
     .filter(pl.col("error").is_not_null())
-    .n_unique()
-    .cast(pl.Int64)
-    .alias("value"),
+    .n_unique(),
+    value_kind="int",
 )
 MetricRegistry.register_metric(
     "pct_visit_with_data",
@@ -343,7 +397,8 @@ MetricRegistry.register_metric(
 # Metrics for samples with data
 MetricRegistry.register_metric(
     "n_sample_with_data",
-    pl.col("error").is_not_null().sum().cast(pl.Int64).alias("value"),
+    pl.col("error").is_not_null().sum(),
+    value_kind="int",
 )
 MetricRegistry.register_metric(
     "pct_sample_with_data", (pl.col("error").is_not_null().mean() * 100).alias("value")
