@@ -368,43 +368,83 @@ class ARD:
         preview = self._lf.limit(10).collect()
         total = self._lf.select(pl.len()).collect().item()
 
-        lines = [
-            f"ARD: {total} results",
-            "Schema: groups | subgroups | estimate | metric | stat | context",
-        ]
+        # Determine schema display focusing on struct contents
+        schema_columns: list[str] = []
+        if "groups" in preview.columns:
+            if self._group_fields:
+                schema_columns.extend(self._group_fields)
+            else:
+                schema_columns.append("groups")
+        if "subgroups" in preview.columns:
+            if self._subgroup_fields:
+                schema_columns.extend(self._subgroup_fields)
+            else:
+                schema_columns.append("subgroups")
+        if "estimate" in preview.columns:
+            schema_columns.append("estimate")
+        if "metric" in preview.columns:
+            schema_columns.append("metric")
+        schema_columns.append("value")
+
+        lines = [f"ARD: {total} results", f"Schema: {' | '.join(schema_columns)}"]
 
         if total:
-            display = preview.select(
-                [
-                    pl.when(pl.col("groups").is_null())
-                    .then(pl.lit("--"))
-                    .otherwise(
-                        pl.col("groups").map_elements(
-                            lambda g: ", ".join(
-                                f"{k}={v}" for k, v in (g or {}).items()
-                            ),
-                            return_dtype=pl.Utf8,
+            display_exprs: list[pl.Expr] = []
+
+            if "groups" in preview.columns:
+                if self._group_fields:
+                    for field in self._group_fields:
+                        display_exprs.append(
+                            pl.col("groups").struct.field(field).alias(field)
                         )
-                    )
-                    .alias("groups"),
-                    pl.when(pl.col("subgroups").is_null())
-                    .then(pl.lit("--"))
-                    .otherwise(
-                        pl.col("subgroups").map_elements(
-                            lambda g: ", ".join(
-                                f"{k}={v}" for k, v in (g or {}).items()
-                            ),
-                            return_dtype=pl.Utf8,
+                else:
+                    display_exprs.append(
+                        pl.when(pl.col("groups").is_null())
+                        .then(pl.lit("--"))
+                        .otherwise(
+                            pl.col("groups").map_elements(
+                                lambda g: ", ".join(
+                                    f"{k}={v}" for k, v in (g or {}).items()
+                                ),
+                                return_dtype=pl.Utf8,
+                            )
                         )
+                        .alias("groups")
                     )
-                    .alias("subgroups"),
-                    pl.col("estimate").fill_null("--"),
-                    pl.col("metric"),
-                    pl.col("stat")
-                    .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
-                    .alias("value"),
-                ]
+
+            if "subgroups" in preview.columns:
+                if self._subgroup_fields:
+                    for field in self._subgroup_fields:
+                        display_exprs.append(
+                            pl.col("subgroups").struct.field(field).alias(field)
+                        )
+                else:
+                    display_exprs.append(
+                        pl.when(pl.col("subgroups").is_null())
+                        .then(pl.lit("--"))
+                        .otherwise(
+                            pl.col("subgroups").map_elements(
+                                lambda g: ", ".join(
+                                    f"{k}={v}" for k, v in (g or {}).items()
+                                ),
+                                return_dtype=pl.Utf8,
+                            )
+                        )
+                        .alias("subgroups")
+                    )
+
+            if "estimate" in preview.columns:
+                display_exprs.append(pl.col("estimate").fill_null("--").alias("estimate"))
+            if "metric" in preview.columns:
+                display_exprs.append(pl.col("metric"))
+
+            display_exprs.append(
+                pl.col("stat")
+                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                .alias("value")
             )
+
+            display = preview.select(display_exprs)
             lines.append(str(display))
             if total > 10:
                 lines.append(f"... and {total - 10} more rows")

@@ -15,7 +15,7 @@
 ## Coding Style & Naming Conventions
 - Target Python 3.11 syntax with four-space indentation and explicit type hints using `|` unions and `dict[str, T]` aliases.
 - Keep the codebase ASCII-only and rely on Ruff for linting; avoid decorative comments and prefer descriptive names over abbreviations.
-- Compose Polars logic with vectorized expressions (`pl.col`, `cs.numeric()`) and helper composition—never row-by-row loops or in-place mutation.
+- Compose Polars logic with vectorized expressions (`pl.col`, `cs.numeric()`) and helper composition-never row-by-row loops or in-place mutation.
 
 ## Testing Guidelines
 - Pytest powers the suite; name files and functions `test_*` and place new coverage under `tests/`.
@@ -24,7 +24,7 @@
 
 ## Commit & Pull Request Guidelines
 - Follow the local history of short, present-tense summaries (e.g., `refactor using ARD class`) and stage only intentional changes.
-- Keep the main branch clean—no ad-hoc branches or uncommitted work when pushing.
+- Keep the main branch clean-no ad-hoc branches or uncommitted work when pushing.
 - PRs should link related issues, summarise module impacts, list tests or builds run, and call out doc updates.
 
 ## Documentation & Quarto
