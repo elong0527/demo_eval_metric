@@ -394,6 +394,9 @@ class MetricEvaluator:
             ]
         )
 
+        if "_value_kind" in schema.names():
+            ard_frame = ard_frame.drop("_value_kind")
+
         return ARD(ard_frame)
 
     def pivot_by_group(
@@ -798,7 +801,12 @@ class MetricEvaluator:
         if "estimate" in default_pivot.columns:
             default_pivot = default_pivot.with_columns(
                 pl.col("estimate")
-                .replace(self._estimate_label_lookup)
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
                 .alias("estimate_label")
             )
 
@@ -985,8 +993,13 @@ class MetricEvaluator:
             .with_columns(
                 [
                     pl.col("estimate_name").alias("estimate"),
-                    pl.col("estimate_name")
-                    .replace(self._estimate_label_lookup)
+                    pl.col("estimate_name").cast(pl.Utf8)
+                    .map_elements(
+                        lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                            val, val
+                        ),
+                        return_dtype=pl.Utf8,
+                    )
                     .alias("estimate_label"),
                 ]
             )
@@ -1030,12 +1043,11 @@ class MetricEvaluator:
                     f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
                 )
 
+            value_expr = across_expr.alias("value")
             if group_cols:
-                result = df_filtered.group_by(group_cols).agg(
-                    across_expr.alias("value").cast(pl.Float64)
-                )
+                result = df_filtered.group_by(group_cols).agg(value_expr)
             else:
-                result = df_filtered.select(across_expr.alias("value").cast(pl.Float64))
+                result = df_filtered.select(value_expr)
 
         elif metric.type in [MetricType.WITHIN_SUBJECT, MetricType.WITHIN_VISIT]:
             # Within-entity aggregation
@@ -1043,9 +1055,9 @@ class MetricEvaluator:
 
             # Use the appropriate expression for within-entity aggregation
             if within_exprs:
-                agg_expr = within_exprs[0].alias("value").cast(pl.Float64)
+                agg_expr = within_exprs[0].alias("value")
             elif across_expr is not None:
-                agg_expr = across_expr.alias("value").cast(pl.Float64)
+                agg_expr = across_expr.alias("value")
             else:
                 raise ValueError(f"No valid expression for metric {metric.name}")
 
@@ -1070,12 +1082,10 @@ class MetricEvaluator:
             # Second level: across entities
             if across_expr is not None and within_exprs:
                 # True two-level case - use the across_expr directly since we named the column 'value'
-                second_level_expr = across_expr.alias("value").cast(pl.Float64)
+                second_level_expr = across_expr.alias("value")
             else:
                 # Default aggregation across entities when no across_expr specified
-                second_level_expr = (
-                    pl.col("value").mean().alias("value").cast(pl.Float64)
-                )
+                second_level_expr = pl.col("value").mean().alias("value")
 
             if group_cols:
                 result = intermediate.group_by(group_cols).agg(second_level_expr)
@@ -1158,6 +1168,34 @@ class MetricEvaluator:
     ) -> pl.LazyFrame:
         """Add metadata columns to vectorized result"""
 
+        schema = result.collect_schema()
+        value_dtype = schema.get("value")
+
+        numeric_int_types = {
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+        }
+        numeric_float_types = {pl.Float32, pl.Float64}
+
+        if value_dtype in numeric_int_types:
+            value_kind = "int"
+            result = result.with_columns(pl.col("value").cast(pl.Float64))
+        elif value_dtype in numeric_float_types:
+            value_kind = "float"
+            result = result.with_columns(pl.col("value").cast(pl.Float64))
+        elif value_dtype == pl.Boolean:
+            value_kind = "bool"
+        elif value_dtype == pl.Utf8:
+            value_kind = "string"
+        else:
+            value_kind = "json"
+
         metadata = [
             pl.lit(metric.name).cast(pl.Utf8).alias("metric"),
             pl.lit(metric.label).cast(pl.Utf8).alias("label"),
@@ -1165,6 +1203,7 @@ class MetricEvaluator:
             pl.lit(metric.scope.value if metric.scope else None)
             .cast(pl.Utf8)
             .alias("scope"),
+            pl.lit(value_kind).cast(pl.Utf8).alias("_value_kind"),
         ]
 
         # Add metadata columns
@@ -1208,9 +1247,13 @@ class MetricEvaluator:
         if "estimate" in schema.names():
             exprs.append(pl.col("estimate").cast(pl.Utf8))
             exprs.append(
-                pl.col("estimate")
-                .cast(pl.Utf8)
-                .replace(self._estimate_label_lookup)
+                pl.col("estimate").cast(pl.Utf8)
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
                 .alias("estimate_label")
             )
         if "metric" in schema.names():
@@ -1220,11 +1263,25 @@ class MetricEvaluator:
         else:
             exprs.append(pl.col("metric").cast(pl.Utf8).alias("label"))
 
-        # Numeric value
-        if "value" in schema.names():
-            exprs.append(pl.col("value").cast(pl.Float64))
-        else:
-            exprs.append(pl.col("stat").struct.field("value_float").alias("value"))
+        # Formatted value and raw components sourced from ARD stat struct
+        if "stat" in schema.names():
+            exprs.append(pl.col("stat"))
+            exprs.append(
+                pl.col("stat")
+                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                .alias("value")
+            )
+        elif "value" in schema.names():
+            # Legacy fallback when stat struct is unavailable
+            exprs.append(
+                pl.col("value")
+                .cast(pl.Float64)
+                .map_elements(
+                    lambda v: "NULL" if v is None else f"{float(v):.1f}",
+                    return_dtype=pl.Utf8,
+                )
+                .alias("value")
+            )
 
         # Scope metadata
         if "metric_type" in schema.names():
@@ -1280,8 +1337,9 @@ class MetricEvaluator:
         null_float = pl.lit(None, dtype=pl.Float64)
         null_int = pl.lit(None, dtype=pl.Int64)
         null_bool = pl.lit(None, dtype=pl.Boolean)
+        kind_col = "_value_kind" if "_value_kind" in schema.names() else None
 
-        if value_dtype in (pl.Float32, pl.Float64):
+        def float_struct() -> pl.Expr:
             return pl.struct(
                 [
                     pl.when(value_col.is_null())
@@ -1296,7 +1354,94 @@ class MetricEvaluator:
                     null_utf8.alias("format"),
                     null_utf8.alias("unit"),
                 ]
+            )
+
+        def int_struct() -> pl.Expr:
+            return pl.struct(
+                [
+                    pl.when(value_col.is_null())
+                    .then(null_utf8)
+                    .otherwise(pl.lit("int"))
+                    .alias("type"),
+                    null_float.alias("value_float"),
+                    value_col.round(0).cast(pl.Int64).alias("value_int"),
+                    null_bool.alias("value_bool"),
+                    null_utf8.alias("value_str"),
+                    null_utf8.alias("value_json"),
+                    null_utf8.alias("format"),
+                    null_utf8.alias("unit"),
+                ]
+            )
+
+        def bool_struct() -> pl.Expr:
+            return pl.struct(
+                [
+                    pl.when(value_col.is_null())
+                    .then(null_utf8)
+                    .otherwise(pl.lit("bool"))
+                    .alias("type"),
+                    null_float.alias("value_float"),
+                    null_int.alias("value_int"),
+                    value_col.cast(pl.Boolean).alias("value_bool"),
+                    null_utf8.alias("value_str"),
+                    null_utf8.alias("value_json"),
+                    null_utf8.alias("format"),
+                    null_utf8.alias("unit"),
+                ]
+            )
+
+        def string_struct() -> pl.Expr:
+            return pl.struct(
+                [
+                    pl.when(value_col.is_null())
+                    .then(null_utf8)
+                    .otherwise(pl.lit("string"))
+                    .alias("type"),
+                    null_float.alias("value_float"),
+                    null_int.alias("value_int"),
+                    null_bool.alias("value_bool"),
+                    value_col.cast(pl.Utf8).alias("value_str"),
+                    null_utf8.alias("value_json"),
+                    null_utf8.alias("format"),
+                    null_utf8.alias("unit"),
+                ]
+            )
+
+        def json_struct() -> pl.Expr:
+            return pl.struct(
+                [
+                    pl.when(value_col.is_null())
+                    .then(null_utf8)
+                    .otherwise(pl.lit("json"))
+                    .alias("type"),
+                    null_float.alias("value_float"),
+                    null_int.alias("value_int"),
+                    null_bool.alias("value_bool"),
+                    null_utf8.alias("value_str"),
+                    value_col.map_elements(ARD._encode_json, return_dtype=pl.Utf8).alias(
+                        "value_json"
+                    ),
+                    null_utf8.alias("format"),
+                    null_utf8.alias("unit"),
+                ]
+            )
+
+        if kind_col is not None:
+            kind_expr = pl.col(kind_col)
+            return (
+                pl.when(kind_expr == "float")
+                .then(float_struct())
+                .when(kind_expr == "int")
+                .then(int_struct())
+                .when(kind_expr == "bool")
+                .then(bool_struct())
+                .when(kind_expr == "string")
+                .then(string_struct())
+                .otherwise(json_struct())
             ).alias("stat")
+
+        if value_dtype in (pl.Float32, pl.Float64):
+            return float_struct().alias("stat")
 
         if value_dtype in {
             pl.Int8,
@@ -1308,73 +1453,15 @@ class MetricEvaluator:
             pl.UInt32,
             pl.UInt64,
         }:
-            return pl.struct(
-                [
-                    pl.when(value_col.is_null())
-                    .then(null_utf8)
-                    .otherwise(pl.lit("int"))
-                    .alias("type"),
-                    null_float.alias("value_float"),
-                    value_col.cast(pl.Int64).alias("value_int"),
-                    null_bool.alias("value_bool"),
-                    null_utf8.alias("value_str"),
-                    null_utf8.alias("value_json"),
-                    null_utf8.alias("format"),
-                    null_utf8.alias("unit"),
-                ]
-            ).alias("stat")
+            return int_struct().alias("stat")
 
         if value_dtype == pl.Boolean:
-            return pl.struct(
-                [
-                    pl.when(value_col.is_null())
-                    .then(null_utf8)
-                    .otherwise(pl.lit("bool"))
-                    .alias("type"),
-                    null_float.alias("value_float"),
-                    null_int.alias("value_int"),
-                    value_col.alias("value_bool"),
-                    null_utf8.alias("value_str"),
-                    null_utf8.alias("value_json"),
-                    null_utf8.alias("format"),
-                    null_utf8.alias("unit"),
-                ]
-            ).alias("stat")
+            return bool_struct().alias("stat")
 
         if value_dtype == pl.Utf8:
-            return pl.struct(
-                [
-                    pl.when(value_col.is_null())
-                    .then(null_utf8)
-                    .otherwise(pl.lit("string"))
-                    .alias("type"),
-                    null_float.alias("value_float"),
-                    null_int.alias("value_int"),
-                    null_bool.alias("value_bool"),
-                    value_col.alias("value_str"),
-                    null_utf8.alias("value_json"),
-                    null_utf8.alias("format"),
-                    null_utf8.alias("unit"),
-                ]
-            ).alias("stat")
+            return string_struct().alias("stat")
 
-        return pl.struct(
-            [
-                pl.when(value_col.is_null())
-                .then(null_utf8)
-                .otherwise(pl.lit("json"))
-                .alias("type"),
-                null_float.alias("value_float"),
-                null_int.alias("value_int"),
-                null_bool.alias("value_bool"),
-                null_utf8.alias("value_str"),
-                value_col.map_elements(ARD._encode_json, return_dtype=pl.Utf8).alias(
-                    "value_json"
-                ),
-                null_utf8.alias("format"),
-                null_utf8.alias("unit"),
-            ]
-        ).alias("stat")
+        return json_struct().alias("stat")
 
     def _expr_context_struct(self, schema: pl.Schema) -> pl.Expr:
         null_utf8 = pl.lit(None, dtype=pl.Utf8)
@@ -1386,9 +1473,13 @@ class MetricEvaluator:
                 fields.append(null_utf8.alias(field))
         if "estimate" in schema.names():
             fields.append(
-                pl.col("estimate")
-                .cast(pl.Utf8)
-                .replace(self._estimate_label_lookup)
+                pl.col("estimate").cast(pl.Utf8)
+                .map_elements(
+                    lambda val, mapping=self._estimate_label_lookup: mapping.get(
+                        val, val
+                    ),
+                    return_dtype=pl.Utf8,
+                )
                 .alias("estimate_label")
             )
         else:
@@ -1571,10 +1662,6 @@ class EvaluationResult(pl.DataFrame):
     def collect(self) -> pl.DataFrame:
         """Return the canonical ARD table with struct columns."""
         return self._ard.collect()
-
-    def get_stats(self, include_metadata: bool = False) -> pl.DataFrame:
-        """Delegate to the underlying ARD ``get_stats`` helper."""
-        return self._ard.get_stats(include_metadata=include_metadata)
 
     def to_ard(self) -> ARD:
         """Expose the underlying ARD object."""

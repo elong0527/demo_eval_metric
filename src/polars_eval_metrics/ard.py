@@ -350,7 +350,7 @@ class ARD:
             except Exception:
                 rendered = str(value)
         elif isinstance(value, float):
-            rendered = f"{value:.4g}"
+            rendered = f"{value:.1f}"
         elif isinstance(value, int):
             rendered = f"{value:,}"
         elif isinstance(value, (dict, list, tuple)):
@@ -675,12 +675,10 @@ class ARD:
         # Handle stat column specially to extract value
         if "stat" in lf.collect_schema().names():
             lf = lf.with_columns(
-                [
-                    pl.col("stat")
-                    .map_elements(ARD._stat_value, return_dtype=pl.Float64)
-                    .alias("value")
-                ]
-            ).drop("stat")
+                pl.col("stat")
+                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                .alias("value")
+            )
 
         return lf.collect()
 

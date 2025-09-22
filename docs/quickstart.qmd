@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 
    ```{python}
 # Import the package
-   import polars as pl
+import polars as pl
 
 from polars_eval_metrics import MetricDefine, MetricEvaluator
 ```

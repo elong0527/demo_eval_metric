@@ -8,18 +8,18 @@ The `MetricEvaluator` class is the main evaluation engine that executes metric c
 It handles hierarchical aggregations, grouping, filtering, and manages the entire evaluation pipeline using Polars' lazy evaluation for optimal performance.
 
 `MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
-Polars `DataFrame` while exposing helpers (`collect()`, `get_stats()`,
-`to_ard()`) for retrieving the canonical ARD representation when needed.
+Polars `DataFrame` while exposing helpers (`collect()`, `to_ard()`) for
+retrieving the canonical ARD representation when needed.
 
 # Example Data
 
 ```{python}
 import polars as pl
-from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricType
-from data_generator import create_clinical_trial_data
+from polars_eval_metrics import MetricDefine, MetricEvaluator
+from data_generator import generate_sample_data
 
 # Create sample data using shared generator
-data = create_clinical_trial_data()
+data = generate_sample_data(n_subjects=6, n_visits=3, n_groups=2)
 
 data
 ```
@@ -40,7 +40,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -63,12 +63,21 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"]
 )
 
 res = evaluator.evaluate()
 res
+```
+
+The resulting `DataFrame` keeps the formatted `value` column alongside the underlying `stat` struct, so you can render metrics directly while still accessing typed values through `res["stat"]` when needed.
+
+```{python}
+# Grab integer counts for the subject metrics
+res.filter(pl.col("metric") == "n_subject").with_columns(
+    pl.col("stat").struct.field("value_int").alias("subject_count")
+)
 ```
 
 ```{python}
@@ -108,7 +117,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=within_subject_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -128,7 +137,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=across_subject_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -145,7 +154,7 @@ evaluator = MetricEvaluator(
         across_subject_metrics
     ],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -166,7 +175,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=within_visit_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -177,7 +186,7 @@ evaluator.evaluate()
 ```{python}
 across_visit_metrics = MetricDefine(
         name="mae:mean", 
-        type=MetricType.ACROSS_VISIT,
+        type="across_visit",
         label="Mean of Visit MAEs"
     )
 
@@ -185,7 +194,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=across_visit_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -201,7 +210,7 @@ evaluator = MetricEvaluator(
         across_visit_metrics,
     ],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -225,7 +234,7 @@ evaluator = MetricEvaluator(
         global_scope_metrics,
     ],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
 )
 
 evaluator.evaluate()
@@ -245,7 +254,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[group_scope_metrics],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"],
 )
 
@@ -266,7 +275,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[model_scope_metrics],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"],
 )
 
@@ -283,7 +292,7 @@ evaluator = MetricEvaluator(
     df=data,
     metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"],
 )
 
@@ -293,14 +302,14 @@ evaluator.evaluate()
 ## Subgroup Analysis
 
 ```{python}
-# Evaluate with subgroup stratification (age_group and sex already in data)
+# Evaluate with subgroup stratification (gender and race already in data)
 evaluator = MetricEvaluator(
     df=data,
     metrics=[MetricDefine(name="mae")],
     ground_truth="actual",
-    estimates=["model_1"],
+    estimates=["model1"],
     group_by=["treatment"],
-    subgroup_by=["age_group", "sex"],
+    subgroup_by=["gender", "race"],
 )
 
 evaluator.evaluate()

@@ -67,14 +67,15 @@ results = evaluator.evaluate()
 print(results)  # EvaluationResult (subclass of polars.DataFrame)
 
 # Access structured helpers when needed
-stats = results.get_stats()
 ard = results.to_ard()
+stats = ard.get_stats()
 ```
 
 `MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
-Polars `DataFrame` but keeps a handle on the underlying ARD object. Use the
-helper methods (`collect()`, `get_stats()`, `to_ard()`, or `to_long()`) when you
-need either the canonical struct columns or a plain long-format table.
+Polars `DataFrame` but keeps a handle on the underlying ARD object. Use
+`collect()`, `to_ard()`, or `to_long()` when you need either the canonical
+struct columns or a plain long-format table. Metric summaries remain available
+through the ARD helper: `results.to_ard().get_stats()`.
 
 ## Code Coverage
 

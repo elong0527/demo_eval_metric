@@ -69,7 +69,7 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
     )
 
     result = evaluator.evaluate()
-    stats = result.get_stats()
+    stats = result.to_ard().get_stats()
     detailed = result.collect().with_columns(
         pl.col("stat").struct.field("value_float").alias("value_float")
     )

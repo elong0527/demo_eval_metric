@@ -44,7 +44,7 @@ class TestMetricEvaluatorBasic:
         assert set(df["estimate"].unique()) == {"model_a", "model_b"}
 
         # Check values are reasonable (non-negative, finite) using get_stats
-        stats_df = result.get_stats()
+        stats_df = result.to_ard().get_stats()
         values = stats_df["value"].to_list()
         assert all(v >= 0 for v in values if v is not None)
         assert all(
@@ -89,7 +89,7 @@ class TestMetricEvaluatorScopes:
         df = result.collect()
         assert df["estimate"][0] is None  # No estimate value for global
         assert df["groups"][0] is None  # Groups ignored for global scope
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert stats["value"][0] == 3.0  # 3 unique subjects
 
     def test_model_scope(self, grouped_metric_df):
@@ -111,7 +111,7 @@ class TestMetricEvaluatorScopes:
         df = result.collect()
         assert set(df["estimate"].unique()) == {"model_a", "model_b"}
         assert all(df["groups"].is_null())  # Groups ignored for model scope
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert all(v == 6.0 for v in stats["value"])  # 6 samples each model
 
     def test_group_scope(self, grouped_metric_df):
@@ -141,9 +141,9 @@ class TestMetricEvaluatorScopes:
             groups = row["groups"]
             stat = row["stat"]
             if groups and groups["treatment"] == "A":
-                assert stat["value_float"] == 2.0  # 2 subjects in A
+                assert stat["value_int"] == 2  # 2 subjects in A
             elif groups and groups["treatment"] == "B":
-                assert stat["value_float"] == 1.0  # 1 subject in B
+                assert stat["value_int"] == 1  # 1 subject in B
 
     def test_default_scope(self, grouped_metric_df):
         """Test default scope - per model-group combination"""
@@ -223,7 +223,7 @@ class TestMetricEvaluatorTypes:
         df = result.collect()
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "across_subject")
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_within_visit(self, hierarchical_metric_df):
@@ -260,7 +260,7 @@ class TestMetricEvaluatorTypes:
         df = result.collect()
         context = df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "across_visit")
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_across_visit_custom_across_expr(self, hierarchical_metric_df):
@@ -311,7 +311,7 @@ class TestMetricEvaluatorTypes:
         assert set(df["metric"]) == {"mae_count", "mae_min", "mae_max", "mae_sum"}
 
         # Check count equals number of visits (9 = 3 subjects x 3 visits)
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         count_result = stats.filter(pl.col("metric") == "mae_count")
         assert count_result["value"][0] == 9.0
 
@@ -369,7 +369,7 @@ class TestMetricEvaluatorTypes:
         }
 
         # Check count equals number of subjects (3)
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         count_result = stats.filter(pl.col("metric") == "mae_count_subj")
         assert count_result["value"][0] == 3.0
 
@@ -514,6 +514,8 @@ class TestMetricEvaluatorAdvancedScenarios:
         assert global_rows.height == 1
         assert global_rows["estimate"][0] is None
         assert global_rows["groups"][0] is None
+        assert global_rows["stat"][0]["value_int"] == grouped_metric_df.height
+        assert global_rows["stat"][0]["type"] == "int"
 
         group_rows = df.filter(pl.col("metric") == "n_subject")
         assert all(value is None for value in group_rows["estimate"].to_list())
@@ -523,10 +525,22 @@ class TestMetricEvaluatorAdvancedScenarios:
             if group is not None
         }
         assert treatments == {"A", "B"}
+        group_counts = {
+            row["groups"]["treatment"]: row["stat"]["value_int"]
+            for row in group_rows.iter_rows(named=True)
+            if row["groups"] is not None
+            and row["stat"]["type"] == "int"
+        }
+        assert group_counts == {"A": 2, "B": 1}
 
         model_rows = df.filter(pl.col("metric") == "n_sample_with_data")
         assert all(group is None for group in model_rows["groups"].to_list())
         assert set(model_rows["estimate"].to_list()) == {"model_a", "model_b"}
+        assert all(
+            row["stat"]["value_int"] == grouped_metric_df.height
+            for row in model_rows.iter_rows(named=True)
+        )
+        assert all(row["stat"]["type"] == "int" for row in model_rows.iter_rows(named=True))
 
         mae_rows = df.filter(pl.col("metric") == "mae")
         combinations = {
@@ -655,7 +669,7 @@ class TestMetricEvaluatorEdgeCases:
 
         result = evaluator.evaluate()
         assert len(result) == 1
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert stats["value"][0] == 2.0
 
     def test_invalid_metric_name(self, metric_sample_df):
@@ -721,5 +735,5 @@ class TestMetricEvaluatorEdgeCases:
         # Should be ARD object with consistent behavior
         assert len(result) == 1
         df = result.collect()
-        stats = result.get_stats()
+        stats = result.to_ard().get_stats()
         assert stats["value"][0] == 2.375  # MAE should be 2.375

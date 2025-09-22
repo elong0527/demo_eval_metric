@@ -21,12 +21,16 @@ The pivot methods support:
 ```{python}
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, pivot_to_gt
-from data_generator import create_expanded_clinical_data
+from data_generator import generate_sample_data
 
 # Create sample dataset with comprehensive structure for pivot examples
-df = create_expanded_clinical_data()
+df = generate_sample_data(
+    n_subjects=12,
+    n_visits=3,
+    n_groups=2,
+)
 df = df.with_columns(
-    age_group = pl.col("age_group").cast(pl.Enum(["Young", "Middle", "Senior"]))
+    pl.col("age_group").cast(pl.Enum(["Young", "Middle", "Senior"]))
 )
 ```
 
@@ -48,7 +52,7 @@ evaluator_group = MetricEvaluator(
     df=df,
     metrics=mixed_metrics,
     ground_truth="actual",
-    estimates=["model_1", "model_2"],
+    estimates=["model1", "model2"],
     group_by=["treatment"]
 )
 
@@ -91,7 +95,7 @@ evaluator_group_sub = MetricEvaluator(
     df=df,
     metrics=mixed_metrics,
     ground_truth="actual",
-    estimates={"model_1": "Model 1", "model_2": "Model 2"},
+    estimates={"model1": "Model 1", "model2": "Model 2"},
     group_by={"treatment": "Treatment"},
     subgroup_by={"age_group": "Age Group", "region": "Region"}
 )

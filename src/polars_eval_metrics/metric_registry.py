@@ -290,14 +290,16 @@ MetricRegistry.register_metric(
 )
 
 MetricRegistry.register_metric(
-    "n_subject", pl.col("subject_id").n_unique().alias("value")
+    "n_subject",
+    pl.col("subject_id").n_unique().cast(pl.Int64).alias("value"),
 )
 MetricRegistry.register_metric(
-    "n_visit", pl.struct(["subject_id", "visit_id"]).n_unique().alias("value")
+    "n_visit",
+    pl.struct(["subject_id", "visit_id"]).n_unique().cast(pl.Int64).alias("value"),
 )
 MetricRegistry.register_metric(
     "n_sample",
-    pl.col("sample_index").n_unique().alias("value"),
+    pl.col("sample_index").n_unique().cast(pl.Int64).alias("value"),
 )
 
 # Metrics for subjects with data (non-null ground truth or estimates)
@@ -306,6 +308,7 @@ MetricRegistry.register_metric(
     pl.col("subject_id")
     .filter(pl.col("error").is_not_null())
     .n_unique()
+    .cast(pl.Int64)
     .alias("value"),
 )
 MetricRegistry.register_metric(
@@ -323,6 +326,7 @@ MetricRegistry.register_metric(
     pl.struct(["subject_id", "visit_id"])
     .filter(pl.col("error").is_not_null())
     .n_unique()
+    .cast(pl.Int64)
     .alias("value"),
 )
 MetricRegistry.register_metric(
@@ -338,7 +342,8 @@ MetricRegistry.register_metric(
 
 # Metrics for samples with data
 MetricRegistry.register_metric(
-    "n_sample_with_data", pl.col("error").is_not_null().sum().alias("value")
+    "n_sample_with_data",
+    pl.col("error").is_not_null().sum().cast(pl.Int64).alias("value"),
 )
 MetricRegistry.register_metric(
     "pct_sample_with_data", (pl.col("error").is_not_null().mean() * 100).alias("value")
