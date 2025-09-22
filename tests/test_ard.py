@@ -391,8 +391,8 @@ class TestARDDisplay:
         ard = ARD(df)
         repr_str = repr(ard)
 
-        assert "ARD: 1 results" in repr_str
-        assert "Schema:" in repr_str
+        assert repr_str.startswith("ARD(summary=")
+        assert "'n_rows': 1" in repr_str
 
     def test_summary(self) -> None:
         df = dataset(

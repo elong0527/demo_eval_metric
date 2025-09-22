@@ -220,93 +220,8 @@ class ARD:
         return rendered
 
     def __repr__(self) -> str:
-        preview = self._lf.limit(10).collect()
-        total = self._lf.select(pl.len()).collect().item()
-
-        # Determine schema display focusing on struct contents
-        schema_columns: list[str] = []
-        if "groups" in preview.columns:
-            if self._group_fields:
-                schema_columns.extend(self._group_fields)
-            else:
-                schema_columns.append("groups")
-        if "subgroups" in preview.columns:
-            if self._subgroup_fields:
-                schema_columns.extend(self._subgroup_fields)
-            else:
-                schema_columns.append("subgroups")
-        if "estimate" in preview.columns:
-            schema_columns.append("estimate")
-        if "metric" in preview.columns:
-            schema_columns.append("metric")
-        schema_columns.append("value")
-
-        lines = [f"ARD: {total} results", f"Schema: {' | '.join(schema_columns)}"]
-
-        if total:
-            display_exprs: list[pl.Expr] = []
-
-            if "groups" in preview.columns:
-                if self._group_fields:
-                    for field in self._group_fields:
-                        display_exprs.append(
-                            pl.col("groups").struct.field(field).alias(field)
-                        )
-                else:
-                    display_exprs.append(
-                        pl.when(pl.col("groups").is_null())
-                        .then(pl.lit("--"))
-                        .otherwise(
-                            pl.col("groups").map_elements(
-                                lambda g: ", ".join(
-                                    f"{k}={v}" for k, v in (g or {}).items()
-                                ),
-                                return_dtype=pl.Utf8,
-                            )
-                        )
-                        .alias("groups")
-                    )
-
-            if "subgroups" in preview.columns:
-                if self._subgroup_fields:
-                    for field in self._subgroup_fields:
-                        display_exprs.append(
-                            pl.col("subgroups").struct.field(field).alias(field)
-                        )
-                else:
-                    display_exprs.append(
-                        pl.when(pl.col("subgroups").is_null())
-                        .then(pl.lit("--"))
-                        .otherwise(
-                            pl.col("subgroups").map_elements(
-                                lambda g: ", ".join(
-                                    f"{k}={v}" for k, v in (g or {}).items()
-                                ),
-                                return_dtype=pl.Utf8,
-                            )
-                        )
-                        .alias("subgroups")
-                    )
-
-            if "estimate" in preview.columns:
-                display_exprs.append(
-                    pl.col("estimate").fill_null("--").alias("estimate")
-                )
-            if "metric" in preview.columns:
-                display_exprs.append(pl.col("metric"))
-
-            display_exprs.append(
-                pl.col("stat")
-                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
-                .alias("value")
-            )
-
-            display = preview.select(display_exprs)
-            lines.append(str(display))
-            if total > 10:
-                lines.append(f"... and {total - 10} more rows")
-
-        return "\n".join(lines)
+        summary = self.summary()
+        return f"ARD(summary={summary})"
 
     # ------------------------------------------------------------------
     # Filtering utilities
@@ -473,14 +388,9 @@ class ARD:
             df = df.with_row_index("_idx")
             index = ["_idx"]
 
-        try:
-            pivoted = df.pivot(
-                index=index, on=columns, values=values, aggregate_function=aggregate
-            )
-        except Exception:
-            pivoted = df.pivot(
-                index=index, on=columns, values=values, aggregate_function="first"
-            )
+        pivoted = df.pivot(
+            index=index, on=columns, values=values, aggregate_function=aggregate
+        )
 
         if "_idx" in pivoted.columns:
             pivoted = pivoted.drop("_idx")
