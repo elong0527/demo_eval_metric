@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import polars as pl
+import pytest
 
 from polars_eval_metrics.ard import ARD
 
@@ -107,7 +108,9 @@ class TestARDBasics:
         )
 
         ard = ARD(df)
-        filtered = ard.filter(groups={"trt": "A"})
+        filtered = ARD(
+            ard.lazy.filter(pl.col("groups").struct.field("trt") == "A")
+        )
         assert len(filtered) == 2
 
     def test_filter_by_metrics(self) -> None:
@@ -129,10 +132,12 @@ class TestARDBasics:
         )
 
         ard = ARD(df)
-        filtered = ard.filter(metrics="mae")
+        filtered = ARD(ard.lazy.filter(pl.col("metric") == "mae"))
         assert len(filtered) == 2
 
-        filtered_all = ard.filter(metrics=["mae", "rmse"])
+        filtered_all = ARD(
+            ard.lazy.filter(pl.col("metric").is_in(["mae", "rmse"]))
+        )
         assert len(filtered_all) == 3
 
     def test_filter_missing_group_key(self) -> None:
@@ -152,8 +157,10 @@ class TestARDBasics:
         )
 
         ard = ARD(df)
-        filtered = ard.filter(groups={"unknown": "value"})
-        assert len(filtered) == 0
+        with pytest.raises(pl.exceptions.StructFieldNotFoundError):
+            ard.lazy.filter(
+                pl.col("groups").struct.field("unknown") == "value"
+            ).collect()
 
     def test_filter_subgroups_and_context(self) -> None:
         df = dataset(
@@ -174,9 +181,13 @@ class TestARDBasics:
         )
 
         ard = ARD(df)
-        sub_filtered = ard.filter(subgroups={"gender": "F"})
+        sub_filtered = ARD(
+            ard.lazy.filter(pl.col("subgroups").struct.field("gender") == "F")
+        )
         assert len(sub_filtered) == 1
-        ctx_filtered = ard.filter(context={"fold": "2"})
+        ctx_filtered = ARD(
+            ard.lazy.filter(pl.col("context").struct.field("fold") == "2")
+        )
         assert len(ctx_filtered) == 1
 
 

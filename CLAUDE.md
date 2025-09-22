@@ -166,6 +166,8 @@ formatted = ARD._format_stat(stat)  # Returns formatted string
 
 ### ARD Usage Patterns
 ```python
+import polars as pl
+
 # Creating ARD from records
 records = [
     {"groups": {"trt": "A"}, "metric": "mae", "stat": 3.2},
@@ -173,8 +175,13 @@ records = [
 ]
 ard = ARD(records)
 
-# Filtering
-filtered = ard.filter(groups={"trt": "A"}, metrics=["mae"])
+# Filtering with Polars expressions
+filtered = ARD(
+    ard.lazy.filter(
+        (pl.col("groups").struct.field("trt") == "A")
+        & pl.col("metric").is_in(["mae"])
+    )
+)
 
 # Converting to wide format
 wide_df = ard.to_wide(columns=["metric"], values="stat")

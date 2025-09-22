@@ -124,7 +124,8 @@ print(meta_df)
 
 # Filtering and Querying
 
-ARD provides powerful filtering capabilities:
+ARD exposes its data as a Polars `LazyFrame`, so you can compose filters with
+standard Polars expressions:
 
 ```{python}
 # Create a larger dataset for filtering examples
@@ -147,39 +148,50 @@ print(f"Total records: {len(large_ard)}")
 ## Filter by Groups
 
 ```{python}
-# Filter by specific group values
-treatment_a = large_ard.filter(groups={"treatment": "A"})
+# Filter by specific group values using Polars expressions
+treatment_a = ARD(
+    large_ard.lazy.filter(pl.col("groups").struct.field("treatment") == "A")
+)
 print(f"Treatment A only: {len(treatment_a)} records")
 
 # Multiple group filters
-site_01_treatment_b = large_ard.filter(groups={"treatment": "B", "site": "01"})
+site_01_treatment_b = ARD(
+    large_ard.lazy.filter(
+        (pl.col("groups").struct.field("treatment") == "B")
+        & (pl.col("groups").struct.field("site") == "01")
+    )
+)
 print(f"Treatment B, Site 01: {len(site_01_treatment_b)} records")
-print(site_01_treatment_b)
+print(site_01_treatment_b.collect())
 ```
 
 ## Filter by Metrics and Estimates
 
 ```{python}
 # Filter by metrics
-mae_only = large_ard.filter(metrics="mae")
+mae_only = ARD(large_ard.lazy.filter(pl.col("metric") == "mae"))
 print(f"MAE only: {len(mae_only)} records")
 
 # Multiple metrics
-accuracy_metrics = large_ard.filter(metrics=["mae", "r2"])
+accuracy_metrics = ARD(
+    large_ard.lazy.filter(pl.col("metric").is_in(["mae", "r2"]))
+)
 print(f"MAE and R2: {len(accuracy_metrics)} records")
 
 # Filter by estimates
-model1_only = large_ard.filter(estimates="model1")
+model1_only = ARD(large_ard.lazy.filter(pl.col("estimate") == "model1"))
 print(f"Model1 only: {len(model1_only)} records")
 
 # Combine filters
-filtered = large_ard.filter(
-    groups={"treatment": "A"},
-    metrics=["mae", "rmse"],
-    estimates="model1"
+filtered = ARD(
+    large_ard.lazy.filter(
+        (pl.col("groups").struct.field("treatment") == "A")
+        & pl.col("metric").is_in(["mae", "rmse"])
+        & (pl.col("estimate") == "model1")
+    )
 )
 print(f"Combined filter: {len(filtered)} records")
-print(filtered)
+print(filtered.collect())
 ```
 
 # Data Transformations
@@ -356,11 +368,15 @@ Always convert evaluation results to ARD format early in your pipeline for consi
 ARD operations are lazy by default - chain operations before collecting:
 
 ```{python}
-# Good: Chain operations efficiently
-result = (large_ard
-    .filter(groups={"treatment": "A"})
-    .filter(metrics=["mae", "rmse"])
-    .to_wide())
+# Good: Chain operations efficiently using the underlying LazyFrame
+result = (
+    ARD(
+        large_ard.lazy
+        .filter(pl.col("groups").struct.field("treatment") == "A")
+        .filter(pl.col("metric").is_in(["mae", "rmse"]))
+    )
+    .to_wide()
+)
 
 print(f"Chained operations result: {result.shape}")
 ```

@@ -1463,8 +1463,8 @@ class MetricEvaluator:
         if not self.subgroup_by:
             return []
 
-        categories: list[str] = []
-        seen: set[str] = set()
+        categories: list[Any] = []
+        seen: set[Any] = set()
         schema = self.df_raw.collect_schema()
 
         for column in self.subgroup_by.keys():
@@ -1480,17 +1480,7 @@ class MetricEvaluator:
                         categories.append(value)
                 continue
 
-            series = self.df_raw.select(pl.col(column)).collect()[column]
-            non_null = [value for value in series.to_list() if value is not None]
-
-            if not non_null:
-                continue
-
-            if dtype.is_numeric():
-                ordered_values = sorted(set(non_null))
-            else:
-                ordered_values = sorted({str(value) for value in non_null})
-
+            ordered_values = self._collect_unique_subgroup_values(column, dtype)
             for value in ordered_values:
                 if value in seen:
                     continue
@@ -1498,6 +1488,30 @@ class MetricEvaluator:
                 categories.append(value)
 
         return categories
+
+    def _collect_unique_subgroup_values(
+        self, column: str, dtype: pl.DataType
+    ) -> list[Any]:
+        """Collect sorted unique subgroup values using lazy execution."""
+
+        expr = pl.col(column).drop_nulls()
+
+        if not dtype.is_numeric():
+            expr = expr.cast(pl.Utf8)
+
+        lazy_unique = (
+            self.df_raw.select(expr.alias(column))
+            .unique(subset=[column])
+            .sort(column)
+        )
+
+        df_unique = lazy_unique.collect(engine="streaming")
+        values = df_unique[column].to_list()
+
+        if dtype.is_numeric():
+            return values
+
+        return [str(value) for value in values]
 
     # ========================================
     # VALIDATION METHODS - Centralized Logic
