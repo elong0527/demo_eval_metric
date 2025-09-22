@@ -17,9 +17,9 @@ import os
 sys.path.insert(0, os.path.abspath("../src"))
 ```
 
-```{python}
+   ```{python}
 # Import the package
-import polars as pl
+   import polars as pl
 
 from polars_eval_metrics import MetricDefine, MetricEvaluator
 ```
@@ -32,30 +32,19 @@ model evaluation effort.
 ```{python}
 from data_generator import generate_sample_data
 
-# Generate sample data
 df = generate_sample_data(n_subjects=3, n_visits=2, n_groups=2)
 print(f"Data shape: {df.shape}")
-print(f"Columns: {df.columns}")
-
 df.head()
 ```
 
-# Single Metric: MAE
+## Single Metric (MAE)
 
-## Define Metrics 
-
-We define an Mean Absolute Error (MAE) metric to be used for model evaluation. 
+Start with mean absolute error for a single estimate column. `MetricDefine` fetches a metric expression by name from the global registry and keeps any parameterisation you provide.
 
 ```{python}
-# Define a metric directly
 metric = MetricDefine(name="mae")
 metric
 ```
-
-The output provide a quick view of what the polar expression
-to be used for the derivation. 
-
-## Evaluate Metrics 
 
 ```{python}
 evaluator = MetricEvaluator(
@@ -64,165 +53,95 @@ evaluator = MetricEvaluator(
     ground_truth="actual",
     estimates="model1",
 )
-```
-
-- Results 
-
-```{python}
-# Returns EvaluationResult (DataFrame subclass)
 result = evaluator.evaluate()
-result  # EvaluationResult behaves like a Polars DataFrame  
+result
 ```
 
-`EvaluationResult` keeps the canonical ARD representation accessible through
-helpers like `collect()`, `get_stats()`, and `to_ard()` while still behaving
-like a Polars `DataFrame` for interactive inspection.
+
 
 - Equivalent Polars code
 
-The framework calculation can be replicated with a single Polars expression:
-
+::: {.callout-note title="Polars equivalent"}
 ```{python}
-# Direct MAE calculation using one expression
 df.select(
     (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae")
 )
-``` 
-
-- LazyFrame Explain
+```
+:::
 
 ```{python}
-# Returns LazyFrame
-lazy_result = evaluator.evaluate(collect=False)  
+# Inspect the lazy plan that powers ARD collection
+lazy_result = evaluator.evaluate(collect=False)
 print(lazy_result.explain())
 ```
 
+## Evaluate by Group
 
-## Evaluate by Groups
+Evaluating multiple metrics across estimates stratified by a treatment arm only requires adjusting the evaluator configuration.
 
 ```{python}
 evaluator = MetricEvaluator(
     df=df,
-    metrics=[
-        MetricDefine(name="mae"),
-        MetricDefine(name="rmse"),
-    ],
+    metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
     ground_truth="actual",
     estimates=["model1", "model2"],
-    group_by = ["treatment"]
+    group_by=["treatment"],
 )
+group_result = evaluator.evaluate()
+group_result
 ```
 
-- Results
 
+
+::: {.callout-note title="Polars equivalent"}
 ```{python}
-evaluator.evaluate()
-```
-
-- Equivalent Polars code
-
-```{python}
-# Direct calculation using single expression
 df.group_by("treatment").agg([
-    # MAE for both models
     (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
     (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
-    # RMSE for both models  
     (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
     (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
 ]).sort("treatment")
 ```
+:::
 
+## Group + Subgroup Evaluation
 
-## Evaluate by Groups with Subgroups
+Subgroup analysis is enabled by specifying `subgroup_by`. Use a temporary configuration block to show all subgroup rows without changing global Polars settings.
 
 ```{python}
-pl.Config.set_tbl_rows(-1)
-evaluator = MetricEvaluator(
-    df=df,
-    metrics=[
-        MetricDefine(name="mae"),
-        MetricDefine(name="rmse"),
-    ],
-    ground_truth="actual",
-    estimates=["model1", "model2"],
-    group_by = ["treatment"],
-    subgroup_by = ["gender", "race"]
-)
+with pl.Config(tbl_rows=-1):
+    subgroup_result = MetricEvaluator(
+        df=df,
+        metrics=[MetricDefine(name="mae"), MetricDefine(name="rmse")],
+        ground_truth="actual",
+        estimates=["model1", "model2"],
+        group_by=["treatment"],
+        subgroup_by=["gender", "race"],
+    ).evaluate()
+subgroup_result
 ```
 
-- Results
-
 ```{python}
-evaluator.evaluate()
+subgroup_result.collect()
 ```
 
-- Equivalent Polars code
-
+::: {.callout-note title="Polars equivalent"}
 ```{python}
-# Direct calculation for gender subgroup with standardized columns
 gender_results = df.group_by(["treatment", "gender"]).agg([
-    # MAE for both models
     (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
     (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
-    # RMSE for both models  
     (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
     (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
 ]).sort(["treatment", "gender"])
 
-# Direct calculation for race subgroup with standardized columns  
 race_results = df.group_by(["treatment", "race"]).agg([
-    # MAE for both models
     (pl.col("model1") - pl.col("actual")).abs().mean().alias("mae_model1"),
     (pl.col("model2") - pl.col("actual")).abs().mean().alias("mae_model2"),
-    # RMSE for both models  
     (pl.col("model1") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model1"),
     (pl.col("model2") - pl.col("actual")).pow(2).mean().sqrt().alias("rmse_model2"),
-]).with_columns([
-    pl.lit("race").alias("subgroup_name"),
-    pl.col("race").alias("subgroup_value")
 ]).sort(["treatment", "race"])
 
-# Show both results
-print("Gender subgroup results:")
-print(gender_results)
-print("\nRace subgroup results:")
-print(race_results)
+gender_results, race_results
 ```
+:::
 
-## Custom Metrics with Registry
-
-You can register custom metrics and use them in evaluation:
-
-```{python}
-# Register custom metrics globally
-from polars_eval_metrics import MetricRegistry
-
-# Register a custom error type
-def within_threshold(estimate: str, ground_truth: str, threshold: float = 2.0):
-    error = (pl.col(estimate) - pl.col(ground_truth)).abs()
-    return (error <= threshold).cast(pl.Int32)
-
-MetricRegistry.register_error('within_2', within_threshold)
-
-# Register a metric using the custom error
-MetricRegistry.register_metric(
-    'accuracy_within_2',
-    (pl.col('within_2').mean() * 100).alias('value')
-)
-
-# Use in evaluation
-evaluator_custom = MetricEvaluator(
-    df=df,
-    metrics=[
-        MetricDefine(name='accuracy_within_2'),
-        MetricDefine(name='mae')  # Still has access to built-ins
-    ],
-    ground_truth="actual",
-    estimates="model1",
-    # Custom metrics are now globally available
-    error_params={'within_2': {'threshold': 2.0}}
-)
-
-evaluator_custom.evaluate()
-```
