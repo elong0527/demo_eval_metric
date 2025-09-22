@@ -14,6 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "ruff>=0.12.11",
+    "pyre-check>=0.9.22",
 ]
 docs = [
     "jupyter>=1.0.0",
@@ -46,3 +47,15 @@ docs = [
     "pyarrow>=21.0.0",
     "quarto-cli>=1.6.40",
 ]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "great-tables>=0.18.0",
+]
+dev = [
+    "ruff>=0.12.11",
+    "pyre-check>=0.9.22",
+]
+
+[tool.uv]
+default-groups = ["dev", "docs", "test"]
