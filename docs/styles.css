@@ -1,181 +1,66 @@
-/* Custom styles for Polars Eval Metrics documentation */
+/* Custom styles for documentation */
 
-/* Badge styling */
-p img[alt*="Tests"],
-p img[alt*="Documentation"],
-p img[alt*="Python"] {
-  display: inline-block;
-  margin-right: 5px;
-  vertical-align: middle;
+.quarto-title-banner {
+  background-color: #2c3e50;
+  color: white;
 }
 
-/* Code block improvements */
-pre {
-  border-radius: 8px;
-  border: 1px solid #e1e4e8;
+pre code {
+  font-size: 0.9em;
 }
 
-/* Improve readability */
-.content {
-  max-width: 1200px;
-  margin: 0 auto;
+.reactable {
+  font-size: 0.9em;
 }
 
-/* Navbar enhancements */
 .navbar {
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  background-color: #34495e;
 }
 
-/* TOC styling */
-.sidebar nav[role="doc-toc"] {
-  border-left: 2px solid #007bff;
-  padding-left: 1rem;
-  position: sticky;
-  top: 2rem;
-  max-height: calc(100vh - 4rem);
-  overflow-y: auto;
+.navbar-brand,
+.navbar-nav .nav-link {
+  color: white !important;
 }
 
-.sidebar nav[role="doc-toc"] ul {
-  padding-left: 0;
-  list-style: none;
-}
-
-.sidebar nav[role="doc-toc"] ul li {
-  margin-bottom: 0.25rem;
-}
-
-.sidebar nav[role="doc-toc"] ul li a {
-  display: block;
-  padding: 0.25rem 0.5rem;
-  color: #6c757d;
-  text-decoration: none;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.sidebar nav[role="doc-toc"] ul li a:hover {
-  color: #007bff;
+.sidebar {
   background-color: #f8f9fa;
 }
 
-.sidebar nav[role="doc-toc"] ul li.active > a {
-  color: #007bff;
-  font-weight: 600;
-  background-color: #e7f1ff;
+h1, h2, h3 {
+  color: #2c3e50;
 }
 
-/* TOC container improvements */
-#TOC {
-  background-color: #fff;
-  border: 1px solid #e1e4e8;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 2rem;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-#TOC .toc-title {
-  font-weight: 600;
-  margin-bottom: 1rem;
-  color: #333;
-  border-bottom: 1px solid #e1e4e8;
-  padding-bottom: 0.5rem;
-}
-
-/* Feature list styling */
-ul li strong {
-  color: #007bff;
-}
-
-/* Coverage report table styling */
-.coverage-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 20px 0;
-}
-
-.coverage-table th {
-  background-color: #007bff;
-  color: white;
-  padding: 10px;
-  text-align: left;
-}
-
-.coverage-table td {
-  padding: 10px;
-  border-bottom: 1px solid #ddd;
-}
-
-.coverage-table tr:hover {
+/* Improve code block appearance */
+.sourceCode {
   background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+}
+
+/* Table styles */
+table {
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+th {
+  background-color: #ecf0f1;
+  font-weight: bold;
 }
 
 /* Alert boxes */
 .callout-note {
-  border-left: 4px solid #007bff;
-  padding: 1rem;
-  margin: 1rem 0;
-  background-color: #f0f7ff;
+  background-color: #d1ecf1;
+  border-left: 4px solid #0c5460;
 }
 
 .callout-warning {
-  border-left: 4px solid #ffc107;
-  padding: 1rem;
-  margin: 1rem 0;
-  background-color: #fff9e6;
+  background-color: #fff3cd;
+  border-left: 4px solid #856404;
 }
 
-.callout-tip {
-  border-left: 4px solid #28a745;
-  padding: 1rem;
-  margin: 1rem 0;
-  background-color: #e6f7e6;
-}
-
-/* Footer */
-.footer {
-  margin-top: 3rem;
-  padding-top: 2rem;
-  border-top: 1px solid #e1e4e8;
-  text-align: center;
-  color: #6c757d;
-}
-
-/* Responsive improvements */
-@media (max-width: 768px) {
-  .content {
-    padding: 0 15px;
-  }
-
-  pre {
-    font-size: 0.9rem;
-  }
-
-  .sidebar nav[role="doc-toc"] {
-    position: static;
-    border-left: none;
-    border-top: 2px solid #007bff;
-    padding-left: 0;
-    padding-top: 1rem;
-    margin-top: 2rem;
-  }
-
-  #TOC {
-    margin-bottom: 1rem;
-  }
-}
-
-/* Medium screens */
-@media (min-width: 769px) and (max-width: 1200px) {
-  .sidebar nav[role="doc-toc"] {
-    width: 220px;
-  }
-}
-
-/* Large screens */
-@media (min-width: 1201px) {
-  .sidebar nav[role="doc-toc"] {
-    width: 280px;
-  }
+.callout-important {
+  background-color: #f8d7da;
+  border-left: 4px solid #721c24;
 }
