@@ -37,7 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           # Install package with docs dependencies
           pip install -e ".[docs,test]"
-          python -m ipykernel install --user --name=python3
+          python -m ipykernel install --user --name=demo-eval-metric --display-name="demo-eval-metric"
           # Add src to Python path for imports
           echo "PYTHONPATH=${{ github.workspace }}/src:$PYTHONPATH" >> $GITHUB_ENV
           
