@@ -132,11 +132,6 @@ evaluator_model.pivot_by_model().\
     pipe(pivot_to_gt)
 ```
 
-```{python}
-# Make estimates the outer column level, metrics nested inside
-evaluator_model.pivot_by_model(column_order_by="estimates")
-```
-
 ## Case 4: Pivot by Model (with subgroups)
 
 ```{python}

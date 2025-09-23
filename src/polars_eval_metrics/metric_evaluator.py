@@ -374,7 +374,39 @@ class MetricEvaluator:
                 [pl.lit(row_values[col]).alias(col) for col in broadcast_cols]
             )
 
-        return base.join(candidate, on=list(index_cols), how="left")
+        # When a scope ignores some index columns (e.g., global metrics with
+        # subgroup analyses), those columns appear as all-null. We can drop them
+        # from the join keys so the values broadcast across the remaining keys.
+        join_index_cols = list(index_cols)
+        all_null_cols: list[str] = []
+        for col in index_cols:
+            if col in candidate.columns:
+                column = candidate.get_column(col)
+                if column.null_count() == candidate.height:
+                    all_null_cols.append(col)
+        if all_null_cols:
+            join_index_cols = [col for col in join_index_cols if col not in all_null_cols]
+            candidate = candidate.drop(all_null_cols)
+
+        if not join_index_cols:
+            # No meaningful keys to join on; broadcast values to every row.
+            value_cols = [col for col in candidate.columns if col not in index_cols]
+            if not value_cols:
+                return base
+            # Drop duplicates to avoid applying conflicting rows.
+            candidate_unique = candidate.select(value_cols).unique()
+            if candidate_unique.height == 0:
+                return base
+            if candidate_unique.height > 1:
+                # Fallback to first row to keep behaviour deterministic when
+                # multiple identical rows exist with no join keys.
+                candidate_unique = candidate_unique.head(1)
+            row_values = candidate_unique.row(0, named=True)
+            return base.with_columns(
+                [pl.lit(row_values[col]).alias(col) for col in row_values]
+            )
+
+        return base.join(candidate, on=join_index_cols, how="left")
 
     def _build_pivot_table(
         self,
@@ -628,6 +660,69 @@ class MetricEvaluator:
         )
 
         section_lookup = {name: cols for name, cols in sections}
+
+        group_labels = list(self.group_by.values())
+        group_label_count = len(group_labels)
+        group_value_orders: list[dict[Any, int]] = []
+
+        if group_label_count:
+            for label in group_labels:
+                if label not in long_df.columns:
+                    group_value_orders.append({})
+                    continue
+
+                series = long_df.get_column(label)
+                dtype = series.dtype
+
+                if isinstance(dtype, pl.Enum):
+                    categories = dtype.categories.to_list()
+                else:
+                    categories = sorted(series.drop_nulls().unique().to_list())
+
+                group_value_orders.append({value: idx for idx, value in enumerate(categories)})
+
+        metric_label_order_lookup: dict[str, int] = self._metric_label_order
+        metric_name_order_lookup: dict[str, int] = self._metric_name_order
+
+        def metric_order(label: str) -> int:
+            if label in metric_label_order_lookup:
+                return metric_label_order_lookup[label]
+            return metric_name_order_lookup.get(label, len(metric_label_order_lookup))
+
+        def parse_json_tokens(column: str) -> tuple[str, ...] | None:
+            if column.startswith('{"') and column.endswith('"}') and '","' in column:
+                inner = column[2:-2]
+                return tuple(inner.split('","'))
+            return None
+
+        def group_order(tokens: tuple[str, ...]) -> tuple[int, ...]:
+            if not group_label_count:
+                return tuple()
+            values = tokens[:group_label_count]
+            order_positions: list[int] = []
+            for idx, value in enumerate(values):
+                mapping = group_value_orders[idx] if idx < len(group_value_orders) else {}
+                order_positions.append(mapping.get(value, len(mapping)))
+            return tuple(order_positions)
+
+        def column_sort_key(column: str) -> tuple[Any, ...]:
+            tokens = parse_json_tokens(column)
+            if tokens is None:
+                return (float("inf"), column)
+            metric_label = tokens[-1] if tokens else ""
+            metric_idx = metric_order(metric_label)
+            group_idx = group_order(tokens)
+            if column_order_by == "metrics":
+                return (metric_idx, group_idx, tokens)
+            return (group_idx, metric_idx, tokens)
+
+        if "group" in section_lookup:
+            section_lookup["group"] = sorted(section_lookup["group"], key=column_sort_key)
+
+        if "default" in section_lookup:
+            section_lookup["default"] = sorted(
+                section_lookup["default"], key=column_sort_key
+            )
 
         if "estimate" in result.columns:
             result = result.with_columns(
