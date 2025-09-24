@@ -336,15 +336,12 @@ class MetricEvaluator:
             )
 
         with_idx = df.with_row_index("_idx")
-        return (
-            with_idx.pivot(
-                index=["_idx"],
-                on=list(on_cols),
-                values="value",
-                aggregate_function="first",
-            )
-            .drop("_idx")
-        )
+        return with_idx.pivot(
+            index=["_idx"],
+            on=list(on_cols),
+            values="value",
+            aggregate_function="first",
+        ).drop("_idx")
 
     def _merge_pivot_frames(
         self,
@@ -362,9 +359,7 @@ class MetricEvaluator:
             return pl.concat([base, candidate], how="horizontal")
 
         if candidate.height == 1:
-            broadcast_cols = [
-                col for col in candidate.columns if col not in index_cols
-            ]
+            broadcast_cols = [col for col in candidate.columns if col not in index_cols]
             if not broadcast_cols:
                 return base
             row_values = candidate.row(0, named=True)
@@ -383,7 +378,9 @@ class MetricEvaluator:
                 if column.null_count() == candidate.height:
                     all_null_cols.append(col)
         if all_null_cols:
-            join_index_cols = [col for col in join_index_cols if col not in all_null_cols]
+            join_index_cols = [
+                col for col in join_index_cols if col not in all_null_cols
+            ]
             candidate = candidate.drop(all_null_cols)
 
         if not join_index_cols:
@@ -417,9 +414,7 @@ class MetricEvaluator:
         """Construct pivot table across default/global/group scopes."""
 
         default_df = long_df.filter(pl.col("scope").is_null())
-        pivot = self._pivot_frame(
-            default_df, index_cols=index_cols, on_cols=default_on
-        )
+        pivot = self._pivot_frame(default_df, index_cols=index_cols, on_cols=default_on)
         sections: list[tuple[str, list[str]]] = [
             ("default", [col for col in pivot.columns if col not in index_cols])
         ]
@@ -654,7 +649,10 @@ class MetricEvaluator:
             long_df,
             index_cols=index_cols,
             default_on=[*self.group_by.values(), "label"],
-            scoped_on=[("global", ["label"]), ("group", [*self.group_by.values(), "label"])],
+            scoped_on=[
+                ("global", ["label"]),
+                ("group", [*self.group_by.values(), "label"]),
+            ],
         )
 
         section_lookup = {name: cols for name, cols in sections}
@@ -677,7 +675,9 @@ class MetricEvaluator:
                 else:
                     categories = sorted(series.drop_nulls().unique().to_list())
 
-                group_value_orders.append({value: idx for idx, value in enumerate(categories)})
+                group_value_orders.append(
+                    {value: idx for idx, value in enumerate(categories)}
+                )
 
         metric_label_order_lookup: dict[str, int] = self._metric_label_order
         metric_name_order_lookup: dict[str, int] = self._metric_name_order
@@ -699,7 +699,9 @@ class MetricEvaluator:
             values = tokens[:group_label_count]
             order_positions: list[int] = []
             for idx, value in enumerate(values):
-                mapping = group_value_orders[idx] if idx < len(group_value_orders) else {}
+                mapping = (
+                    group_value_orders[idx] if idx < len(group_value_orders) else {}
+                )
                 order_positions.append(mapping.get(value, len(mapping)))
             return tuple(order_positions)
 
@@ -715,7 +717,9 @@ class MetricEvaluator:
             return (group_idx, metric_idx, tokens)
 
         if "group" in section_lookup:
-            section_lookup["group"] = sorted(section_lookup["group"], key=column_sort_key)
+            section_lookup["group"] = sorted(
+                section_lookup["group"], key=column_sort_key
+            )
 
         if "default" in section_lookup:
             section_lookup["default"] = sorted(
@@ -742,9 +746,7 @@ class MetricEvaluator:
                     pl.col("subgroup_value").cast(pl.Enum(self._subgroup_categories))
                 )
             else:
-                result = result.with_columns(
-                    pl.col("subgroup_value").cast(pl.Utf8)
-                )
+                result = result.with_columns(pl.col("subgroup_value").cast(pl.Utf8))
 
         ordered = (
             [col for col in index_cols if col in result.columns]
@@ -984,9 +986,7 @@ class MetricEvaluator:
         across_info: MetricInfo | None,
     ) -> tuple[pl.LazyFrame, MetricInfo]:
         if across_info is None:
-            raise ValueError(
-                f"ACROSS_SAMPLE metric {metric.name} requires across_expr"
-            )
+            raise ValueError(f"ACROSS_SAMPLE metric {metric.name} requires across_expr")
 
         agg_exprs = self._metric_agg_expressions(across_info)
         result = self._aggregate_lazyframe(df, group_cols, agg_exprs)
@@ -1110,20 +1110,36 @@ class MetricEvaluator:
         group_cols: list[str] = []
 
         if metric.scope == MetricScope.GLOBAL:
-            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            subgroup_cols = (
+                ["subgroup_name", "subgroup_value"]
+                if using_vectorized_subgroups
+                else existing(self.subgroup_by.keys())
+            )
             group_cols.extend(subgroup_cols)
         elif metric.scope == MetricScope.MODEL:
             model_cols = existing(["estimate"])
-            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            subgroup_cols = (
+                ["subgroup_name", "subgroup_value"]
+                if using_vectorized_subgroups
+                else existing(self.subgroup_by.keys())
+            )
             group_cols.extend(model_cols + subgroup_cols)
         elif metric.scope == MetricScope.GROUP:
             group_cols.extend(existing(self.group_by.keys()))
-            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            subgroup_cols = (
+                ["subgroup_name", "subgroup_value"]
+                if using_vectorized_subgroups
+                else existing(self.subgroup_by.keys())
+            )
             group_cols.extend(subgroup_cols)
         else:
             group_cols.extend(existing(["estimate"]))
             group_cols.extend(existing(self.group_by.keys()))
-            subgroup_cols = ["subgroup_name", "subgroup_value"] if using_vectorized_subgroups else existing(self.subgroup_by.keys())
+            subgroup_cols = (
+                ["subgroup_name", "subgroup_value"]
+                if using_vectorized_subgroups
+                else existing(self.subgroup_by.keys())
+            )
             group_cols.extend(subgroup_cols)
 
         return self._merge_group_columns(group_cols)
@@ -1365,13 +1381,9 @@ class MetricEvaluator:
         )
 
         float_value = (
-            pl.col("_value_float")
-            if "_value_float" in schema.names()
-            else null_float
+            pl.col("_value_float") if "_value_float" in schema.names() else null_float
         )
-        int_value = (
-            pl.col("_value_int") if "_value_int" in schema.names() else null_int
-        )
+        int_value = pl.col("_value_int") if "_value_int" in schema.names() else null_int
         bool_value = (
             pl.col("_value_bool") if "_value_bool" in schema.names() else null_bool
         )
@@ -1550,9 +1562,7 @@ class MetricEvaluator:
             expr = expr.cast(pl.Utf8)
 
         lazy_unique = (
-            self.df_raw.select(expr.alias(column))
-            .unique(subset=[column])
-            .sort(column)
+            self.df_raw.select(expr.alias(column)).unique(subset=[column]).sort(column)
         )
 
         df_unique = lazy_unique.collect(engine="streaming")
@@ -1651,9 +1661,7 @@ class EvaluationResult(pl.DataFrame):
             "stat",
             "context",
         ]
-        ordered_columns = [
-            col for col in preferred_order if col in long_df.columns
-        ]
+        ordered_columns = [col for col in preferred_order if col in long_df.columns]
         remaining_columns = [
             col for col in long_df.columns if col not in ordered_columns
         ]

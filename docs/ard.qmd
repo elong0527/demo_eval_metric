@@ -54,7 +54,6 @@ these columns.
 | `stat` | `pl.Struct` | Typed value container (see below). |
 | `context` | `pl.Struct` | Metadata describing how the metric was computed. |
 | `id` | `pl.Struct` | Entity identifiers for within-subject / visit metrics. |
-| `error` | `pl.Struct` | Error message if a metric failed to derive. |
 
 The `stat` struct splits the stored result across typed channels:
 
@@ -127,18 +126,62 @@ canonical.select([
 
 `ARD.get_stats()` offers a quick way to access raw values with optional metadata:
 
+Call it without arguments when you just want the canonical metric/value pairs:
+
 ```{python}
 ard.get_stats()
 ```
 
+Pass `include_metadata=True` if you need to see the stored `stat` type tag and format hint alongside the value:
+
+```{python}
+ard.get_stats(include_metadata=True)
+```
+
+# Normalising Struct Columns
+
+Empty structs are often produced when downstream code prefers explicit placeholders. The
+helper methods on `ARD` let you toggle between empty and null representations:
+
+`with_empty_as_null()` collapses all-null structs and blank estimates to proper nulls so filters behave as expected:
+
+```{python}
+ard.with_empty_as_null().collect()
+```
+
+`with_null_as_empty()` does the reverse—replacing nulls with empty structs so templating code can access the fields safely:
+
+```{python}
+ard.with_null_as_empty().collect()
+```
+
 # Transformation
+
+`to_long()` flattens the lazy frame into a DataFrame where grouping metadata is expanded and the formatted `stat` value is exposed as `value`:
 
 ```{python}
 ard.to_long()
 ```
 
+`unnest()` is useful when you just need the struct columns expanded in place without the extra pivoting logic:
+
 ```{python}
-ard.unnest().head()
+ard.unnest()
+```
+
+Wide presentations remain useful for dashboards. 
+`to_wide()` pivots metric values while
+preserving formatting hints—perfect for quick scorecards:
+
+```{python}
+ard.to_wide(index=["estimate"], columns=["metric"]).head()
+```
+
+For ad-hoc layouts you can pull the lazy frame to long form and use Polars' native pivot
+via the `pivot()` convenience wrapper when you want full control over the value column and aggregation:
+
+```{python}
+ard.pivot(on="metric", index=["estimate"], values="stat")
 ```
 
 # Summaries
@@ -146,9 +189,13 @@ ard.unnest().head()
 Use `summary()` for a quick diagnostic of the collected dataset or `describe()` for a
 formatted printout:
 
+`summary()` returns a dict of counts that you can log or feed into tests:
+
 ```{python}
 ard.summary()
 ```
+
+`describe()` emits a readable console report with sample rows—handy during notebook exploration:
 
 ```{python}
 ard.describe()

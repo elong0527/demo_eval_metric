@@ -589,7 +589,9 @@ class TestMetricEvaluatorAdvancedScenarios:
 
     def test_group_subgroup_overlap_raises(self, metric_sample_df):
         """Using the same column for group and subgroup should raise a clear error."""
-        with pytest.raises(ValueError, match="Group and subgroup columns must be distinct"):
+        with pytest.raises(
+            ValueError, match="Group and subgroup columns must be distinct"
+        ):
             MetricEvaluator(
                 df=metric_sample_df,
                 metrics=[MetricDefine(name="mae")],

@@ -19,9 +19,7 @@ class ARD:
     _context_fields: tuple[str, ...]
     _id_fields: tuple[str, ...]
 
-    def __init__(
-        self, data: pl.DataFrame | pl.LazyFrame | None = None
-    ) -> None:
+    def __init__(self, data: pl.DataFrame | pl.LazyFrame | None = None) -> None:
         if data is None:
             self._lf = self._empty_frame()
         elif isinstance(data, pl.DataFrame):
@@ -37,7 +35,6 @@ class ARD:
         self._group_fields = self._extract_struct_fields(schema, "groups")
         self._subgroup_fields = self._extract_struct_fields(schema, "subgroups")
         self._context_fields = self._extract_struct_fields(schema, "context")
-        
 
     # ---------------------------------------------------------------------
     # Construction helpers
@@ -75,6 +72,7 @@ class ARD:
     def _extract_struct_fields(
         schema: Mapping[str, pl.DataType], column: str
     ) -> tuple[str, ...]:
+        """Return field names for struct columns, or an empty tuple when not present."""
         dtype = schema.get(column)
         if isinstance(dtype, pl.Struct):
             return tuple(field.name for field in dtype.fields)
@@ -82,6 +80,7 @@ class ARD:
 
     @staticmethod
     def _validate_schema(df: pl.DataFrame) -> None:
+        """Guard against constructing ARD from frames missing required columns."""
         required = {"groups", "subgroups", "estimate", "metric", "stat", "context"}
         missing = required - set(df.columns)
         if missing:
@@ -96,6 +95,7 @@ class ARD:
         return self._lf
 
     def collect(self) -> pl.DataFrame:
+        """Collect the lazy evaluation while keeping the canonical columns when available."""
         # Keep core columns for backward compatibility when eagerly collecting
         available = self._lf.collect_schema().names()
         desired = [
@@ -158,6 +158,7 @@ class ARD:
 
     @staticmethod
     def _stat_value(stat: Mapping[str, Any] | None) -> Any:
+        """Extract the native value stored in a stat struct regardless of channel used."""
         if stat is None:
             return None
 
@@ -190,6 +191,7 @@ class ARD:
 
     @staticmethod
     def _format_stat(stat: Mapping[str, Any] | None) -> str:
+        """Render a stat struct into a string while respecting explicit formatting hints."""
         if stat is None:
             return "NULL"
 
@@ -221,6 +223,8 @@ class ARD:
     # ------------------------------------------------------------------
 
     def with_empty_as_null(self) -> ARD:
+        """Collapse empty structs or blank strings to null for easier downstream filtering."""
+
         def _collapse(column: str, fields: tuple[str, ...]) -> pl.Expr:
             if not fields:
                 return pl.col(column)
@@ -249,6 +253,8 @@ class ARD:
         return ARD(lf)
 
     def with_null_as_empty(self) -> ARD:
+        """Fill null structs or estimates with empty shells to simplify presentation."""
+
         def _expand(column: str, fields: tuple[str, ...]) -> pl.Expr:
             if not fields:
                 return pl.col(column)
@@ -276,15 +282,26 @@ class ARD:
     # ------------------------------------------------------------------
 
     def unnest(self, columns: list[str] | None = None) -> pl.DataFrame:
+        """Expand selected struct columns into top-level fields for inspection or exports."""
         columns = columns or ["groups", "subgroups"]
         lf = self._lf
+        schema = lf.collect_schema()
         for column in columns:
-            if column in {"id", "groups", "subgroups", "context", "stat"}:
-                has_values = (
-                    lf.select(pl.col(column).is_not_null().any()).collect().item()
-                )
-                if has_values:
-                    lf = lf.unnest(column)
+            if column not in {"id", "groups", "subgroups", "context", "stat"}:
+                continue
+            if column not in schema.names():
+                continue
+            dtype = schema.get(column)
+            if not isinstance(dtype, pl.Struct):
+                continue
+            struct_fields = {field.name for field in dtype.fields}
+            existing_fields = set(schema.names())
+            if struct_fields & existing_fields:
+                continue
+            has_values = lf.select(pl.col(column).is_not_null().any()).collect().item()
+            if has_values:
+                lf = lf.unnest(column)
+                schema = lf.collect_schema()
         return lf.collect()
 
     def to_wide(
@@ -294,6 +311,7 @@ class ARD:
         values: str = "stat",
         aggregate: str = "first",
     ) -> pl.DataFrame:
+        """Pivot the ARD into a wide grid, formatting stats unless a value column is provided."""
         df = self.unnest(["groups", "subgroups", "context"])
 
         if columns is None:
@@ -415,6 +433,7 @@ class ARD:
         )
 
     def get_stats(self, include_metadata: bool = False) -> pl.DataFrame:
+        """Return a DataFrame of metric values with optional stat metadata columns."""
         df = self._lf.select(["metric", "stat"]).collect()
 
         values = [ARD._stat_value(stat) for stat in df["stat"]]
@@ -439,6 +458,7 @@ class ARD:
     # ------------------------------------------------------------------
 
     def summary(self) -> dict[str, Any]:
+        """Summarise key counts and distinct values present in the collected ARD."""
         df = self.collect()
         return {
             "n_rows": len(df),
@@ -453,6 +473,7 @@ class ARD:
         }
 
     def describe(self) -> None:
+        """Print a simple console summary and preview of the ARD contents."""
         summary = self.summary()
         print("=" * 50)
         print(f"ARD Summary: {summary['n_rows']} results")

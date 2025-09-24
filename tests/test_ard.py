@@ -106,9 +106,7 @@ class TestARDBasics:
         )
 
         ard = ARD(df)
-        filtered = ARD(
-            ard.lazy.filter(pl.col("groups").struct.field("trt") == "A")
-        )
+        filtered = ARD(ard.lazy.filter(pl.col("groups").struct.field("trt") == "A"))
         assert len(filtered) == 2
 
     def test_filter_by_metrics(self) -> None:
@@ -133,9 +131,7 @@ class TestARDBasics:
         filtered = ARD(ard.lazy.filter(pl.col("metric") == "mae"))
         assert len(filtered) == 2
 
-        filtered_all = ARD(
-            ard.lazy.filter(pl.col("metric").is_in(["mae", "rmse"]))
-        )
+        filtered_all = ARD(ard.lazy.filter(pl.col("metric").is_in(["mae", "rmse"])))
         assert len(filtered_all) == 3
 
     def test_filter_missing_group_key(self) -> None:
@@ -345,7 +341,9 @@ class TestARDStatHandling:
                 },
                 {
                     "metric": "ci",
-                    "stat": stat_struct(type="struct", value_struct={"lower": 2.5, "upper": 3.5}),
+                    "stat": stat_struct(
+                        type="struct", value_struct={"lower": 2.5, "upper": 3.5}
+                    ),
                 },
             ]
         )
