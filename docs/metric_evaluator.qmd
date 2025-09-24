@@ -11,7 +11,24 @@ It handles hierarchical aggregations, grouping, filtering, and manages the entir
 Polars `DataFrame` while exposing helpers (`collect()`, `to_ard()`) for
 retrieving the canonical ARD representation when needed.
 
-# Example Data
+## Evaluator Inputs
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `df` | `pl.DataFrame | pl.LazyFrame` | Source data. The evaluator keeps it lazy internally. |
+| `metrics` | `MetricDefine | list[MetricDefine]` | Metric definitions to execute. Use lists to mix different aggregation types. |
+| `ground_truth` | `str` | Column containing observed values. Defaults to `"actual"`. |
+| `estimates` | `str | list[str] | dict[str, str]` | Model predictions to compare against `ground_truth`. Dict form lets you control display labels. |
+| `group_by` | `list[str] | dict[str, str] | None` | Optional columns for cohort-level summaries (e.g., treatment, site). |
+| `subgroup_by` | `list[str] | dict[str, str] | None` | Optional stratifiers that fan out into subgroup-specific rows. |
+| `scope` (per metric) | `MetricScope | None` | Overrides default grouping for a metric (`global`, `model`, `group`). |
+| `filter_expr` | `pl.Expr | None` | Optional Polars filter applied once up front. |
+| `error_params` | `dict[str, dict[str, Any]] | None` | Overrides for error expressions registered in `MetricRegistry`. |
+
+Throughout this page we reuse the synthetic dataset produced by
+`generate_sample_data` so the examples stay reproducible.
+
+## Example Data
 
 ```{python}
 import polars as pl
@@ -25,9 +42,9 @@ data = generate_sample_data(n_subjects=6, n_visits=3, n_groups=2)
 data
 ```
 
-# Examples 
+## Quick Start
 
-## Simple Example 
+### Basic evaluation
 
 ```{python}
 # Define metrics
@@ -44,10 +61,35 @@ evaluator = MetricEvaluator(
     estimates=["model1", "model2"],
 )
 
-evaluator.evaluate()
+basic_res = evaluator.evaluate()
+basic_res
 ```
 
-## Real Example 
+`basic_res` is an `EvaluationResult`. The default view keeps core summary
+columns (`metric`, `estimate`, `value`, and any group labels) while hiding struct
+payloads and diagnostic fields for readability. Use the helpers below when you
+need alternate representations:
+
+```{python}
+# Collect the canonical ARD representation (struct columns intact)
+basic_res.collect()
+
+# Access the underlying ARD helper for advanced utilities
+basic_res.to_ard()
+
+# Materialise a verbose view (struct + diagnostic columns)
+basic_verbose = evaluator.evaluate(verbose=True)
+basic_verbose.columns
+```
+
+Need to stay lazy? Pass `collect=False` to obtain a `LazyFrame` for further
+composition before materialising the result:
+
+```{python}
+basic_lazy = evaluator.evaluate(collect=False)
+```
+
+### Adding groups and scopes
 
 ```{python}
 # Define metrics
@@ -72,14 +114,26 @@ res = evaluator.evaluate()
 res
 ```
 
-The resulting `DataFrame` keeps the formatted `value` column alongside optional `id` structs for entity-level metrics, while the `stat` struct preserves type-specific details for downstream access.
+The evaluation output keeps a lightweight `value` column for quick inspection, but the
+full detail lives in the `stat` struct and the companion `stat_fmt`, `warning`, and
+`error` columns. Use these when you need typed payloads or diagnostics.
+
+When a `MetricInfo` declares `value_kind="int"`, the evaluator stores the integer
+value under `stat.value_int`, ready for reuse in downstream calculations:
 
 ```{python}
 # Grab integer counts for the subject metrics
-res.filter(pl.col("metric") == "n_subject").with_columns(
+res_verbose = evaluator.evaluate(verbose=True)
+res_verbose.filter(pl.col("metric") == "n_subject").with_columns(
     pl.col("stat").struct.field("value_int").alias("subject_count")
 )
 ```
+
+### Structured payloads and custom formatting
+
+When a metric returns more than a single scalar, surface it as a struct and
+optionally supply a formatter. The evaluator keeps the struct in
+`stat.value_struct` while the formatter drives `stat_fmt`:
 
 ```{python}
 # Register a metric that surfaces a richer payload as a struct
@@ -89,24 +143,33 @@ MetricRegistry.register_metric(
         expr=pl.struct(
             [
                 pl.col("absolute_error").mean().alias("mean"),
-                (pl.col("absolute_error").mean() - 0.5).alias("lower"),
-                (pl.col("absolute_error").mean() + 0.5).alias("upper"),
+                pl.col("absolute_error").std().alias("sd"),
             ]
         ),
-        value_kind="struct",
+        format="{0[mean]:.1f} +/- {0[sd]:.1f}",
     ),
 )
 
-MetricEvaluator(
+evaluator = MetricEvaluator(
     df=data,
     metrics=MetricDefine(name="mae_with_bounds"),
     ground_truth="actual",
     estimates=["model1"],
-).evaluate()["stat"].struct.field("value_struct")[0]
+)
+
+bounds_res = evaluator.evaluate(verbose=True)
+bounds_res.select(["metric", "estimate", "stat_fmt"]).head()
+
+# Inspect the struct payload when needed
+bounds_res.select(["metric", "stat"]).head()
 ```
 
+### Pivot helpers
+
+Both `pivot_by_group()` and `pivot_by_model()` reshape the evaluation output
+into presentation-friendly tables while keeping formatted columns intact:
+
 ```{python}
-# Built-in helpers make it easy to pivot by group or model
 evaluator.pivot_by_group()
 ```
 
@@ -114,9 +177,13 @@ evaluator.pivot_by_group()
 evaluator.pivot_by_model()
 ```
 
-# Subject-level Metrics
+## Subject-level metrics
 
-## Within Subject Metrics
+Subject-oriented aggregations either keep identifiers for every subject (`within_subject`)
+or summarise subject-level results into a single row (`across_subject`). The evaluator
+handles the hierarchical grouping and preserves entity identifiers in the `id` struct.
+
+### Within-subject metrics
 
 ```{python}
 within_subject_metrics = MetricDefine(
@@ -136,13 +203,16 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
+The resulting rows include an `id` struct with the subject identifiers, which makes
+it easy to join back to other subject-level metadata:
+
 ```{python}
 # Inspect subject identifiers carried in the id struct
 evaluator.evaluate().unnest(["id"])
 ```
 
 
-## Across subject metrics
+### Across-subject metrics
 
 ```{python}
 across_subject_metrics = MetricDefine(
@@ -161,7 +231,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Combining within and between subject metrics 
+### Combining subject-level views
 
 ```{python}
 # Combine the metric lists using list concatenation or unpacking
@@ -178,9 +248,13 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-# Visit-level Metrics
+## Visit-level metrics
 
-## Within Visit Metrics
+Visit metrics mirror the subject patterns but operate on combined `subject_id` / `visit_id`
+keys. Use `within_visit` to keep per-visit rows and `across_visit` to summarize the visit
+distribution.
+
+### Within-visit metrics
 
 ```{python}
 within_visit_metrics = MetricDefine(
@@ -199,7 +273,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Across Visit Metrics
+### Across-visit metrics
 
 ```{python}
 across_visit_metrics = MetricDefine(
@@ -218,7 +292,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Combining within and between visit metrics 
+### Combining visit-level views
 
 ```{python}
 evaluator = MetricEvaluator(
@@ -234,9 +308,13 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-# Scope 
+## Metric scopes
 
-## Global Scope 
+Scopes override the default behaviour that evaluates every metric per estimate and group.
+`global` collapses everything into a single row, `group` keeps one row per group value, and
+`model` isolates each estimate regardless of group columns.
+
+### Global scope
 
 Global scope metrics compute a single value across the entire dataset, ignoring model and group distinctions.
 
@@ -258,7 +336,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Group Scope
+### Group scope
 
 Group scope metrics compute one value per group, aggregating across all models.
 
@@ -279,7 +357,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Model Scope
+### Model scope
 
 Model scope metrics compute one value per model, ignoring group distinctions.
 
@@ -300,9 +378,13 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-# Grouping and Stratification
+## Grouping and stratification
 
-## Group-By Analysis
+Use `group_by` to partition metrics into cohorts (for example, by treatment arm) and
+`subgroup_by` to explode each cohort into additional breakdowns such as gender or race.
+Both arguments accept either a list of column names or a mapping to display labels.
+
+### Group-by analysis
 
 ```{python}
 # Evaluate metrics by treatment group
@@ -317,7 +399,7 @@ evaluator = MetricEvaluator(
 evaluator.evaluate()
 ```
 
-## Subgroup Analysis
+### Subgroup analysis
 
 ```{python}
 # Evaluate with subgroup stratification (gender and race already in data)
@@ -331,4 +413,28 @@ evaluator = MetricEvaluator(
 )
 
 evaluator.evaluate()
+```
+
+## Filtering and reuse
+
+Large evaluations can be expensive. Two conveniences help keep things fast:
+
+- `evaluate(metrics=..., estimates=...)` lets you rerun the evaluator on a subset of the
+  originally configured metrics or estimates without rebuilding the instance.
+- `filter(metrics=..., estimates=...)` returns a lightweight evaluator that shares the same
+  lazy frame and cached error columns.
+
+Results are cached by `(metric, estimate)` combination, so repeating the same call avoids
+recomputation. Call `clear_cache()` when the underlying data changes or you want a fresh
+evaluation.
+
+```{python}
+# Re-evaluate only MAE for model1 using the cached pipeline
+evaluator.evaluate(metrics=MetricDefine(name="mae"), estimates="model1")
+```
+
+```{python}
+# Or create a filtered evaluator for model2-only summaries
+model2_eval = evaluator.filter(estimates="model1")
+model2_eval.evaluate()
 ```

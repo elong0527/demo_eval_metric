@@ -131,7 +131,9 @@ class TestQuickstartIntegration:
             estimates=["model1", "model2"],
             group_by=["treatment"],
         )
-        framework_result = evaluator.evaluate().sort(["treatment", "estimate"])
+        framework_result = evaluator.evaluate(verbose=True).sort(
+            ["treatment", "estimate"]
+        )
 
         # Compare MAE values for each treatment/model combination
         framework_a_m1 = framework_result.filter(

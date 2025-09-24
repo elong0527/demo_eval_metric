@@ -97,6 +97,39 @@ class TestMetricEvaluatorBasic:
         assert df["metric"][0] == "mae"
         assert df["estimate"][0] == "model_a"
 
+    def test_minimal_view_drops_details(self, grouped_metric_df):
+        """Dropping detail columns should remove stat/stat_fmt/context/warnings/errors."""
+
+        evaluator = MetricEvaluator(
+            df=grouped_metric_df,
+            metrics=[MetricDefine(name="mae")],
+            ground_truth="actual",
+            estimates=["model_a"],
+            group_by=["treatment"],
+        )
+
+        minimal = evaluator.evaluate()
+        hidden_cols = {"stat", "stat_fmt", "context", "warning", "error"}
+        assert hidden_cols.isdisjoint(set(minimal.columns))
+
+        # Columns remain accessible via __getitem__ fallback
+        stat_series = minimal["stat"]
+        assert isinstance(stat_series, pl.Series)
+        assert stat_series.len() == minimal.height
+
+    def test_verbose_flag(self, metric_sample_df):
+        """verbose=True should keep struct and detail columns visible."""
+
+        evaluator = MetricEvaluator(
+            df=metric_sample_df,
+            metrics=[MetricDefine(name="mae")],
+            ground_truth="actual",
+            estimates=["model_a"],
+        )
+
+        verbose = evaluator.evaluate(verbose=True)
+        assert {"stat", "context", "id", "groups"}.issubset(set(verbose.columns))
+
 
 class TestMetricEvaluatorScopes:
     """Test all MetricScope types"""

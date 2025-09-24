@@ -70,8 +70,8 @@ class TestQuickstartGroupedEvaluation:
             "metric",
             "label",
             "value",
-            "stat",
             "metric_type",
+            "scope",
         ]
         for col in expected_cols:
             assert col in result.columns
@@ -283,7 +283,7 @@ class TestQuickstartEquivalentCalculations:
             estimates="model1",
             group_by=["treatment"],
         )
-        framework_result = evaluator.evaluate().sort("treatment")
+        framework_result = evaluator.evaluate(verbose=True).sort("treatment")
 
         # Direct Polars calculation
         direct_result = (

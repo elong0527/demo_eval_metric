@@ -217,6 +217,7 @@ class MetricEvaluator:
         estimates: str | list[str] | None = None,
         *,
         collect: bool = True,
+        verbose: bool = False,
     ) -> ARD | pl.LazyFrame | "EvaluationResult":
         """
         Unified evaluation method returning ARD format.
@@ -225,6 +226,11 @@ class MetricEvaluator:
             metrics: Subset of metrics to evaluate (None = use all configured)
             estimates: Subset of estimates to evaluate (None = use all configured)
             collect: When False, return a ``LazyFrame`` rather than an ``ARD`` instance
+            verbose: When True, return the full ARD-aligned structure including struct
+                columns (``id``, ``groups``, ``subgroups``) and diagnostic fields
+                (``stat``, ``stat_fmt``, ``context``, ``warning``, ``error``). When False,
+                the view is flattened and those diagnostic columns are omitted while
+                remaining accessible through ``to_ard()`` or direct column access.
 
         Returns:
             :class:`EvaluationResult` (subclass of ``polars.DataFrame``), or a ``LazyFrame``
@@ -236,7 +242,7 @@ class MetricEvaluator:
         if not collect:
             return ard.lazy
 
-        return EvaluationResult(ard)
+        return EvaluationResult(ard, verbose=verbose)
 
     def _convert_to_ard(self, result_lf: pl.LazyFrame) -> ARD:
         """Convert the evaluator output into the canonical ARD columns lazily."""
@@ -1764,7 +1770,22 @@ class MetricEvaluator:
 class EvaluationResult(pl.DataFrame):
     """DataFrame-like wrapper around ARD results with convenience accessors."""
 
-    def __init__(self, ard: ARD) -> None:
+    def __init__(self, ard: ARD, *, verbose: bool) -> None:
+        visible_df, full_df = self._prepare_frames(ard, verbose=verbose)
+
+        super().__init__(visible_df)
+        self._ard = ard
+        self._full_df = full_df
+        self._verbose = verbose
+
+    @staticmethod
+    def _prepare_frames(
+        ard: ARD,
+        *,
+        verbose: bool,
+    ) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Return the visible and full DataFrame representations."""
+
         long_df = ard.to_long()
 
         group_sort_cols = list(ard._group_fields)
@@ -1812,8 +1833,56 @@ class EvaluationResult(pl.DataFrame):
         ]
         long_df = long_df.select(ordered_columns + remaining_columns)
 
-        super().__init__(long_df)
-        self._ard = ard
+        if verbose:
+            visible_df = long_df
+        else:
+            visible_df = EvaluationResult._flatten_struct_columns(
+                long_df,
+                group_fields=ard._group_fields,
+                subgroup_fields=ard._subgroup_fields,
+            )
+            detail_cols = [
+                col
+                for col in ("stat", "stat_fmt", "context", "warning", "error")
+                if col in visible_df.columns
+            ]
+            if detail_cols:
+                visible_df = visible_df.drop(detail_cols)
+
+        return visible_df, long_df
+
+    @staticmethod
+    def _flatten_struct_columns(
+        df: pl.DataFrame,
+        *,
+        group_fields: tuple[str, ...],
+        subgroup_fields: tuple[str, ...],
+    ) -> pl.DataFrame:
+        """Flatten struct columns for a compact DataFrame view."""
+
+        working = df
+
+        if "groups" in working.columns and group_fields:
+            group_exprs = [
+                pl.col("groups").struct.field(field).alias(field)
+                for field in group_fields
+            ]
+            working = working.with_columns(group_exprs)
+
+        if "subgroups" in working.columns and subgroup_fields:
+            subgroup_exprs = [
+                pl.col("subgroups").struct.field(field).alias(field)
+                for field in subgroup_fields
+            ]
+            working = working.with_columns(subgroup_exprs)
+
+        drop_cols = [
+            col for col in ("id", "groups", "subgroups") if col in working.columns
+        ]
+        if drop_cols:
+            working = working.drop(drop_cols)
+
+        return working
 
     def collect(self) -> pl.DataFrame:
         """Return the canonical ARD table with struct columns."""
@@ -1827,20 +1896,35 @@ class EvaluationResult(pl.DataFrame):
         """Return a copy of the flattened DataFrame representation."""
         return pl.DataFrame(self)
 
+    def __getitem__(self, item: object) -> object:
+        """Provide transparent access to struct columns from the full view."""
+
+        if isinstance(item, str):
+            if item not in self.columns and item in self._full_df.columns:
+                return self._full_df[item]
+        elif isinstance(item, (list, tuple)):
+            missing = [col for col in item if col not in self.columns]
+            if missing and all(col in self._full_df.columns for col in missing):
+                return self._full_df[item]
+
+        return super().__getitem__(item)
+
     def unnest(
         self,
         columns: str | "Selector" | Collection[str | "Selector"],
         *args: Any,
         **kwargs: Any,
     ) -> pl.DataFrame:
-        """Delegate unnest operations to the structured ARD representation."""
-        df = self._ard.collect()
+        """Delegate unnest operations to the structured representation."""
+
+        df = self._full_df
         if isinstance(columns, str):
             cols: list[str | "Selector"] = [columns]
         elif isinstance(columns, Collection):
             cols = list(columns)
         else:
             cols = [columns]
+
         safe_cols: list[str | "Selector"] = []
         schema = df.schema
         for col in cols:
@@ -1850,6 +1934,17 @@ class EvaluationResult(pl.DataFrame):
                     continue
             safe_cols.append(col)
 
-        if safe_cols:
-            return df.unnest(safe_cols, *args, **kwargs)
-        return df
+        if not safe_cols:
+            return df
+
+        df_work = df
+        for col in safe_cols:
+            if isinstance(col, str):
+                dtype = schema.get(col)
+                if isinstance(dtype, pl.Struct):
+                    field_names = [field.name for field in dtype.fields]
+                    duplicates = [name for name in field_names if name in df_work.columns]
+                    if duplicates:
+                        df_work = df_work.drop(duplicates)
+
+        return df_work.unnest(safe_cols, *args, **kwargs)
