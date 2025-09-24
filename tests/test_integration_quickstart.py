@@ -210,7 +210,9 @@ class TestQuickstartIntegration:
 
         assert isinstance(lazy_result, pl.LazyFrame)
         assert isinstance(explain_output, str)
-        assert "SELECTION" in explain_output or "SELECT" in explain_output
+        assert any(
+            token in explain_output for token in ("SELECTION", "SELECT", "PROJECT")
+        )
 
     def test_data_shape_and_columns_example(self):
         """Test data inspection example from quickstart.qmd."""

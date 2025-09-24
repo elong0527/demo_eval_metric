@@ -48,7 +48,11 @@ class TestARDBasics:
     def test_empty_ard(self) -> None:
         ard = ARD()
         assert len(ard) == 0
-        assert ard.collect().shape == (0, 8)
+        collected = ard.collect()
+        assert collected.shape == (0, 11)
+        assert collected.schema["stat_fmt"] == pl.Utf8
+        assert collected.schema["warning"] == pl.List(pl.Utf8)
+        assert collected.schema["error"] == pl.List(pl.Utf8)
 
     def test_empty_get_stats(self) -> None:
         ard = ARD()
@@ -316,6 +320,38 @@ class TestARDTransformations:
         assert round_tripped["groups"][1] is None
         assert round_tripped["context"][1] is None
 
+    def test_to_long_prefers_cached_format(self) -> None:
+        df = dataset(
+            [
+                {
+                    "metric": "mae",
+                    "estimate": "model1",
+                    "stat": stat_struct(type="float", value_float=3.14159),
+                    "stat_fmt": "cached-mae",
+                }
+            ]
+        )
+        ard = ARD(df)
+        long_df = ard.to_long()
+        assert "value" in long_df.columns
+        assert long_df["value"][0] == "cached-mae"
+
+    def test_to_wide_prefers_cached_format(self) -> None:
+        df = dataset(
+            [
+                {
+                    "metric": "mae",
+                    "estimate": "model1",
+                    "stat": stat_struct(type="float", value_float=1.23456),
+                    "stat_fmt": "cached-wide",
+                }
+            ]
+        )
+        ard = ARD(df)
+        wide = ard.to_wide(index=["estimate"], columns=["metric"])
+        assert "mae" in wide.columns
+        assert wide["mae"][0] == "cached-wide"
+
 
 class TestARDStatHandling:
     """Test stat value handling."""
@@ -379,6 +415,7 @@ class TestARDStatHandling:
         with_meta = ard.get_stats(include_metadata=True)
         assert "type" in with_meta.columns
         assert "format" in with_meta.columns
+        assert "formatted" in with_meta.columns
 
 
 class TestARDDisplay:

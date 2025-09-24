@@ -63,6 +63,9 @@ class ARD:
                 "metric": pl.Series([], dtype=pl.Utf8),
                 "label": pl.Series([], dtype=pl.Utf8),
                 "stat": pl.Series([], dtype=stat_dtype),
+                "stat_fmt": pl.Series([], dtype=pl.Utf8),
+                "warning": pl.Series([], dtype=pl.List(pl.Utf8)),
+                "error": pl.Series([], dtype=pl.List(pl.Utf8)),
                 "context": pl.Series([], dtype=pl.Struct([])),
             }
         )
@@ -110,6 +113,9 @@ class ARD:
                 "metric",
                 "label",
                 "stat",
+                "stat_fmt",
+                "warning",
+                "error",
                 "context",
             ]
             if col in available
@@ -210,7 +216,7 @@ class ARD:
         elif isinstance(value, (dict, list, tuple)):
             rendered = json.dumps(value)
         else:
-            rendered = "" if value is None else str(value)
+            rendered = None if value is None else str(value)
 
         return rendered
 
@@ -324,11 +330,25 @@ class ARD:
             index = [col for col in df.columns if col not in columns + [values, "stat"]]
 
         if values == "stat":
-            df = df.with_columns(
-                pl.col("stat")
-                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
-                .alias("_value")
-            )
+            if "stat_fmt" in df.columns:
+                formatted_expr = (
+                    pl.when(pl.col("stat_fmt").is_null())
+                    .then(
+                        pl.col("stat").map_elements(
+                            ARD._format_stat, return_dtype=pl.Utf8
+                        )
+                    )
+                    .otherwise(pl.col("stat_fmt"))
+                    .alias("_value")
+                )
+            else:
+                formatted_expr = (
+                    pl.col("stat")
+                    .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                    .alias("_value")
+                )
+
+            df = df.with_columns(formatted_expr)
             values = "_value"
 
         if not index or all(df[col].null_count() == len(df) for col in index):
@@ -389,12 +409,27 @@ class ARD:
                 lf = lf.unnest("context")
 
         # Handle stat column specially to extract value
-        if "stat" in lf.collect_schema().names():
-            lf = lf.with_columns(
-                pl.col("stat")
-                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
-                .alias("value")
-            )
+        schema_names = lf.collect_schema().names()
+        if "stat" in schema_names:
+            if "stat_fmt" in schema_names:
+                value_expr = (
+                    pl.when(pl.col("stat_fmt").is_null())
+                    .then(
+                        pl.col("stat").map_elements(
+                            ARD._format_stat, return_dtype=pl.Utf8
+                        )
+                    )
+                    .otherwise(pl.col("stat_fmt"))
+                    .alias("value")
+                )
+            else:
+                value_expr = (
+                    pl.col("stat")
+                    .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                    .alias("value")
+                )
+
+            lf = lf.with_columns(value_expr)
 
         return lf.collect()
 
@@ -434,19 +469,28 @@ class ARD:
 
     def get_stats(self, include_metadata: bool = False) -> pl.DataFrame:
         """Return a DataFrame of metric values with optional stat metadata columns."""
-        df = self._lf.select(["metric", "stat"]).collect()
+        select_cols = ["metric", "stat"]
+        schema_names = self._lf.collect_schema().names()
+        if "stat_fmt" in schema_names:
+            select_cols.append("stat_fmt")
+        df = self._lf.select(select_cols).collect()
 
         values = [ARD._stat_value(stat) for stat in df["stat"]]
 
         if include_metadata:
             types = [stat.get("type") if stat else None for stat in df["stat"]]
             formats = [stat.get("format") if stat else None for stat in df["stat"]]
+            if "stat_fmt" in df.columns:
+                formatted = df["stat_fmt"].to_list()
+            else:
+                formatted = [None] * len(df)
             return pl.DataFrame(
                 {
                     "metric": df["metric"],
                     "value": values,
                     "type": types,
                     "format": formats,
+                    "formatted": formatted,
                 },
                 strict=False,
             )

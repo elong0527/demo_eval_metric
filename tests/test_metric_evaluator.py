@@ -65,7 +65,10 @@ class TestMetricEvaluatorBasic:
             "metric",
             "label",
             "stat",
+            "stat_fmt",
             "context",
+            "warning",
+            "error",
             "id",
         }
         assert set(df["metric"].unique()) == {"mae", "rmse"}
@@ -763,3 +766,48 @@ class TestMetricEvaluatorEdgeCases:
         df = result.collect()
         stats = result.to_ard().get_stats()
         assert stats["value"][0] == 2.375  # MAE should be 2.375
+
+
+class TestMetricEvaluatorDiagnostics:
+    """Ensure diagnostics columns capture formatter output and failures."""
+
+    def test_stat_fmt_defaults(self, metric_sample_df):
+        evaluator = MetricEvaluator(
+            df=metric_sample_df,
+            metrics=[MetricDefine(name="mae")],
+            ground_truth="actual",
+            estimates=["model_a"],
+        )
+
+        result = evaluator.evaluate()
+        df = result.collect()
+        assert df["stat_fmt"].null_count() == 0
+        assert all(isinstance(val, str) for val in df["stat_fmt"].to_list())
+        assert all(row == [] for row in df["warning"].to_list())
+        assert all(row == [] for row in df["error"].to_list())
+        long_df = result.to_ard().to_long()
+        assert long_df["value"][0] == df["stat_fmt"][0]
+
+    def test_error_capture(self, metric_sample_df):
+        broken_metric = MetricDefine(
+            name="broken_metric",
+            type=MetricType.ACROSS_SAMPLE,
+            scope=MetricScope.GLOBAL,
+            across_expr=pl.col("does_not_exist").mean(),
+        )
+
+        evaluator = MetricEvaluator(
+            df=metric_sample_df,
+            metrics=[broken_metric],
+            ground_truth="actual",
+            estimates=["model_a"],
+        )
+
+        result = evaluator.evaluate()
+        df = result.collect()
+        assert df["error"].to_list()[0], "error column should include diagnostics"
+        assert df["warning"].to_list()[0] == []
+        stats = result.to_ard().get_stats(include_metadata=True)
+        assert stats["formatted"][0] is None
+        long_df = result.to_ard().to_long()
+        assert long_df["value"][0] is None

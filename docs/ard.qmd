@@ -52,7 +52,10 @@ these columns.
 | `metric` | `pl.Enum` | Metric name registered in the metric registry. |
 | `label` | `pl.Utf8`| Human-readable display label |
 | `stat` | `pl.Struct` | Typed value container (see below). |
+| `stat_fmt` | `pl.Utf8` | Default formatted presentation of the statistic. |
 | `context` | `pl.Struct` | Metadata describing how the metric was computed. |
+| `warning` | `pl.List(pl.Utf8)` | Captured warnings generated while evaluating the metric. |
+| `error` | `pl.List(pl.Utf8)` | Captured errors when evaluation falls back to placeholders. |
 | `id` | `pl.Struct` | Entity identifiers for within-subject / visit metrics. |
 
 The `stat` struct splits the stored result across typed channels:
@@ -60,7 +63,9 @@ The `stat` struct splits the stored result across typed channels:
 - `type`: value hint such as `"float"`, `"int"`, `"bool"`, `"string"`, or `"struct"`
 - `value_float`, `value_int`, `value_bool`, `value_str`, `value_struct`: mutually exclusive
   slots for the actual statistic
-- `format`: optional Python format string used when rendering
+- `format`: optional Python format string used when rendering. The rendered value is kept in `stat_fmt` so downstream code can use either the raw struct or the default text representation without recomputing formatting.
+
+Any warnings or errors that occur while evaluating a metric are preserved in the `warning` and `error` list columns. When evaluation succeeds both columns contain empty lists; if an expression fails, the ARD still returns a placeholder row with the captured diagnostic message so the failure is visible without breaking collection.
 
 # Producing ARD from an Evaluation
 
@@ -105,6 +110,7 @@ Collecting produces the backward-compatible table with struct columns:
 
 ```{python}
 canonical = ard.collect()
+canonical
 ```
 
 The typed `stat` payload is preserved even though the `value` column is purely presentational:

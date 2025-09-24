@@ -8,6 +8,7 @@ using Polars LazyFrames with comprehensive support for scopes, groups, and subgr
 """
 
 from collections.abc import Collection, Iterable
+import warnings
 from typing import TYPE_CHECKING, Any, Sequence
 
 # pyre-strict
@@ -298,6 +299,27 @@ class MetricEvaluator:
             ]
         )
 
+        warning_expr = (
+            pl.col("_diagnostic_warning")
+            if "_diagnostic_warning" in schema.names()
+            else pl.lit([], dtype=pl.List(pl.Utf8))
+        )
+        error_expr = (
+            pl.col("_diagnostic_error")
+            if "_diagnostic_error" in schema.names()
+            else pl.lit([], dtype=pl.List(pl.Utf8))
+        )
+
+        ard_frame = ard_frame.with_columns(
+            [
+                pl.col("stat")
+                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                .alias("stat_fmt"),
+                warning_expr.alias("warning"),
+                error_expr.alias("error"),
+            ]
+        )
+
         cleanup_cols = [
             "_value_kind",
             "_value_format",
@@ -306,6 +328,8 @@ class MetricEvaluator:
             "_value_bool",
             "_value_str",
             "_value_struct",
+            "_diagnostic_warning",
+            "_diagnostic_error",
         ]
         schema_names = set(schema.names())
         drop_cols = [col for col in cleanup_cols if col in schema_names]
@@ -967,15 +991,76 @@ class MetricEvaluator:
         if handler is None:
             raise ValueError(f"Unknown metric type: {metric.type}")
 
-        result, result_info = handler(
-            df_filtered,
+        warning_messages: list[str]
+        error_messages: list[str]
+
+        try:
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                result, result_info = handler(
+                    df_filtered,
+                    metric,
+                    group_cols,
+                    within_infos,
+                    across_info,
+                )
+                collected_result = result.collect()
+        except Exception as exc:
+            warning_messages = [
+                self._format_warning_message(record)
+                for record in locals().get("caught_warnings", [])
+            ]
+            error_messages = [self._format_exception_message(exc, metric.name)]
+            result_info = self._fallback_metric_info(metric, within_infos, across_info)
+            result = self._prepare_error_lazyframe(group_cols)
+        else:
+            warning_messages = [
+                self._format_warning_message(record) for record in caught_warnings
+            ]
+            error_messages = []
+            result = collected_result.lazy()
+
+        return self._add_metadata_vectorized(
+            result,
             metric,
-            group_cols,
-            within_infos,
-            across_info,
+            result_info,
+            warnings_list=warning_messages,
+            errors_list=error_messages,
         )
 
-        return self._add_metadata_vectorized(result, metric, result_info)
+    @staticmethod
+    def _format_warning_message(record: warnings.WarningMessage) -> str:
+        return warnings.formatwarning(
+            record.message,
+            record.category,
+            record.filename,
+            record.lineno,
+            line=record.line,
+        ).strip()
+
+    @staticmethod
+    def _format_exception_message(exc: Exception, metric_name: str) -> str:
+        return f"{metric_name}: {type(exc).__name__}: {exc}".strip()
+
+    @staticmethod
+    def _fallback_metric_info(
+        metric: MetricDefine,
+        within_infos: Sequence[MetricInfo] | None,
+        across_info: MetricInfo | None,
+    ) -> MetricInfo:
+        if within_infos:
+            return within_infos[0]
+        if across_info is not None:
+            return across_info
+        return MetricInfo(expr=pl.lit(None).alias("value"), value_kind="float")
+
+    @staticmethod
+    def _prepare_error_lazyframe(group_cols: Sequence[str]) -> pl.LazyFrame:
+        data: dict[str, list[Any]] = {}
+        for col in group_cols:
+            data[col] = [None]
+        data["value"] = [None]
+        return pl.DataFrame(data, strict=False).lazy()
 
     def _evaluate_across_sample_metric(
         self,
@@ -1166,7 +1251,13 @@ class MetricEvaluator:
             return []
 
     def _add_metadata_vectorized(
-        self, result: pl.LazyFrame, metric: MetricDefine, info: MetricInfo
+        self,
+        result: pl.LazyFrame,
+        metric: MetricDefine,
+        info: MetricInfo,
+        *,
+        warnings_list: Sequence[str] | None = None,
+        errors_list: Sequence[str] | None = None,
     ) -> pl.LazyFrame:
         """Add metadata columns to vectorized result"""
 
@@ -1184,6 +1275,17 @@ class MetricEvaluator:
         ]
 
         result = result.with_columns(metadata_columns)
+
+        diagnostics_columns = [
+            pl.lit(list(warnings_list or []), dtype=pl.List(pl.Utf8)).alias(
+                "_diagnostic_warning"
+            ),
+            pl.lit(list(errors_list or []), dtype=pl.List(pl.Utf8)).alias(
+                "_diagnostic_error"
+            ),
+        ]
+
+        result = result.with_columns(diagnostics_columns)
 
         # Attach entity identifiers for within-entity metrics
         result = self._attach_entity_identifier(result, metric)
@@ -1310,11 +1412,24 @@ class MetricEvaluator:
 
         if "stat" in schema.names():
             exprs.append(pl.col("stat"))
-            exprs.append(
-                pl.col("stat")
-                .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
-                .alias("value")
-            )
+            if "stat_fmt" in schema.names():
+                exprs.append(pl.col("stat_fmt"))
+                exprs.append(
+                    pl.when(pl.col("stat_fmt").is_null())
+                    .then(
+                        pl.col("stat").map_elements(
+                            ARD._format_stat, return_dtype=pl.Utf8
+                        )
+                    )
+                    .otherwise(pl.col("stat_fmt"))
+                    .alias("value")
+                )
+            else:
+                exprs.append(
+                    pl.col("stat")
+                    .map_elements(ARD._format_stat, return_dtype=pl.Utf8)
+                    .alias("value")
+                )
 
         if "id" in schema.names():
             exprs.append(pl.col("id"))
@@ -1659,7 +1774,10 @@ class EvaluationResult(pl.DataFrame):
             "label",
             "value",
             "stat",
+            "stat_fmt",
             "context",
+            "warning",
+            "error",
         ]
         ordered_columns = [col for col in preferred_order if col in long_df.columns]
         remaining_columns = [
