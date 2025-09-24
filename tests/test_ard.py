@@ -48,7 +48,7 @@ class TestARDBasics:
     def test_empty_ard(self) -> None:
         ard = ARD()
         assert len(ard) == 0
-        assert ard.collect().shape == (0, 7)
+        assert ard.collect().shape == (0, 8)
 
     def test_empty_get_stats(self) -> None:
         ard = ARD()

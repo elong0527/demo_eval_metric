@@ -63,6 +63,7 @@ class TestMetricEvaluatorBasic:
             "subgroups",
             "estimate",
             "metric",
+            "label",
             "stat",
             "context",
             "id",

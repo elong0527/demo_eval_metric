@@ -660,7 +660,7 @@ class MetricEvaluator:
         section_lookup = {name: cols for name, cols in sections}
 
         group_labels = list(self.group_by.values())
-        group_label_count = len(group_labels)
+        group_label_count: int = len(group_labels)
         group_value_orders: list[dict[Any, int]] = []
 
         if group_label_count:
