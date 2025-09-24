@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Helper functions for creating metrics from various sources.
 
@@ -6,17 +8,22 @@ Simple, functional approach to metric creation without factory classes.
 
 # pyre-strict
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .metric_define import MetricDefine
+from .utils import parse_enum_value
+
+
+if TYPE_CHECKING:
+    from .metric_define import MetricDefine, MetricScope, MetricType
 
 
 def create_metric_from_dict(config: dict[str, Any]) -> MetricDefine:
     """Create a MetricDefine from dictionary configuration."""
-    # Validate configuration before creation
+
     _validate_metric_config(config)
 
-    # Pure creation logic
+    from .metric_define import MetricDefine
+
     return MetricDefine(
         name=config["name"],
         label=config.get("label", config["name"]),
@@ -32,14 +39,14 @@ def create_metrics(configs: list[dict[str, Any]] | list[str]) -> list[MetricDefi
     if not configs:
         return []
 
+    from .metric_define import MetricDefine
+
     if isinstance(configs[0], str):
-        # Type narrow to list[str]
         str_configs: list[str] = configs  # pyre-ignore[9]
         return [MetricDefine(name=name) for name in str_configs]
-    else:
-        # Type narrow to list[dict[str, Any]]
-        dict_configs: list[dict[str, Any]] = configs  # pyre-ignore[9]
-        return [create_metric_from_dict(config) for config in dict_configs]
+
+    dict_configs: list[dict[str, Any]] = configs  # pyre-ignore[9]
+    return [create_metric_from_dict(config) for config in dict_configs]
 
 
 # ========================================
@@ -48,31 +55,28 @@ def create_metrics(configs: list[dict[str, Any]] | list[str]) -> list[MetricDefi
 
 
 def _validate_metric_config(config: dict[str, Any]) -> None:
-    """Validate metric configuration dictionary"""
+    """Validate metric configuration dictionary."""
     if "name" not in config:
         raise ValueError("Metric configuration must include 'name'")
 
     if not isinstance(config["name"], str) or not config["name"].strip():
         raise ValueError("Metric name must be a non-empty string")
 
-    # Validate type if provided
     if "type" in config and config["type"] is not None:
-        valid_types = [
-            "across_sample",
-            "within_subject",
-            "across_subject",
-            "within_visit",
-            "across_visit",
-        ]
-        if isinstance(config["type"], str) and config["type"] not in valid_types:
-            raise ValueError(
-                f"Invalid metric type: '{config['type']}'. Valid options: {valid_types}"
-            )
+        from .metric_define import MetricType
 
-    # Validate scope if provided
+        parse_enum_value(
+            config["type"],
+            MetricType,
+            field="metric type",
+        )
+
     if "scope" in config and config["scope"] is not None:
-        valid_scopes = ["global", "model", "group"]
-        if isinstance(config["scope"], str) and config["scope"] not in valid_scopes:
-            raise ValueError(
-                f"Invalid metric scope: '{config['scope']}'. Valid options: {valid_scopes}"
-            )
+        from .metric_define import MetricScope
+
+        parse_enum_value(
+            config["scope"],
+            MetricScope,
+            field="metric scope",
+            allow_none=True,
+        )

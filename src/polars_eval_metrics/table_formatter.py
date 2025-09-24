@@ -1,13 +1,15 @@
 """Table formatting utilities for polars-eval-metrics."""
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 import polars as pl
 from great_tables import GT, html
 from polars import selectors as cs
 
 from .ard import ARD
+from .utils import parse_json_columns
 
+# pyre-strict
 
 ParsedColumns = dict[str, tuple[str, ...]]
 
@@ -57,7 +59,7 @@ def ard_to_gt(ard: ARD, decimals: int = 1) -> GT:
     # Convert to wide format first
     df = ard_to_wide(ard)
 
-    parsed_columns = _parse_json_columns(df.columns)
+    parsed_columns = parse_json_columns(df.columns)
     stub_builder = _ard_stub_builder(ard, df)
 
     extra_labels: dict[str, Any] = {}
@@ -92,7 +94,7 @@ def _gt_from_wide(
     parsed_columns: ParsedColumns | None = None,
     extra_labels: dict[str, Any] | None = None,
 ) -> GT:
-    parsed = parsed_columns or _parse_json_columns(df.columns)
+    parsed = parsed_columns or parse_json_columns(df.columns)
     gt_table = GT(df)
     if stub_builder is not None:
         gt_table = stub_builder(gt_table)
@@ -156,16 +158,6 @@ def _apply_gt_formatting(
     return gt_table.fmt_number(columns=cs.numeric(), decimals=decimals).cols_align(
         align="center", columns=cs.numeric()
     )
-
-
-def _parse_json_columns(columns: Sequence[str]) -> ParsedColumns:
-    parsed: ParsedColumns = {}
-    for col in columns:
-        if col.startswith('{"') and col.endswith('"}') and '","' in col:
-            inner = col[2:-2]
-            tokens = tuple(inner.split('","'))
-            parsed[col] = tokens
-    return parsed
 
 
 def _pivot_stub_builder(df: pl.DataFrame) -> Callable[[GT], GT] | None:

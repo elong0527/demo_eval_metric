@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from .ard import ARD
 from .metric_define import MetricDefine, MetricScope, MetricType
 from .metric_registry import MetricRegistry, MetricInfo
+from .utils import parse_json_tokens
 
 
 class MetricEvaluator:
@@ -716,12 +717,6 @@ class MetricEvaluator:
             if label in metric_label_order_lookup:
                 return metric_label_order_lookup[label]
             return metric_name_order_lookup.get(label, len(metric_label_order_lookup))
-
-        def parse_json_tokens(column: str) -> tuple[str, ...] | None:
-            if column.startswith('{"') and column.endswith('"}') and '","' in column:
-                inner = column[2:-2]
-                return tuple(inner.split('","'))
-            return None
 
         def group_order(tokens: tuple[str, ...]) -> tuple[int, ...]:
             if not group_label_count:
@@ -1774,8 +1769,8 @@ class EvaluationResult(pl.DataFrame):
         visible_df, full_df = self._prepare_frames(ard, verbose=verbose)
 
         super().__init__(visible_df)
-        self._ard = ard
-        self._full_df = full_df
+        self._ard: ARD = ard
+        self._full_df: pl.DataFrame = full_df
         self._verbose = verbose
 
     @staticmethod
@@ -1943,7 +1938,9 @@ class EvaluationResult(pl.DataFrame):
                 dtype = schema.get(col)
                 if isinstance(dtype, pl.Struct):
                     field_names = [field.name for field in dtype.fields]
-                    duplicates = [name for name in field_names if name in df_work.columns]
+                    duplicates = [
+                        name for name in field_names if name in df_work.columns
+                    ]
                     if duplicates:
                         df_work = df_work.drop(duplicates)
 

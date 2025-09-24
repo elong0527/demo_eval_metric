@@ -6,8 +6,6 @@ providing a single class for defining metrics and preparing Polars expressions.
 """
 
 # pyre-strict
-import textwrap
-
 from enum import Enum
 from typing import Self
 
@@ -15,6 +13,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .metric_registry import MetricRegistry, MetricInfo
+from .utils import format_polars_expr, format_polars_expr_list, parse_enum_value
 
 
 class MetricType(Enum):
@@ -98,53 +97,17 @@ class MetricDefine(BaseModel):
     @classmethod
     def validate_type(cls, v: object) -> MetricType:
         """Convert string to MetricType enum if needed"""
-        if isinstance(v, MetricType):
-            return v
-        if isinstance(v, str):
-            # Try to convert string to enum
-            try:
-                # First try exact match
-                return MetricType(v)
-            except ValueError:
-                # Try case-insensitive match with underscores
-                v_normalized = v.lower().replace("-", "_")
-                for member in MetricType:
-                    if member.value == v_normalized:
-                        return member
-                # List valid options in error message
-                valid_options = [m.value for m in MetricType]
-                raise ValueError(
-                    f"Invalid metric type: '{v}'. Valid options are: {', '.join(valid_options)}"
-                )
-        raise ValueError(f"type must be a MetricType enum or string, got {type(v)}")
+        result = parse_enum_value(v, MetricType, field="metric type")
+        assert isinstance(result, MetricType)
+        return result
 
     @field_validator("scope", mode="before")  # pyre-ignore[56]
     @classmethod
     def validate_scope(cls, v: object) -> MetricScope | None:
         """Convert string to MetricScope enum if needed"""
-        if v is None:
-            return None
-        if isinstance(v, MetricScope):
-            return v
-        if isinstance(v, str):
-            # Try to convert string to enum
-            try:
-                # First try exact match
-                return MetricScope(v)
-            except ValueError:
-                # Try case-insensitive match
-                v_normalized = v.lower()
-                for member in MetricScope:
-                    if member.value == v_normalized:
-                        return member
-                # List valid options in error message
-                valid_options = [m.value for m in MetricScope]
-                raise ValueError(
-                    f"Invalid metric scope: '{v}'. Valid options are: {', '.join(valid_options)}"
-                )
-        raise ValueError(
-            f"scope must be a MetricScope enum, string, or None, got {type(v)}"
-        )
+        result = parse_enum_value(v, MetricScope, field="metric scope", allow_none=True)
+        assert result is None or isinstance(result, MetricScope)
+        return result
 
     @field_validator("within_expr", mode="before")  # pyre-ignore[56]
     @classmethod
@@ -347,91 +310,30 @@ class MetricDefine(BaseModel):
 
         chain_lines = ["(", "  pl.LazyFrame"]
 
-        # Helper to clean and format Polars expressions
-        def clean_expr(expr_str: str) -> str:
-            """Remove Polars internal representation artifacts"""
-            # Remove "dyn type:" prefixes
-            import re
-
-            cleaned = re.sub(r"dyn \w+:\s*", "", expr_str)
-            # Remove outer brackets if they wrap the entire expression
-            if cleaned.startswith("[") and cleaned.endswith("]"):
-                cleaned = cleaned[1:-1]
-            # Clean up nested brackets
-            cleaned = cleaned.replace("[(", "(").replace(")]", ")")
-            return cleaned
-
-        def format_expr(expr: object, max_width: int = 70) -> str:
-            """Format a single expression with text wrapping"""
-            expr_str = clean_expr(str(expr))
-            if isinstance(expr, pl.Expr) and ".alias(" not in expr_str:
-                expr_str = clean_expr(str(expr.alias("value")))
-
-            # If short enough, return as-is
-            if len(expr_str) <= max_width:
-                return expr_str
-
-            # Use textwrap for longer expressions
-            return textwrap.fill(
-                expr_str,
-                width=max_width,
-                subsequent_indent="      ",
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-
-        # Helper to format multiple expressions with proper indentation
-        def format_exprs(exprs: object, indent: str = "    ") -> str:
-            if not isinstance(exprs, list):
-                return str(exprs)
-            exprs_list: list[pl.Expr] = exprs
-            if len(exprs_list) == 1:
-                return format_expr(exprs_list[0])
-            else:
-                # Format as multi-line list for readability
-                lines = ["["]
-                for i, expr in enumerate(exprs_list):
-                    formatted = format_expr(expr)
-                    # Add comma except for last item
-                    comma = "," if i < len(exprs_list) - 1 else ""
-
-                    # Handle multi-line expressions
-                    expr_lines = formatted.split("\n")
-                    if len(expr_lines) == 1:
-                        lines.append(f"{indent}  {formatted}{comma}")
-                    else:
-                        lines.append(f"{indent}  {expr_lines[0]}")
-                        for line in expr_lines[1:]:
-                            lines.append(f"{indent}  {line}")
-                        lines[-1] += comma  # Add comma to last line
-
-                lines.append(f"{indent}]")
-                return "\n".join(lines)
-
         # Determine the chain based on metric type
         if self.type == MetricType.ACROSS_SAMPLE:
             # Simple aggregation across all samples
             if select_expr is not None:
-                chain_lines.append(f"  .select({format_expr(select_expr)})")
+                chain_lines.append(f"  .select({format_polars_expr(select_expr)})")
             elif agg_exprs:
                 if len(agg_exprs) == 1:
-                    chain_lines.append(f"  .select({format_expr(agg_exprs[0])})")
+                    chain_lines.append(f"  .select({format_polars_expr(agg_exprs[0])})")
                 else:
                     chain_lines.append("  .select(")
-                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append(format_polars_expr_list(agg_exprs))
                     chain_lines.append("  )")
 
         elif self.type == MetricType.WITHIN_SUBJECT:
             # Group by subject, then aggregate
             chain_lines.append("  .group_by('subject_id')")
             if select_expr is not None:
-                chain_lines.append(f"  .agg({format_expr(select_expr)})")
+                chain_lines.append(f"  .agg({format_polars_expr(select_expr)})")
             elif agg_exprs:
                 if len(agg_exprs) == 1:
-                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                    chain_lines.append(f"  .agg({format_polars_expr(agg_exprs[0])})")
                 else:
                     chain_lines.append("  .agg(")
-                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append(format_polars_expr_list(agg_exprs))
                     chain_lines.append("  )")
 
         elif self.type == MetricType.ACROSS_SUBJECT:
@@ -439,25 +341,25 @@ class MetricDefine(BaseModel):
             if agg_exprs:
                 chain_lines.append("  .group_by('subject_id')")
                 if len(agg_exprs) == 1:
-                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                    chain_lines.append(f"  .agg({format_polars_expr(agg_exprs[0])})")
                 else:
                     chain_lines.append("  .agg(")
-                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append(format_polars_expr_list(agg_exprs))
                     chain_lines.append("  )")
             if select_expr is not None:
-                chain_lines.append(f"  .select({format_expr(select_expr)})")
+                chain_lines.append(f"  .select({format_polars_expr(select_expr)})")
 
         elif self.type == MetricType.WITHIN_VISIT:
             # Group by subject and visit
             chain_lines.append("  .group_by(['subject_id', 'visit_id'])")
             if select_expr is not None:
-                chain_lines.append(f"  .agg({format_expr(select_expr)})")
+                chain_lines.append(f"  .agg({format_polars_expr(select_expr)})")
             elif agg_exprs:
                 if len(agg_exprs) == 1:
-                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                    chain_lines.append(f"  .agg({format_polars_expr(agg_exprs[0])})")
                 else:
                     chain_lines.append("  .agg(")
-                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append(format_polars_expr_list(agg_exprs))
                     chain_lines.append("  )")
 
         elif self.type == MetricType.ACROSS_VISIT:
@@ -465,13 +367,13 @@ class MetricDefine(BaseModel):
             if agg_exprs:
                 chain_lines.append("  .group_by(['subject_id', 'visit_id'])")
                 if len(agg_exprs) == 1:
-                    chain_lines.append(f"  .agg({format_expr(agg_exprs[0])})")
+                    chain_lines.append(f"  .agg({format_polars_expr(agg_exprs[0])})")
                 else:
                     chain_lines.append("  .agg(")
-                    chain_lines.append(format_exprs(agg_exprs))
+                    chain_lines.append(format_polars_expr_list(agg_exprs))
                     chain_lines.append("  )")
             if select_expr is not None:
-                chain_lines.append(f"  .select({format_expr(select_expr)})")
+                chain_lines.append(f"  .select({format_polars_expr(select_expr)})")
 
         chain_lines.append(")")
 
@@ -534,44 +436,3 @@ class MetricDefine(BaseModel):
     def __repr__(self) -> str:
         """Representation for interactive display"""
         return self.__str__()
-
-    # ========================================
-    # VALIDATION METHODS - Centralized Logic
-    # ========================================
-
-    @staticmethod
-    def _validate_expression_references(
-        within_expr: list[str | pl.Expr] | None, across_expr: str | pl.Expr | None
-    ) -> None:
-        """Validate that all referenced built-in expressions exist"""
-        # Validate within_expr references
-        if within_expr:
-            for item in within_expr:
-                if isinstance(item, str) and not MetricRegistry.has_metric(item):
-                    raise ValueError(f"Unknown built-in metric in within_expr: {item}")
-
-        # Validate across_expr references
-        if isinstance(across_expr, str) and not MetricRegistry.has_summary(across_expr):
-            raise ValueError(f"Unknown built-in selector in across_expr: {across_expr}")
-
-    @classmethod
-    def _validate_metric_consistency(
-        cls,
-        name: str,
-        within_expr: list[str | pl.Expr] | None,
-        across_expr: str | pl.Expr | None,
-    ) -> None:
-        """Validate metric definition consistency"""
-        is_custom = within_expr is not None or across_expr is not None
-
-        if not is_custom and ":" in name:
-            # Built-in hierarchical metric validation
-            parts = name.split(":", 1)
-            if len(parts) != 2 or not parts[0] or not parts[1]:
-                raise ValueError(f"Invalid built-in metric name format: {name}")
-
-            # Validate that both parts exist in registry
-            if not MetricRegistry.has_metric(parts[0]):
-                raise ValueError(f"Unknown built-in metric: {parts[0]}")
-            if not MetricRegistry.has_summary(parts[1]):
-                raise ValueError(f"Unknown built-in selector: {parts[1]}")
