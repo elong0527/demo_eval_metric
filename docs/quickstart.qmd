@@ -10,13 +10,6 @@ This guide will help you get up and running with the polars-eval-metrics package
 
 First, ensure the package is available in your Python environment:
 
-```{python}
-#| echo: false
-import sys
-import os
-sys.path.insert(0, os.path.abspath("../src"))
-```
-
    ```{python}
 # Import the package
 import polars as pl

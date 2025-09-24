@@ -24,16 +24,6 @@ Make sure you have the required dependencies:
 - pydantic
 - pyyaml
 
-### Import Setup
-
-The `.qmd` files are configured to automatically add the correct paths:
-
-```python
-import sys
-import os
-sys.path.insert(0, os.path.abspath("../src"))  # For package imports
-```
-
 ### Running Individual Examples
 
 You can run the Python code from the examples directly:
@@ -60,36 +50,3 @@ quarto render
 ```
 
 This will create an HTML website in the `_site` directory.
-
-## Usage Pattern
-
-The main pattern demonstrated across all examples:
-
-```python
-import polars as pl
-from polars_eval_metrics import MetricEvaluator, create_metrics
-from data_generator import generate_sample_data
-
-# 1. Create metrics from configuration or names
-config = [
-    {"name": "mae", "label": "Mean Absolute Error"},
-    {"name": "rmse", "label": "Root Mean Squared Error"},
-]
-metrics = create_metrics(config)
-
-# 2. Initialize the evaluator with the full evaluation context
-data = generate_sample_data()
-evaluator = MetricEvaluator(
-    df=data,
-    metrics=metrics,
-    ground_truth="actual",
-    estimates=["model1", "model2"],
-    group_by=["treatment"],
-    # Optional filters and registry overrides are also supported:
-    # filter_expr=pl.col("visit_id") <= 2,
-    # registry=my_custom_registry,
-)
-
-# 3. Evaluate and collect results
-results = evaluator.evaluate()
-```
