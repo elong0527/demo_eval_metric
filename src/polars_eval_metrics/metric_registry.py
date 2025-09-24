@@ -37,8 +37,6 @@ class MetricInfo:
     expr: pl.Expr
     value_kind: str = "float"
     format: str | None = None
-    unit: str | None = None
-    extras: dict[str, pl.Expr] | None = None
 
 
 class MetricRegistry:
@@ -179,8 +177,6 @@ class MetricRegistry:
         *,
         value_kind: str | None = None,
         format: str | None = None,
-        unit: str | None = None,
-        extras: dict[str, pl.Expr] | None = None,
     ) -> None:
         """
         Register a custom metric expression.
@@ -192,10 +188,6 @@ class MetricRegistry:
             value_kind: Optional type hint (``float``, ``int``, ``struct`` ...) used to
                 populate the ``stat`` struct. Defaults to ``float``.
             format: Optional string formatter applied when rendering ``value``.
-            unit: Optional unit label recorded in the ``stat`` struct.
-            extras: Optional mapping of additional aggregations (each expression should be
-                compatible with the aggregation context). Extras are surfaced through
-                ``stat['value_struct']``.
 
         Example:
             MetricRegistry.register_metric('mae', pl.col('absolute_error').mean().alias('value'))
@@ -217,8 +209,6 @@ class MetricRegistry:
                     expr=result,
                     value_kind=value_kind or "float",
                     format=format,
-                    unit=unit,
-                    extras=extras,
                 )
 
             cls._metrics[name] = factory
@@ -228,8 +218,6 @@ class MetricRegistry:
             expr=expr,
             value_kind=value_kind or "float",
             format=format,
-            unit=unit,
-            extras=extras,
         )
         cls._metrics[name] = info
 

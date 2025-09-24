@@ -301,8 +301,6 @@ class MetricEvaluator:
         cleanup_cols = [
             "_value_kind",
             "_value_format",
-            "_value_unit",
-            "_extras_struct",
             "_value_float",
             "_value_int",
             "_value_bool",
@@ -1041,7 +1039,7 @@ class MetricEvaluator:
         intermediate = self._aggregate_lazyframe(
             df,
             entity_groups,
-            self._metric_agg_expressions(base_info, include_extras=False),
+            self._metric_agg_expressions(base_info),
         )
 
         if across_info is not None and within_infos:
@@ -1139,15 +1137,8 @@ class MetricEvaluator:
         _ = metric, estimates  # Suppress unused parameter warnings
         return df
 
-    @staticmethod
-    def _metric_agg_expressions(
-        info: MetricInfo, *, include_extras: bool = True
-    ) -> list[pl.Expr]:
-        expressions = [info.expr.alias("value")]
-        if include_extras and info.extras:
-            for name, expr in info.extras.items():
-                expressions.append(expr.alias(f"_extra_{name}"))
-        return expressions
+    def _metric_agg_expressions(self, info: MetricInfo) -> list[pl.Expr]:
+        return [info.expr.alias("value")]
 
     def _get_entity_grouping_columns(self, metric_type: MetricType) -> list[str]:
         """Get entity-level grouping columns (subject_id, visit_id)"""
@@ -1174,7 +1165,6 @@ class MetricEvaluator:
             .alias("scope"),
             pl.lit(value_kind).cast(pl.Utf8).alias("_value_kind"),
             pl.lit(info.format).cast(pl.Utf8).alias("_value_format"),
-            pl.lit(info.unit).cast(pl.Utf8).alias("_value_unit"),
         ]
 
         result = result.with_columns(metadata_columns)
@@ -1220,26 +1210,6 @@ class MetricEvaluator:
             )
         else:
             result = result.with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
-
-        # Handle extras as structured payloads
-        if info.extras:
-            extra_cols = [f"_extra_{name}" for name in info.extras.keys()]
-            struct_fields = [
-                pl.col(col_name).alias(col_name.removeprefix("_extra_"))
-                for col_name in extra_cols
-            ]
-            result = result.with_columns(
-                pl.struct(struct_fields).alias("_extras_struct")
-            )
-            if value_kind != "struct":
-                result = result.with_columns(
-                    pl.struct(struct_fields).alias("_value_struct")
-                )
-            result = result.drop(extra_cols)
-        else:
-            result = result.with_columns(
-                pl.lit(None).alias("_extras_struct")
-            )
 
         return result
 
@@ -1386,21 +1356,12 @@ class MetricEvaluator:
         null_int: pl.Expr = pl.lit(None, dtype=pl.Int64)
         null_bool: pl.Expr = pl.lit(None, dtype=pl.Boolean)
         null_struct_expr: pl.Expr = pl.lit(None, dtype=pl.Struct([]))
-        null_any: pl.Expr = pl.lit(None)
 
         kind_expr: pl.Expr | None = (
             pl.col("_value_kind") if "_value_kind" in schema.names() else None
         )
         format_col: pl.Expr = (
             pl.col("_value_format") if "_value_format" in schema.names() else null_utf8
-        )
-        unit_col: pl.Expr = (
-            pl.col("_value_unit") if "_value_unit" in schema.names() else null_utf8
-        )
-        extras_col: pl.Expr = (
-            pl.col("_extras_struct")
-            if "_extras_struct" in schema.names()
-            else null_any
         )
 
         float_value = (
@@ -1421,10 +1382,6 @@ class MetricEvaluator:
             pl.col("_value_struct")
             if "_value_struct" in schema.names()
             else null_struct_expr
-        )
-
-        value_col: pl.Expr = (
-            pl.col("value") if "value" in schema.names() else null_any
         )
 
         if kind_expr is None:
@@ -1463,8 +1420,6 @@ class MetricEvaluator:
                 string_value.alias("value_str"),
                 struct_value.alias("value_struct"),
                 format_col.alias("format"),
-                unit_col.alias("unit"),
-                extras_col.alias("extras"),
             ]
         ).alias("stat")
 
@@ -1682,6 +1637,27 @@ class EvaluationResult(pl.DataFrame):
 
         if sort_cols:
             long_df = long_df.sort(sort_cols)
+
+        preferred_order = [
+            "id",
+            "groups",
+            "subgroups",
+            "subgroup_name",
+            "subgroup_value",
+            "estimate",
+            "metric",
+            "label",
+            "value",
+            "stat",
+            "context",
+        ]
+        ordered_columns = [
+            col for col in preferred_order if col in long_df.columns
+        ]
+        remaining_columns = [
+            col for col in long_df.columns if col not in ordered_columns
+        ]
+        long_df = long_df.select(ordered_columns + remaining_columns)
 
         super().__init__(long_df)
         self._ard = ard

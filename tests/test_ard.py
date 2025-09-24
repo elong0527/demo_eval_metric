@@ -19,8 +19,6 @@ def stat_struct(**overrides: Any) -> dict[str, Any]:
         "value_str": None,
         "value_struct": None,
         "format": None,
-        "unit": None,
-        "extras": None,
     }
     base.update(overrides)
     return base

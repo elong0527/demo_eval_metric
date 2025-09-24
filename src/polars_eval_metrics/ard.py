@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import polars as pl
-
-if TYPE_CHECKING:
-    from polars.type_aliases import IntoExpr
 
 
 @dataclass
@@ -36,10 +33,11 @@ class ARD:
             raise TypeError(f"Unsupported data type: {type(data)}")
 
         schema = self._lf.collect_schema()
+        self._id_fields = self._extract_struct_fields(schema, "id")
         self._group_fields = self._extract_struct_fields(schema, "groups")
         self._subgroup_fields = self._extract_struct_fields(schema, "subgroups")
         self._context_fields = self._extract_struct_fields(schema, "context")
-        self._id_fields = self._extract_struct_fields(schema, "id")
+        
 
     # ---------------------------------------------------------------------
     # Construction helpers
@@ -57,12 +55,11 @@ class ARD:
                 pl.Field("value_str", pl.Utf8),
                 pl.Field("value_struct", pl.Struct([])),
                 pl.Field("format", pl.Utf8),
-                pl.Field("unit", pl.Utf8),
-                pl.Field("extras", pl.Struct([])),
             ]
         )
         frame = pl.DataFrame(
             {
+                "id": pl.Series([], dtype=pl.Null),
                 "groups": pl.Series([], dtype=pl.Struct([])),
                 "subgroups": pl.Series([], dtype=pl.Struct([])),
                 "estimate": pl.Series([], dtype=pl.Utf8),
@@ -70,7 +67,6 @@ class ARD:
                 "label": pl.Series([], dtype=pl.Utf8),
                 "stat": pl.Series([], dtype=stat_dtype),
                 "context": pl.Series([], dtype=pl.Struct([])),
-                "id": pl.Series([], dtype=pl.Null),
             }
         )
         return frame.lazy()
@@ -105,15 +101,16 @@ class ARD:
         desired = [
             col
             for col in [
+                "id",
                 "groups",
                 "subgroups",
                 "subgroup_name",
                 "subgroup_value",
                 "estimate",
                 "metric",
+                "label",
                 "stat",
                 "context",
-                "id",
             ]
             if col in available
         ]
@@ -199,8 +196,6 @@ class ARD:
         value = ARD._stat_value(stat)
         type_label = (stat.get("type") or "").lower()
         fmt = stat.get("format")
-        unit = stat.get("unit")
-
         if fmt and value is not None:
             try:
                 rendered = fmt.format(value)
@@ -215,8 +210,6 @@ class ARD:
         else:
             rendered = "" if value is None else str(value)
 
-        if unit:
-            rendered = f"{rendered} {unit}"
         return rendered
 
     def __repr__(self) -> str:
@@ -243,10 +236,10 @@ class ARD:
 
         lf = self._lf.with_columns(
             [
+                _collapse("id", self._id_fields),
                 _collapse("groups", self._group_fields),
                 _collapse("subgroups", self._subgroup_fields),
                 _collapse("context", self._context_fields),
-                _collapse("id", self._id_fields),
                 pl.when(pl.col("estimate") == "")
                 .then(None)
                 .otherwise(pl.col("estimate"))
@@ -269,10 +262,10 @@ class ARD:
 
         lf = self._lf.with_columns(
             [
+                _expand("id", self._id_fields),
                 _expand("groups", self._group_fields),
                 _expand("subgroups", self._subgroup_fields),
                 _expand("context", self._context_fields),
-                _expand("id", self._id_fields),
                 pl.col("estimate").fill_null(""),
             ]
         )
@@ -286,7 +279,7 @@ class ARD:
         columns = columns or ["groups", "subgroups"]
         lf = self._lf
         for column in columns:
-            if column in {"groups", "subgroups", "context", "stat", "id"}:
+            if column in {"id", "groups", "subgroups", "context", "stat"}:
                 has_values = (
                     lf.select(pl.col(column).is_not_null().any()).collect().item()
                 )
@@ -429,14 +422,12 @@ class ARD:
         if include_metadata:
             types = [stat.get("type") if stat else None for stat in df["stat"]]
             formats = [stat.get("format") if stat else None for stat in df["stat"]]
-            units = [stat.get("unit") if stat else None for stat in df["stat"]]
             return pl.DataFrame(
                 {
                     "metric": df["metric"],
                     "value": values,
                     "type": types,
                     "format": formats,
-                    "unit": units,
                 },
                 strict=False,
             )
