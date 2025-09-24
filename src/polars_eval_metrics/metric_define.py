@@ -66,8 +66,8 @@ class MetricDefine(BaseModel):
     label: str | None = None
     type: MetricType = MetricType.ACROSS_SAMPLE
     scope: MetricScope | None = None
-    within_expr: list[str | pl.Expr] | None = None
-    across_expr: str | pl.Expr | None = None
+    within_expr: list[str | pl.Expr | MetricInfo] | None = None
+    across_expr: str | pl.Expr | MetricInfo | None = None
 
     def __init__(self, **kwargs: object) -> None:
         """Initialize with default label if not provided"""
@@ -156,13 +156,15 @@ class MetricDefine(BaseModel):
             return [v]  # Convert single string to list
         if isinstance(v, pl.Expr):
             return [v]  # Convert single expression to list
+        if isinstance(v, MetricInfo):
+            return [v]
         return v  # Already a list or something else
 
     @field_validator("within_expr")  # pyre-ignore[56]
     @classmethod
     def validate_within_expr(
-        cls, v: list[str | pl.Expr] | None
-    ) -> list[str | pl.Expr] | None:
+        cls, v: list[str | pl.Expr | MetricInfo] | None
+    ) -> list[str | pl.Expr | MetricInfo] | None:
         """Validate within-entity aggregation expressions list"""
         if v is None:
             return None
@@ -181,17 +183,19 @@ class MetricDefine(BaseModel):
                     raise ValueError(
                         f"within_expr[{i}]: Built-in metric name cannot be empty"
                     )
-            elif not isinstance(item, pl.Expr):
+            elif not isinstance(item, (pl.Expr, MetricInfo)):
                 raise ValueError(
-                    f"within_expr[{i}] must be a string (built-in name) or Polars expression, got {type(item)}"
+                    f"within_expr[{i}] must be a string (built-in name), Polars expression, or MetricInfo"
                 )
 
         return v
 
     @field_validator("across_expr")  # pyre-ignore[56]
     @classmethod
-    def validate_across_expr(cls, v: str | pl.Expr | None) -> str | pl.Expr | None:
-        """Validate across-entity expression - can be built-in selector name or Polars expression"""
+    def validate_across_expr(
+        cls, v: str | pl.Expr | MetricInfo | None
+    ) -> str | pl.Expr | MetricInfo | None:
+        """Validate across-entity expression - built-in selector, Polars expression, or MetricInfo"""
         if v is None:
             return None
 
@@ -201,10 +205,10 @@ class MetricDefine(BaseModel):
                 raise ValueError("Built-in selector name cannot be empty")
             return v.strip()
 
-        # Otherwise it must be a Polars expression
-        if not isinstance(v, pl.Expr):
+        # Otherwise it must be a Polars expression or MetricInfo
+        if not isinstance(v, (pl.Expr, MetricInfo)):
             raise ValueError(
-                f"across_expr must be a string (built-in selector) or Polars expression, got {type(v)}"
+                "across_expr must be a string (built-in selector), Polars expression, or MetricInfo"
             )
         return v
 

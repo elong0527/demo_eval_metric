@@ -1261,7 +1261,15 @@ class MetricEvaluator:
     ) -> pl.LazyFrame:
         """Add metadata columns to vectorized result"""
 
-        value_kind = (info.value_kind or "float").lower()
+        schema = result.collect_schema()
+        value_dtype = schema.get("value") if "value" in schema.names() else None
+        value_kind = (
+            (info.value_kind or "").lower()
+            if info.value_kind
+            else self._infer_value_kind_from_dtype(value_dtype)
+        )
+        if not value_kind:
+            value_kind = "float"
 
         metadata_columns = [
             pl.lit(metric.name).cast(pl.Utf8).alias("metric"),
@@ -1327,9 +1335,28 @@ class MetricEvaluator:
                 pl.lit(None, dtype=pl.Float64).alias("value"),
             )
         else:
-            result = result.with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
+            result = result.with_columns(
+                pl.col("value").cast(pl.Utf8, strict=False).alias("_value_str"),
+                pl.lit(None, dtype=pl.Float64).alias("value"),
+            )
 
         return result
+
+    @staticmethod
+    def _infer_value_kind_from_dtype(dtype: pl.DataType | None) -> str:
+        """Map Polars dtypes to MetricInfo value_kind labels."""
+
+        if dtype is None or dtype == pl.Null:
+            return "float"
+        if dtype == pl.Struct:
+            return "struct"
+        if dtype == pl.Boolean:
+            return "bool"
+        if dtype == pl.Utf8:
+            return "string"
+        if hasattr(dtype, "is_numeric") and dtype.is_numeric():
+            return "int" if dtype.is_integer() else "float"
+        return "string"
 
     def _attach_entity_identifier(
         self, result: pl.LazyFrame, metric: MetricDefine
