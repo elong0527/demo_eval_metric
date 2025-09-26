@@ -69,9 +69,10 @@ Any warnings or errors that occur while evaluating a metric are preserved in the
 
 # Producing ARD from an Evaluation
 
-The evaluator returns an `EvaluationResult`, a thin Polars `DataFrame` subclass that keeps
-`label`, `metric`, `estimate`, and `value` columns ready for display. 
-You can always obtain its backing ARD via `to_ard()`.
+The evaluator returns a Polars `DataFrame` by default, keeping columns such as
+`label`, `metric`, `estimate`, and `value` ready for display. When you need the
+full ARD structure, reuse the lazy output with the :class:`polars_eval_metrics.ard.ARD`
+helper.
 
 ```{python}
 # Sample data with two estimates, grouped by treatment and gender
@@ -95,10 +96,11 @@ result
 
 # ARD Container
 
-Convert the evaluation result to an ARD object:
+Convert the evaluation output to an ARD object:
 
 ```{python}
-ard = result.to_ard()
+lazy_result = evaluator.evaluate(collect=False)
+ard = ARD(lazy_result)
 ard
 ```
 

@@ -68,7 +68,7 @@ class TestQuickstartIntegration:
             ground_truth="actual",
             estimates="model1",
         )
-        framework_result = evaluator.evaluate()
+        framework_result = evaluator.evaluate(verbose=True)
 
         # Should match
         assert (

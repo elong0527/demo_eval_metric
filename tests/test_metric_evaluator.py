@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import polars as pl
 from polars_eval_metrics import MetricDefine, MetricEvaluator, MetricScope, MetricType
+from polars_eval_metrics.ard import ARD
 
 
 def _evaluate_metric_set(
@@ -28,12 +29,17 @@ def _evaluate_metric_set(
         estimates=estimates or ["model_a"],
     )
 
-    result = evaluator.evaluate()
-    collected = result.collect()
-    assert set(collected["metric"]) == {metric.name for metric in metrics}
+    compact = evaluator.evaluate()
+    assert set(compact["metric"]) == {metric.name for metric in metrics}
 
-    stats = result.to_ard().get_stats()
-    return result, stats
+    stats = ARD(evaluator.evaluate(collect=False)).get_stats()
+    return compact, stats
+
+
+def _evaluate_ard(evaluator: MetricEvaluator, **kwargs: Any) -> ARD:
+    """Helper to build an ARD from the evaluator's lazy output."""
+
+    return ARD(evaluator.evaluate(collect=False, **kwargs))
 
 
 class TestMetricEvaluatorBasic:
@@ -57,25 +63,12 @@ class TestMetricEvaluatorBasic:
 
         # Check structure
         assert len(result) == 4  # 2 metrics x 2 models
-        df = result.collect()
-        assert set(df.columns) == {
-            "groups",
-            "subgroups",
-            "estimate",
-            "metric",
-            "label",
-            "stat",
-            "stat_fmt",
-            "context",
-            "warning",
-            "error",
-            "id",
-        }
-        assert set(df["metric"].unique()) == {"mae", "rmse"}
-        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
+        assert set(result.columns) >= {"metric", "estimate", "label", "value"}
+        assert set(result["metric"].unique()) == {"mae", "rmse"}
+        assert set(result["estimate"].unique()) == {"model_a", "model_b"}
 
-        # Check values are reasonable (non-negative, finite) using get_stats
-        stats_df = result.to_ard().get_stats()
+        # Check values are reasonable (non-negative, finite) using the ARD helper
+        stats_df = ARD(evaluator.evaluate(collect=False)).get_stats()
         values = stats_df["value"].to_list()
         assert all(v >= 0 for v in values if v is not None)
         assert all(
@@ -93,9 +86,8 @@ class TestMetricEvaluatorBasic:
 
         result = evaluator.evaluate()
         assert len(result) == 1
-        df = result.collect()
-        assert df["metric"][0] == "mae"
-        assert df["estimate"][0] == "model_a"
+        assert result["metric"][0] == "mae"
+        assert result["estimate"][0] == "model_a"
 
     def test_minimal_view_drops_details(self, grouped_metric_df):
         """Dropping detail columns should remove stat/stat_fmt/context/warnings/errors."""
@@ -111,11 +103,6 @@ class TestMetricEvaluatorBasic:
         minimal = evaluator.evaluate()
         hidden_cols = {"stat", "stat_fmt", "context", "warning", "error"}
         assert hidden_cols.isdisjoint(set(minimal.columns))
-
-        # Columns remain accessible via __getitem__ fallback
-        stat_series = minimal["stat"]
-        assert isinstance(stat_series, pl.Series)
-        assert stat_series.len() == minimal.height
 
     def test_verbose_flag(self, metric_sample_df):
         """verbose=True should keep struct and detail columns visible."""
@@ -146,14 +133,14 @@ class TestMetricEvaluatorScopes:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
 
         # Global scope should ignore estimates and groups
-        assert len(result) == 1
-        df = result.collect()
-        assert df["estimate"][0] is None  # No estimate value for global
-        assert df["groups"][0] is None  # Groups ignored for global scope
-        stats = result.to_ard().get_stats()
+        assert len(compact) == 1
+        verbose_df = evaluator.evaluate(verbose=True)
+        assert verbose_df["estimate"][0] is None  # No estimate value for global
+        assert verbose_df["groups"][0] is None  # Groups ignored for global scope
+        stats = _evaluate_ard(evaluator).get_stats()
         assert stats["value"][0] == 3.0  # 3 unique subjects
 
     def test_model_scope(self, grouped_metric_df):
@@ -168,14 +155,14 @@ class TestMetricEvaluatorScopes:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
+        verbose_df = evaluator.evaluate(verbose=True)
 
         # Model scope: one row per model, groups ignored
-        assert len(result) == 2
-        df = result.collect()
-        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
-        assert all(df["groups"].is_null())  # Groups ignored for model scope
-        stats = result.to_ard().get_stats()
+        assert len(compact) == 2
+        assert set(compact["estimate"].unique()) == {"model_a", "model_b"}
+        assert all(verbose_df["groups"].is_null())
+        stats = _evaluate_ard(evaluator).get_stats()
         assert all(v == 6.0 for v in stats["value"])  # 6 samples each model
 
     def test_group_scope(self, grouped_metric_df):
@@ -190,23 +177,21 @@ class TestMetricEvaluatorScopes:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
 
         # Group scope: one row per group, models aggregated
-        assert len(result) == 2
-        unnested = result.unnest(["groups"])
-        assert set(unnested["treatment"].unique()) == {"A", "B"}
-        df = result.collect()
-        assert all(df["estimate"].is_null())  # Models aggregated
+        assert len(compact) == 2
+        assert set(compact["treatment"].unique()) == {"A", "B"}
+        assert compact["estimate"].null_count() == compact.height
 
-        # Check counts per group - access values directly from ARD
-        df = result.collect()
-        for i, row in enumerate(df.iter_rows(named=True)):
-            groups = row["groups"]
-            stat = row["stat"]
-            if groups and groups["treatment"] == "A":
+        # Check counts per group via verbose view
+        verbose_df = evaluator.evaluate(verbose=True)
+        for row in verbose_df.iter_rows(named=True):
+            group = row.get("groups")
+            stat = row.get("stat")
+            if group and group["treatment"] == "A":
                 assert stat["value_int"] == 2  # 2 subjects in A
-            elif groups and groups["treatment"] == "B":
+            elif group and group["treatment"] == "B":
                 assert stat["value_int"] == 1  # 1 subject in B
 
     def test_default_scope(self, grouped_metric_df):
@@ -221,14 +206,12 @@ class TestMetricEvaluatorScopes:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
 
         # Default scope: estimate x group combinations
-        assert len(result) == 4  # 2 models x 2 groups
-        df = result.collect()
-        assert set(df["estimate"].unique()) == {"model_a", "model_b"}
-        unnested = result.unnest(["groups"])
-        assert set(unnested["treatment"].unique()) == {"A", "B"}
+        assert len(compact) == 4  # 2 models x 2 groups
+        assert set(compact["estimate"].unique()) == {"model_a", "model_b"}
+        assert set(compact["treatment"].unique()) == {"A", "B"}
 
 
 class TestMetricEvaluatorTypes:
@@ -245,10 +228,10 @@ class TestMetricEvaluatorTypes:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        assert len(result) == 1
-        df = result.collect()
-        context = df.select(pl.col("context").struct.field("metric_type"))
+        compact = evaluator.evaluate()
+        assert len(compact) == 1
+        verbose_df = evaluator.evaluate(verbose=True)
+        context = verbose_df.select(pl.col("context").struct.field("metric_type"))
         assert context["metric_type"][0] == "across_sample"
 
     def test_within_subject(self, hierarchical_metric_df):
@@ -262,22 +245,22 @@ class TestMetricEvaluatorTypes:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        df = result.collect()
-        assert len(df) == 3  # One row per subject
+        compact = evaluator.evaluate()
+        verbose_df = evaluator.evaluate(verbose=True)
+        assert len(compact) == 3  # One row per subject
 
-        context = df.select(pl.col("context").struct.field("metric_type"))
+        context = verbose_df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "within_subject")
 
         # ID struct should carry subject identifiers
-        id_df = df.unnest(["id"])
+        id_df = verbose_df.unnest(["id"])
         assert "subject_id" in id_df.columns
         assert set(id_df["subject_id"].to_list()) == {1, 2, 3}
 
         # Value column surfaces subject-level MAE on the long representation
-        assert "value" in result.columns
-        assert all(result["value"].is_not_null())
-        assert all(df["stat"].struct.field("type") == "float")
+        assert "value" in compact.columns
+        assert all(compact["value"].is_not_null())
+        assert all(verbose_df["stat"].struct.field("type") == "float")
 
     def test_across_subject(self, hierarchical_metric_df):
         """Test ACROSS_SUBJECT - within subjects then across"""
@@ -291,14 +274,14 @@ class TestMetricEvaluatorTypes:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        assert len(result) == 1  # Single aggregated result across subjects
-        unnested = result.unnest(["groups"])
-        assert "subject_id" not in unnested.columns  # No per-subject breakdown
-        df = result.collect()
-        context = df.select(pl.col("context").struct.field("metric_type"))
+        compact = evaluator.evaluate()
+        assert len(compact) == 1  # Single aggregated result across subjects
+        ard_df = _evaluate_ard(evaluator).collect()
+        if "groups" in ard_df.columns:
+            assert ard_df["groups"][0] is None  # No per-subject grouping retained
+        context = ard_df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "across_subject")
-        stats = result.to_ard().get_stats()
+        stats = _evaluate_ard(evaluator).get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_within_visit(self, hierarchical_metric_df):
@@ -312,14 +295,14 @@ class TestMetricEvaluatorTypes:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        df = result.collect()
-        assert len(df) == 9  # Subject x visit combinations
+        compact = evaluator.evaluate()
+        verbose_df = evaluator.evaluate(verbose=True)
+        assert len(compact) == 9  # Subject x visit combinations
 
-        context = df.select(pl.col("context").struct.field("metric_type"))
+        context = verbose_df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "within_visit")
 
-        id_df = df.unnest(["id"])
+        id_df = verbose_df.unnest(["id"])
         assert {"subject_id", "visit_id"}.issubset(set(id_df.columns))
         expected_pairs = {
             (subject, visit) for subject in [1, 2, 3] for visit in [1, 2, 3]
@@ -328,7 +311,7 @@ class TestMetricEvaluatorTypes:
             (row["subject_id"], row["visit_id"]) for row in id_df.iter_rows(named=True)
         }
         assert observed_pairs == expected_pairs
-        assert all(df["stat"].struct.field("type") == "float")
+        assert all(verbose_df["stat"].struct.field("type") == "float")
 
     def test_across_visit(self, hierarchical_metric_df):
         """Test ACROSS_VISIT - within visits then across"""
@@ -342,15 +325,17 @@ class TestMetricEvaluatorTypes:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        assert len(result) == 1  # Single aggregated result across visits
-        unnested = result.unnest(["groups"])
-        assert "subject_id" not in unnested.columns  # No per-subject breakdown
-        assert "visit_id" not in unnested.columns  # No per-visit breakdown
-        df = result.collect()
-        context = df.select(pl.col("context").struct.field("metric_type"))
+        compact = evaluator.evaluate()
+        assert len(compact) == 1  # Single aggregated result across visits
+        ard_df = _evaluate_ard(evaluator).collect()
+        if "groups" in ard_df.columns:
+            group_struct = ard_df["groups"][0]
+            if group_struct is not None:
+                assert "subject_id" not in group_struct
+                assert "visit_id" not in group_struct
+        context = ard_df.select(pl.col("context").struct.field("metric_type"))
         assert all(context["metric_type"] == "across_visit")
-        stats = result.to_ard().get_stats()
+        stats = _evaluate_ard(evaluator).get_stats()
         assert stats["value"][0] > 0  # Should be a reasonable MAE value
 
     def test_across_visit_custom_across_expr(self, hierarchical_metric_df):
@@ -477,10 +462,11 @@ class TestMetricEvaluatorGrouping:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
-        assert len(result) == 2  # Two treatment groups
-        unnested = result.unnest(["groups"])
-        assert set(unnested["treatment"].unique()) == {"A", "B"}
+        compact = evaluator.evaluate()
+        assert len(compact) == 2  # Two treatment groups
+        ard_df = _evaluate_ard(evaluator).collect()
+        groups_unnested = ard_df.unnest(["groups"])
+        assert set(groups_unnested["treatment"].unique()) == {"A", "B"}
 
     def test_subgroup_by_only(self, complex_data):
         """Test subgroup analysis"""
@@ -492,10 +478,9 @@ class TestMetricEvaluatorGrouping:
             subgroup_by=["age_group", "sex"],
         )
 
-        result = evaluator.evaluate()
-
         # Should have marginal analysis for each subgroup variable
-        unnested = result.unnest(["subgroups"])
+        ard_df = _evaluate_ard(evaluator).collect()
+        unnested = ard_df.unnest(["subgroups"])
         # In ARD, subgroups are unnested directly by their column names
         assert "age_group" in unnested.columns
         assert "sex" in unnested.columns
@@ -518,16 +503,15 @@ class TestMetricEvaluatorGrouping:
             subgroup_by=["age_group"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
 
         # Should have group x subgroup combinations
-        groups_unnested = result.unnest(["groups"])
-        subgroups_unnested = result.unnest(["subgroups"])
-        assert "treatment" in groups_unnested.columns
-        assert "age_group" in subgroups_unnested.columns
+        assert "treatment" in compact.columns
+        assert "age_group" in compact.columns
+        assert set(compact["treatment"].unique()).issubset({"A", "B"})
 
-        # Verify we have treatment groups and age_group subgroups
-        assert set(groups_unnested["treatment"].unique()).issubset({"A", "B"})
+        ard_df = _evaluate_ard(evaluator).collect()
+        subgroups_unnested = ard_df.unnest(["subgroups"])
         age_results = subgroups_unnested.filter(pl.col("age_group").is_not_null())
         assert len(age_results) > 0  # Has age_group subgroup results
 
@@ -552,10 +536,10 @@ class TestMetricEvaluatorAdvancedScenarios:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
-        df = result.collect()
+        compact = evaluator.evaluate()
+        verbose_df = evaluator.evaluate(verbose=True)
 
-        context_scope = df.select(
+        context_scope = verbose_df.select(
             pl.col("metric"),
             pl.col("context").struct.field("scope").alias("scope"),
         )
@@ -578,14 +562,14 @@ class TestMetricEvaluatorAdvancedScenarios:
             ].to_list()
         )
 
-        global_rows = df.filter(pl.col("metric") == "n_sample")
+        global_rows = verbose_df.filter(pl.col("metric") == "n_sample")
         assert global_rows.height == 1
         assert global_rows["estimate"][0] is None
         assert global_rows["groups"][0] is None
         assert global_rows["stat"][0]["value_int"] == grouped_metric_df.height
         assert global_rows["stat"][0]["type"] == "int"
 
-        group_rows = df.filter(pl.col("metric") == "n_subject")
+        group_rows = verbose_df.filter(pl.col("metric") == "n_subject")
         assert all(value is None for value in group_rows["estimate"].to_list())
         treatments = {
             group["treatment"]
@@ -600,7 +584,7 @@ class TestMetricEvaluatorAdvancedScenarios:
         }
         assert group_counts == {"A": 2, "B": 1}
 
-        model_rows = df.filter(pl.col("metric") == "n_sample_with_data")
+        model_rows = verbose_df.filter(pl.col("metric") == "n_sample_with_data")
         assert all(group is None for group in model_rows["groups"].to_list())
         assert set(model_rows["estimate"].to_list()) == {"model_a", "model_b"}
         assert all(
@@ -611,7 +595,7 @@ class TestMetricEvaluatorAdvancedScenarios:
             row["stat"]["type"] == "int" for row in model_rows.iter_rows(named=True)
         )
 
-        mae_rows = df.filter(pl.col("metric") == "mae")
+        mae_rows = verbose_df.filter(pl.col("metric") == "mae")
         combinations = {
             (row["estimate"], row["groups"]["treatment"])
             for row in mae_rows.iter_rows(named=True)
@@ -652,8 +636,8 @@ class TestMetricEvaluatorAdvancedScenarios:
             subgroup_by=["age_group"],
         )
 
-        result = evaluator.evaluate()
-        subgroups = result.unnest(["subgroups"])
+        ard_df = _evaluate_ard(evaluator).collect()
+        subgroups = ard_df.unnest(["subgroups"])
         subgroup_values = subgroups["subgroup_value"]
 
         assert isinstance(subgroup_values.dtype, pl.Enum)
@@ -729,9 +713,9 @@ class TestMetricEvaluatorEdgeCases:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        assert len(result) == 1
-        stats = result.to_ard().get_stats()
+        compact = evaluator.evaluate()
+        assert len(compact) == 1
+        stats = _evaluate_ard(evaluator).get_stats()
         assert stats["value"][0] == 2.0
 
     def test_invalid_metric_name(self, metric_sample_df):
@@ -791,13 +775,12 @@ class TestMetricEvaluatorEdgeCases:
             estimates=["model_a"],
         )
 
-        # Test that evaluate always returns ARD object
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
+        lazy = evaluator.evaluate(collect=False)
 
-        # Should be ARD object with consistent behavior
-        assert len(result) == 1
-        df = result.collect()
-        stats = result.to_ard().get_stats()
+        assert len(compact) == 1
+        assert isinstance(lazy, pl.LazyFrame)
+        stats = ARD(lazy).get_stats()
         assert stats["value"][0] == 2.375  # MAE should be 2.375
 
 
@@ -812,14 +795,13 @@ class TestMetricEvaluatorDiagnostics:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        df = result.collect()
-        assert df["stat_fmt"].null_count() == 0
-        assert all(isinstance(val, str) for val in df["stat_fmt"].to_list())
-        assert all(row == [] for row in df["warning"].to_list())
-        assert all(row == [] for row in df["error"].to_list())
-        long_df = result.to_ard().to_long()
-        assert long_df["value"][0] == df["stat_fmt"][0]
+        verbose_df = evaluator.evaluate(verbose=True)
+        assert verbose_df["stat_fmt"].null_count() == 0
+        assert all(isinstance(val, str) for val in verbose_df["stat_fmt"].to_list())
+        assert all(row == [] for row in verbose_df["warning"].to_list())
+        assert all(row == [] for row in verbose_df["error"].to_list())
+        long_df = _evaluate_ard(evaluator).to_long()
+        assert long_df["value"][0] == verbose_df["stat_fmt"][0]
 
     def test_error_capture(self, metric_sample_df):
         broken_metric = MetricDefine(
@@ -836,11 +818,12 @@ class TestMetricEvaluatorDiagnostics:
             estimates=["model_a"],
         )
 
-        result = evaluator.evaluate()
-        df = result.collect()
-        assert df["error"].to_list()[0], "error column should include diagnostics"
-        assert df["warning"].to_list()[0] == []
-        stats = result.to_ard().get_stats(include_metadata=True)
+        verbose_df = evaluator.evaluate(verbose=True)
+        assert verbose_df["error"].to_list()[0], (
+            "error column should include diagnostics"
+        )
+        assert verbose_df["warning"].to_list()[0] == []
+        stats = _evaluate_ard(evaluator).get_stats(include_metadata=True)
         assert stats["formatted"][0] is None
-        long_df = result.to_ard().to_long()
+        long_df = _evaluate_ard(evaluator).to_long()
         assert long_df["value"][0] is None

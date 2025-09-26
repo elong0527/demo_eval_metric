@@ -64,18 +64,21 @@ evaluator = MetricEvaluator(
 )
 
 results = evaluator.evaluate()
-print(results)  # EvaluationResult (subclass of polars.DataFrame)
+print(results)  # Polars DataFrame with flattened group columns
 
-# Access structured helpers when needed
-ard = results.to_ard()
-stats = ard.get_stats()
+# Request the fully structured view when you need diagnostic columns
+detailed = evaluator.evaluate(verbose=True)
+
+# Or keep the computation lazy for further pipeline work
+lazy_frame = evaluator.evaluate(collect=False)
 ```
 
-`MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
-Polars `DataFrame` but keeps a handle on the underlying ARD object. Use
-`collect()`, `to_ard()`, or `to_long()` when you need either the canonical
-struct columns or a plain long-format table. Metric summaries remain available
-through the ARD helper: `results.to_ard().get_stats()`.
+`MetricEvaluator.evaluate()` returns a Polars `DataFrame` by default. Pass
+`verbose=True` to keep structured columns (`groups`, `subgroups`, `stat`, etc.)
+or `collect=False` to receive the lazy representation for additional chaining.
+For advanced reporting, you can always build an
+``polars_eval_metrics.ard.ARD`` from the lazy output and reuse the ARD
+utilities (`to_long()`, `get_stats()`, …).
 
 ## Code Coverage
 

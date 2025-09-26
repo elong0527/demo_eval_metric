@@ -4,6 +4,7 @@ import polars as pl
 import pytest
 
 from polars_eval_metrics import MetricDefine, MetricEvaluator
+from polars_eval_metrics.ard import ARD
 from test_utils import generate_sample_data as generate_test_data
 
 
@@ -37,7 +38,8 @@ class TestQuickstartSingleMetric:
         formatted_value = result["value"][0]
         assert isinstance(formatted_value, str)
         assert formatted_value != ""
-        assert result["stat"][0]["value_float"] >= 0  # MAE is non-negative
+        stats = ARD(evaluator.evaluate(collect=False)).get_stats()
+        assert stats["value"][0] >= 0  # MAE is non-negative
 
 
 class TestQuickstartGroupedEvaluation:
@@ -58,33 +60,33 @@ class TestQuickstartGroupedEvaluation:
             group_by=["treatment"],
         )
 
-        result = evaluator.evaluate()
+        compact = evaluator.evaluate()
 
         # Check structure: 2 treatments x 2 models x 2 metrics = 8 rows
-        assert result.shape[0] == 8
+        assert compact.shape[0] == 8
 
-        # Check columns
-        expected_cols = [
+        # Check compact columns
+        expected_cols = {
             "treatment",
             "estimate",
             "metric",
             "label",
             "value",
-            "metric_type",
-            "scope",
-        ]
-        for col in expected_cols:
-            assert col in result.columns
+        }
+        assert expected_cols.issubset(set(compact.columns))
 
         # Check unique values
-        assert set(result["treatment"]) == {"A", "B"}
-        assert set(result["estimate"]) == {"model1", "model2"}
-        assert set(result["metric"]) == {"mae", "rmse"}
+        assert set(compact["treatment"]) == {"A", "B"}
+        assert set(compact["estimate"]) == {"model1", "model2"}
+        assert set(compact["metric"]) == {"mae", "rmse"}
 
-        # Check that all values are valid
+        # Inspect verbose view for diagnostics
+        verbose_result = evaluator.evaluate(verbose=True)
+        assert {"metric_type", "scope", "stat"}.issubset(set(verbose_result.columns))
+
         non_null_values = [
             row["value_float"]
-            for row in result["stat"]
+            for row in verbose_result["stat"]
             if row["value_float"] is not None
         ]
         if non_null_values:
@@ -259,7 +261,7 @@ class TestQuickstartEquivalentCalculations:
             ground_truth="actual",
             estimates="model1",
         )
-        framework_result = evaluator.evaluate()
+        framework_result = evaluator.evaluate(verbose=True)
         framework_mae = framework_result["stat"][0]["value_float"]
 
         # Direct Polars calculation (from quickstart.qmd)

@@ -7,9 +7,9 @@ title: "MetricEvaluator: Evaluation Pipeline"
 The `MetricEvaluator` class is the main evaluation engine that executes metric computations on your data. 
 It handles hierarchical aggregations, grouping, filtering, and manages the entire evaluation pipeline using Polars' lazy evaluation for optimal performance.
 
-`MetricEvaluator.evaluate()` returns an `EvaluationResult`, which behaves like a
-Polars `DataFrame` while exposing helpers (`collect()`, `to_ard()`) for
-retrieving the canonical ARD representation when needed.
+`MetricEvaluator.evaluate()` returns a Polars `DataFrame` by default. Set
+`verbose=True` to include struct columns and diagnostic fields, or
+`collect=False` to keep the lazy representation for additional pipeline work.
 
 ## Evaluator Inputs
 
@@ -65,18 +65,12 @@ basic_res = evaluator.evaluate()
 basic_res
 ```
 
-`basic_res` is an `EvaluationResult`. The default view keeps core summary
+`basic_res` is a Polars `DataFrame`. The compact view keeps the core summary
 columns (`metric`, `estimate`, `value`, and any group labels) while hiding struct
-payloads and diagnostic fields for readability. Use the helpers below when you
+payloads and diagnostic fields for readability. Use the options below when you
 need alternate representations:
 
 ```{python}
-# Collect the canonical ARD representation (struct columns intact)
-basic_res.collect()
-
-# Access the underlying ARD helper for advanced utilities
-basic_res.to_ard()
-
 # Materialise a verbose view (struct + diagnostic columns)
 basic_verbose = evaluator.evaluate(verbose=True)
 basic_verbose.columns
@@ -87,6 +81,12 @@ composition before materialising the result:
 
 ```{python}
 basic_lazy = evaluator.evaluate(collect=False)
+
+from polars_eval_metrics.ard import ARD
+
+# Wrap the lazy output in the ARD helper when you need canonical struct columns
+ard_view = ARD(basic_lazy)
+ard_view.collect().head()
 ```
 
 ### Adding groups and scopes

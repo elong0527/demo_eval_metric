@@ -7,6 +7,7 @@ from polars_eval_metrics import (
     MetricRegistry,
     MetricScope,
 )
+from polars_eval_metrics.ard import ARD
 from polars_eval_metrics.metric_registry import MetricInfo
 
 
@@ -70,9 +71,9 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
         estimates={"model_a": "Model A", "model_b": "Model B"},
     )
 
-    result = evaluator.evaluate()
-    stats = result.to_ard().get_stats()
-    detailed = result.collect().with_columns(
+    compact = evaluator.evaluate()
+    stats = ARD(evaluator.evaluate(collect=False)).get_stats()
+    detailed = evaluator.evaluate(verbose=True).with_columns(
         pl.col("stat").struct.field("value_float").alias("_value_float")
     )
 
@@ -99,7 +100,7 @@ def test_metric_registry_evaluator_integration(metric_sample_df: pl.DataFrame) -
     assert actual_a == pytest.approx(expected_a)
     assert actual_b == pytest.approx(expected_b)
 
-    context_scope = result.collect().select(
+    context_scope = detailed.select(
         pl.col("context").struct.field("scope").alias("scope")
     )
     assert set(context_scope["scope"].drop_nulls().to_list()) == {"model"}
@@ -131,8 +132,8 @@ def test_struct_metric_output(metric_sample_df: pl.DataFrame) -> None:
         estimates={"model_a": "Model A"},
     )
 
-    result = evaluator.evaluate()
-    stat = result["stat"][0]
+    verbose_result = evaluator.evaluate(verbose=True)
+    stat = verbose_result["stat"][0]
 
     assert stat["type"] == "struct"
     payload = stat["value_struct"]
