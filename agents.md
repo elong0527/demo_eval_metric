@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Mandatory Task Checks
+- `ruff format` – format code before submitting changes.
+- `pyre check` – ensure the static type checker passes.
+- `pytest` – run the unit test suite and confirm it passes.
+- `rm -r _site; quarto render` – from the `docs/` directory ensure documentation builds cleanly.
+
 ## Project Structure & Module Organization
 - `src/polars_eval_metrics/` is the production package; use `metric_registry.py`, `metric_define.py`, and `metric_evaluator.py` for expression registration, configs, and lazy execution.
 - `tests/` mirrors the module layout with parametrized pytest suites; extend fixtures there instead of cloning sample data.
