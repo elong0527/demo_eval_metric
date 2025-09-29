@@ -113,9 +113,15 @@ def build_group_pivot(
         col for col in default_cols if col.startswith('{"') and col.endswith('"}')
     ]
 
-    estimate_order_lookup = context.estimate_catalog.label_order
-    metric_label_order_lookup = context.metric_catalog.label_order
-    metric_name_order_lookup = context.metric_catalog.name_order
+    estimate_order_lookup: Mapping[str, int] = (
+        context.estimate_catalog.label_order
+    )
+    metric_label_order_lookup: Mapping[str, int] = (
+        context.metric_catalog.label_order
+    )
+    metric_name_order_lookup: Mapping[str, int] = (
+        context.metric_catalog.name_order
+    )
 
     def metric_order(label: str) -> int:
         if label in metric_label_order_lookup:
@@ -263,7 +269,7 @@ def build_model_pivot(
     section_lookup = {name: cols for name, cols in sections}
 
     group_labels = list(context.group_by.values())
-    group_label_count = len(group_labels)
+    group_label_count: int = len(group_labels)
     group_value_orders: list[dict[Any, int]] = []
 
     if group_label_count:
@@ -284,8 +290,12 @@ def build_model_pivot(
                 {value: idx for idx, value in enumerate(categories)}
             )
 
-    metric_label_order_lookup = context.metric_catalog.label_order
-    metric_name_order_lookup = context.metric_catalog.name_order
+    metric_label_order_lookup: Mapping[str, int] = (
+        context.metric_catalog.label_order
+    )
+    metric_name_order_lookup: Mapping[str, int] = (
+        context.metric_catalog.name_order
+    )
     estimate_label_map = context.estimate_catalog.key_to_label
 
     def metric_order(label: str) -> int:

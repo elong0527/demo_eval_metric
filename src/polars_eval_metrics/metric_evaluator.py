@@ -7,7 +7,7 @@ This module implements a simplified, unified evaluation pipeline for computing m
 using Polars LazyFrames with comprehensive support for scopes, groups, and subgroups.
 """
 
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, Sequence
 
 # pyre-strict
@@ -168,9 +168,10 @@ class MetricEvaluator:
     ) -> "MetricEvaluator":
         """Return a new evaluator scoped to the requested metrics or estimates."""
 
-        filtered_metrics = (
-            self._resolve_metrics(metrics) if metrics is not None else self.metrics
-        )
+        if metrics is not None:
+            filtered_metrics = self._resolve_metrics(metrics)
+        else:
+            filtered_metrics = list(self.metrics)
         filtered_estimate_keys = (
             self._resolve_estimates(estimates)
             if estimates is not None
@@ -304,7 +305,7 @@ class MetricEvaluator:
     ) -> list[MetricDefine]:
         """Resolve which metrics to evaluate"""
         if metrics is None:
-            return self.metrics
+            return list(self.metrics)
 
         metrics_list = [metrics] if isinstance(metrics, MetricDefine) else metrics
         configured_names = {m.name for m in self.metrics}

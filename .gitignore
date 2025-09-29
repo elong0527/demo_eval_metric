@@ -33,6 +33,9 @@ wheels/
 # Unit test / coverage reports
 /htmlcov/
 docs/coverage/
+docs/site_libs 
+docs/*.html
+docs/metric_evaluator_files
 .tox/
 .coverage
 .coverage.*
