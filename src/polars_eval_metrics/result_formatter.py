@@ -113,15 +113,9 @@ def build_group_pivot(
         col for col in default_cols if col.startswith('{"') and col.endswith('"}')
     ]
 
-    estimate_order_lookup: Mapping[str, int] = (
-        context.estimate_catalog.label_order
-    )
-    metric_label_order_lookup: Mapping[str, int] = (
-        context.metric_catalog.label_order
-    )
-    metric_name_order_lookup: Mapping[str, int] = (
-        context.metric_catalog.name_order
-    )
+    estimate_order_lookup: Mapping[str, int] = context.estimate_catalog.label_order
+    metric_label_order_lookup: Mapping[str, int] = context.metric_catalog.label_order
+    metric_name_order_lookup: Mapping[str, int] = context.metric_catalog.name_order
 
     def metric_order(label: str) -> int:
         if label in metric_label_order_lookup:
@@ -290,12 +284,8 @@ def build_model_pivot(
                 {value: idx for idx, value in enumerate(categories)}
             )
 
-    metric_label_order_lookup: Mapping[str, int] = (
-        context.metric_catalog.label_order
-    )
-    metric_name_order_lookup: Mapping[str, int] = (
-        context.metric_catalog.name_order
-    )
+    metric_label_order_lookup: Mapping[str, int] = context.metric_catalog.label_order
+    metric_name_order_lookup: Mapping[str, int] = context.metric_catalog.name_order
     estimate_label_map = context.estimate_catalog.key_to_label
 
     def metric_order(label: str) -> int:
@@ -716,12 +706,14 @@ def _flatten_struct_columns(
     """Flatten struct columns for a compact DataFrame view."""
 
     working = df
+    nullable_candidates: list[str] = []
 
     if "groups" in working.columns and group_fields:
         group_exprs = [
             pl.col("groups").struct.field(field).alias(field) for field in group_fields
         ]
         working = working.with_columns(group_exprs)
+        nullable_candidates.extend(group_fields)
 
     if "subgroups" in working.columns and subgroup_fields:
         subgroup_exprs = [
@@ -729,9 +721,27 @@ def _flatten_struct_columns(
             for field in subgroup_fields
         ]
         working = working.with_columns(subgroup_exprs)
+        nullable_candidates.extend(subgroup_fields)
 
-    drop_cols = [col for col in ("id", "groups", "subgroups") if col in working.columns]
+    drop_cols = [col for col in ("groups", "subgroups") if col in working.columns]
     if drop_cols:
         working = working.drop(drop_cols)
+
+    nullable_candidates.append("id")
+
+    def drop_all_null(df: pl.DataFrame, columns: Sequence[str]) -> pl.DataFrame:
+        existing = [col for col in dict.fromkeys(columns) if col in df.columns]
+        if not existing:
+            return df
+        result = df.select(
+            [pl.col(col).is_not_null().any().alias(col) for col in existing]
+        )
+        has_values = result.row(0, named=True)
+        to_drop = [col for col, flag in has_values.items() if not flag]
+        if to_drop:
+            return df.drop(to_drop)
+        return df
+
+    working = drop_all_null(working, nullable_candidates)
 
     return working
